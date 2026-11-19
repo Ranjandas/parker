@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 16 * * *" # nightly full e2e (03:00 Melbourne)
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,10 +44,43 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/parker
           GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/parker
 
-  e2e:
-    # Full up / exec / down inside `unshare -Urnm`, no sudo for parker itself.
+  plan:
+    # Which e2e labs to run: on a PR, the ones its changes touch
+    # (hack/e2eplan); on main, nightly and by hand, all of them.
     runs-on: ubuntu-24.04
-    needs: test
+    outputs:
+      labs: ${{ steps.plan.outputs.labs }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2 # the PR merge commit and its base parent
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - id: plan
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | tee /tmp/changed
+            labs=$(go run ./hack/e2eplan </tmp/changed)
+          else
+            labs=$(go run ./hack/e2eplan -all)
+          fi
+          echo "labs=$labs" >> "$GITHUB_OUTPUT"
+          echo "### e2e plan" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$labs\`" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e-lab:
+    # One lab per job: full up / exec / down inside `unshare -Urnm`, no
+    # sudo for parker itself. "live" is the netsetup round trips plus
+    # rootless mode as a normal user.
+    name: e2e (${{ matrix.lab }})
+    runs-on: ubuntu-24.04
+    needs: [test, plan]
+    if: needs.plan.outputs.labs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        lab: ${{ fromJSON(needs.plan.outputs.labs) }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -53,22 +89,29 @@ jobs:
       - name: Allow unprivileged user namespaces
         # Ubuntu 24.04 blocks them via AppArmor by default.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Cache Consul binaries
+      - name: Cache Consul and Envoy binaries
         uses: actions/cache@v4
         with:
           path: ~/.cache/parker
-          key: parker-bin-${{ runner.os }}-${{ hashFiles('examples/*.yaml') }}
+          key: parker-bin-${{ runner.os }}-${{ hashFiles('examples/*.yaml', 'hack/e2e/*.yaml') }}
+          restore-keys: parker-bin-${{ runner.os }}-
+      - run: make build
+      - name: lab
+        if: matrix.lab != 'live'
+        run: hack/rootless-e2e.sh "${{ matrix.lab }}"
+        env:
+          PARKER_E2E_LOGS: /tmp/parker-e2e-logs
       - name: iptables rules round trip (private netns)
+        if: matrix.lab == 'live'
         run: |
           go test -c -o /tmp/netsetup.test ./internal/netsetup/
           PARKER_LIVE_IPTABLES=1 unshare -Urn /tmp/netsetup.test -test.run FirewallLive -test.v
       - name: bridges and namespaces round trip (private netns)
+        if: matrix.lab == 'live'
         run: |
           PARKER_LIVE_NETNS=1 unshare -Urnm sh -c 'mount -t tmpfs tmpfs /run && mkdir -p /run/netns && /tmp/netsetup.test -test.run NetsetupLive -test.v'
-      - run: make e2e
-        env:
-          PARKER_E2E_LOGS: /tmp/parker-e2e-logs
       - name: rootless mode (no sudo, no unshare wrapper)
+        if: matrix.lab == 'live'
         run: make e2e-rootless
         env:
           PARKER_E2E_LOGS: /tmp/parker-e2e-logs
@@ -76,6 +119,18 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
+          name: e2e-logs-${{ strategy.job-index }}
           path: /tmp/parker-e2e-logs
           if-no-files-found: ignore
+
+  e2e:
+    # One status for the whole matrix: green when every planned lab passed
+    # or the PR needed none.
+    runs-on: ubuntu-24.04
+    needs: [test, plan, e2e-lab]
+    if: always()
+    steps:
+      - run: |
+          echo "test: ${{ needs.test.result }}, plan: ${{ needs.plan.result }}, labs: ${{ needs.e2e-lab.result }}"
+          [ "${{ needs.test.result }}" = success ] && [ "${{ needs.plan.result }}" = success ] || exit 1
+          case "${{ needs.e2e-lab.result }}" in success|skipped) ;; *) exit 1 ;; esac

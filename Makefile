@@ -7,24 +7,7 @@ cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 e2e: build
-	hack/rootless-e2e.sh examples/minimal.yaml
-	hack/rootless-e2e.sh examples/clients.yaml
-	hack/rootless-e2e.sh examples/federation.yaml
-	hack/rootless-e2e.sh examples/acl.yaml
-	hack/rootless-e2e.sh examples/tls.yaml
-	hack/rootless-e2e.sh examples/config-entries.yaml
-	hack/rootless-e2e.sh examples/scenario.yaml
-	hack/rootless-e2e.sh examples/faults.yaml
-	hack/rootless-e2e.sh examples/upgrade.yaml
-	hack/rootless-e2e.sh examples/mesh.yaml
-	hack/rootless-e2e.sh hack/e2e/mesh-secure.yaml
-	hack/rootless-e2e.sh examples/tproxy.yaml
-	hack/rootless-e2e.sh hack/e2e/tproxy-secure.yaml
-	hack/rootless-e2e.sh examples/mesh-federation.yaml
-	hack/rootless-e2e.sh hack/e2e/mesh-federation-acl.yaml
-	hack/rootless-e2e.sh examples/gateways.yaml
-	hack/rootless-e2e.sh examples/peering.yaml
-	hack/rootless-e2e.sh hack/e2e/peering-secure.yaml
+	for f in $$(grep -v '^#' hack/e2e/suite.txt); do hack/rootless-e2e.sh "$$f" || exit 1; done
 e2e-rootless: build
 	hack/rootless-mode-e2e.sh examples/minimal.yaml
 proto:

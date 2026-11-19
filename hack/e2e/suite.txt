@@ -1,0 +1,20 @@
+# e2e labs: make e2e runs them in order, CI runs each as its own job
+# (hack/e2eplan picks the ones a PR touches).
+examples/minimal.yaml
+examples/clients.yaml
+examples/federation.yaml
+examples/acl.yaml
+examples/tls.yaml
+examples/config-entries.yaml
+examples/scenario.yaml
+examples/faults.yaml
+examples/upgrade.yaml
+examples/mesh.yaml
+hack/e2e/mesh-secure.yaml
+examples/tproxy.yaml
+hack/e2e/tproxy-secure.yaml
+examples/mesh-federation.yaml
+hack/e2e/mesh-federation-acl.yaml
+examples/gateways.yaml
+examples/peering.yaml
+hack/e2e/peering-secure.yaml
