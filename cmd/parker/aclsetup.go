@@ -30,8 +30,12 @@ func aclSetupCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := api.DefaultConfig() // CONSUL_HTTP_TOKEN: the management token
-			cfg.Address = addr
+			// CONSUL_HTTP_TOKEN (the management token), CONSUL_HTTP_ADDR
+			// and CONSUL_CACERT come from the environment.
+			cfg := api.DefaultConfig()
+			if addr != "" {
+				cfg.Address = addr
+			}
 			client, err := api.NewClient(cfg)
 			if err != nil {
 				return err
@@ -59,7 +63,7 @@ func aclSetupCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&addr, "addr", "127.0.0.1:8500", "Consul HTTP address")
+	c.Flags().StringVar(&addr, "addr", "", "Consul HTTP address (default $CONSUL_HTTP_ADDR)")
 	c.Flags().StringVar(&agentToken, "agent-token", "", "SecretID of the agent token to create")
 	return c
 }

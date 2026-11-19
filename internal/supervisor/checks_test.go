@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -266,3 +267,47 @@ func TestSuperviseRestarts(t *testing.T) {
 }
 
 var errFake = &os.PathError{Op: "wait", Path: "x", Err: os.ErrClosed}
+
+func TestConsulCheckOverHTTPS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Consul-Token") != "mgmt" {
+			http.Error(w, "ACL not found", http.StatusForbidden)
+			return
+		}
+		json.NewEncoder(w).Encode("10.0.0.10:8300")
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	os.WriteFile(filepath.Join(dir, "ca.pem"), caPEM, 0o644)
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	logPath := filepath.Join(dir, "consul.log")
+	ctx := context.Background()
+	hc := &http.Client{Transport: &http.Transport{}}
+
+	ok := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt", CAFile: "ca.pem"}}
+	if err := checkOnce(ctx, ok, tcpDial, hc, logPath); err != nil {
+		t.Errorf("https check: %v", err)
+	}
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "ca.pem"), []byte("not a cert"), 0o644)
+	bad := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt", CAFile: filepath.Join(other, "ca.pem")}}
+	if err := checkOnce(ctx, bad, tcpDial, hc, logPath); err == nil {
+		t.Error("check passed with a bad CA file")
+	}
+	plain := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt"}}
+	if err := checkOnce(ctx, plain, tcpDial, hc, logPath); err == nil {
+		t.Error("plain HTTP check passed against an HTTPS server")
+	}
+}
+
+func TestConsulConfigDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := ConsulConfig(&spec.ConsulCheck{}, http.DefaultClient, dir)
+	if err != nil || cfg.Scheme != "http" || cfg.Address != "127.0.0.1:8500" {
+		t.Errorf("plain: %+v %v", cfg, err)
+	}
+	if _, err := ConsulConfig(&spec.ConsulCheck{CAFile: "missing.pem"}, http.DefaultClient, dir); err == nil {
+		t.Error("missing CA file accepted")
+	}
+}

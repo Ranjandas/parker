@@ -78,6 +78,11 @@ type Inheritable struct {
 	// generates the management and agent tokens and the gossip key; `parker
 	// exec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree.
 	ACL *bool `yaml:"acl,omitempty"`
+	// TLS turns on mutual TLS for RPC and HTTPS-only APIs (port 8501),
+	// with a CA Parker generates per lab. Clients get their certificates
+	// through auto_encrypt. `parker exec` sets CONSUL_HTTP_ADDR and
+	// CONSUL_CACERT. Federated datacenters must agree.
+	TLS *bool `yaml:"tls,omitempty"`
 }
 
 type AgentSettings struct {
@@ -234,7 +239,8 @@ type HTTPCheck struct {
 }
 
 type ConsulCheck struct {
-	// Addr of the agent's HTTP API; default <node ip>:8500.
+	// Addr of the agent's HTTP API inside the node; default 127.0.0.1:8500
+	// (127.0.0.1:8501 with ca_file).
 	Addr string `yaml:"addr,omitempty"`
 	// Leader: a raft leader is known.
 	Leader bool `yaml:"leader,omitempty"`
@@ -247,6 +253,9 @@ type ConsulCheck struct {
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`
 	// Token for the agent API when ACLs are on.
 	Token string `yaml:"token,omitempty"`
+	// CAFile turns on HTTPS (default address 127.0.0.1:8501) and verifies
+	// the agent with this CA; a relative path is in the node's directory.
+	CAFile string `yaml:"ca_file,omitempty"`
 }
 
 // Command is a string (split on whitespace) or an argv list.

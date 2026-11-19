@@ -13,6 +13,7 @@ import (
 
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/spec"
+	"github.com/Ranjandas/parker/internal/supervisor"
 )
 
 // ResolveNode maps dc1/server-1 or dc1-server-1 to the expanded node name.
@@ -39,7 +40,27 @@ func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path st
 	if tok := ManagementToken(low); tok != "" {
 		env = append(env, "CONSUL_HTTP_TOKEN="+tok)
 	}
+	if cc := AgentCheck(low, node); cc.CAFile != "" {
+		ca := cc.CAFile
+		if !filepath.IsAbs(ca) {
+			ca = filepath.Join(supervisor.NodeDir(RunDir(low.Name), node), ca)
+		}
+		env = append(env, "CONSUL_HTTP_ADDR=https://127.0.0.1:8501", "CONSUL_CACERT="+ca)
+	}
 	return path, env
+}
+
+// AgentCheck is the readiness check of the node's consul agent, which says
+// how to reach its API (token, CA); an empty check when it has none.
+func AgentCheck(low *spec.File, node string) *spec.ConsulCheck {
+	cc := &spec.ConsulCheck{Token: ManagementToken(low)}
+	if n := low.Nodes[node]; n != nil {
+		if p := n.Processes["consul"]; p != nil && p.ReadyWhen != nil && p.ReadyWhen.Consul != nil {
+			cc.CAFile = p.ReadyWhen.Consul.CAFile
+			cc.Addr = p.ReadyWhen.Consul.Addr
+		}
+	}
+	return cc
 }
 
 // ManagementToken is the lab's Consul management token when ACLs are on,

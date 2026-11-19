@@ -57,7 +57,7 @@
       "properties": {
         "addr": {
           "type": "string",
-          "description": "Addr of the agent's HTTP API; default \u003cnode ip\u003e:8500."
+          "description": "Addr of the agent's HTTP API inside the node; default 127.0.0.1:8500\n(127.0.0.1:8501 with ca_file)."
         },
         "leader": {
           "type": "boolean",
@@ -78,6 +78,10 @@
         "token": {
           "type": "string",
           "description": "Token for the agent API when ACLs are on."
+        },
+        "ca_file": {
+          "type": "string",
+          "description": "CAFile turns on HTTPS (default address 127.0.0.1:8501) and verifies\nthe agent with this CA; a relative path is in the node's directory."
         }
       },
       "additionalProperties": false,
@@ -104,6 +108,10 @@
         "acl": {
           "type": "boolean",
           "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "TLS turns on mutual TLS for RPC and HTTPS-only APIs (port 8501),\nwith a CA Parker generates per lab. Clients get their certificates\nthrough auto_encrypt. `parker exec` sets CONSUL_HTTP_ADDR and\nCONSUL_CACERT. Federated datacenters must agree."
         },
         "primary": {
           "type": "boolean",
@@ -234,6 +242,10 @@
         "acl": {
           "type": "boolean",
           "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "TLS turns on mutual TLS for RPC and HTTPS-only APIs (port 8501),\nwith a CA Parker generates per lab. Clients get their certificates\nthrough auto_encrypt. `parker exec` sets CONSUL_HTTP_ADDR and\nCONSUL_CACERT. Federated datacenters must agree."
         }
       },
       "additionalProperties": false,

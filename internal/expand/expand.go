@@ -184,6 +184,23 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 		}
 	}
+	if c.Federated() {
+		for _, dcName := range dcNames {
+			if tlsOn(defaults, c.Datacenters[dcName]) != tlsOn(defaults, c.Datacenters[primary]) {
+				return fmt.Errorf("consul.datacenters.%s.tls: federated datacenters must all have tls on or all off (set it under consul.defaults)", dcName)
+			}
+		}
+	}
+	var labCA *ca
+	for _, dcName := range dcNames {
+		if tlsOn(defaults, c.Datacenters[dcName]) {
+			var err error
+			if labCA, err = newCA(out.Name); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	var sec secrets
 	for _, dcName := range dcNames {
 		if aclOn(defaults, c.Datacenters[dcName]) {
@@ -207,6 +224,13 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		if acl {
 			token = sec.management
 		}
+		tls := tlsOn(defaults, dc)
+		caFile := ""
+		if tls {
+			caFile = CAFile
+		}
+		// check is how readiness checks reach this dc's agents.
+		check := spec.ConsulCheck{Token: token, CAFile: caFile}
 		aclDeps := map[string]*spec.Dep{}
 		if acl {
 			aclDeps[dcPrimary+"-server-1/"+ACLSetup] = &spec.Dep{Condition: "ready"}
@@ -252,7 +276,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				"disable_update_check": true,
 				"ui_config":            map[string]any{"enabled": ui && s == 0},
 			}
-			ready := &spec.Ready{Consul: &spec.ConsulCheck{Leader: true, Token: token}, Timeout: "90s"}
+			sc := check
+			sc.Leader = true
+			ready := &spec.Ready{Consul: &sc, Timeout: "90s"}
+			files := map[string]string{}
 			if acl {
 				tokens := map[string]any{"agent": sec.agent}
 				aclCfg := map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true, "tokens": tokens}
@@ -278,6 +305,15 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				attach[WANNetwork] = &spec.Attachment{IP: wan}
 				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
 			}
+			if tls {
+				ips := []string{ip}
+				if c.Federated() {
+					ips = append(ips, wanIPs[dcName][s])
+				}
+				if err := labCA.serverTLS(cfg, files, name, dcName, ips); err != nil {
+					return err
+				}
+			}
 			deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Server.Cfg(), dc.Server.Cfg())
 			ov := dc.Servers.Overrides[name]
 			version := ""
@@ -286,9 +322,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				version = ov.Version
 			}
 			key := dcName + "-" + name
+			files["consul.json"] = mustJSON(cfg)
 			out.Nodes[key] = &spec.RawNode{
 				Networks: attach,
-				Files:    map[string]string{"consul.json": mustJSON(cfg)},
+				Files:    files,
 				Processes: map[string]*spec.Process{
 					"consul": {
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
@@ -304,9 +341,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			for _, r := range serverRefs {
 				deps[r] = &spec.Dep{Condition: "ready"}
 			}
+			env := map[string]string{"CONSUL_HTTP_TOKEN": sec.management, "CONSUL_HTTP_ADDR": "127.0.0.1:8500"}
+			if tls {
+				env["CONSUL_HTTP_ADDR"] = fmt.Sprintf("https://127.0.0.1:%d", HTTPSPort)
+				env["CONSUL_CACERT"] = VarNodeDir + "/" + CAFile
+			}
 			out.Nodes[dcName+"-server-1"].Processes[ACLSetup] = &spec.Process{
-				Run:       spec.Command{VarParker, ACLSetup, "--addr", "127.0.0.1:8500", "--agent-token", sec.agent},
-				Env:       map[string]string{"CONSUL_HTTP_TOKEN": sec.management},
+				Run:       spec.Command{VarParker, ACLSetup, "--agent-token", sec.agent},
+				Env:       env,
 				DependsOn: deps,
 				ReadyWhen: &spec.Ready{Log: ACLReadyLine, Timeout: "60s"},
 			}
@@ -343,7 +385,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				var regs []any
 				for _, svcName := range slices.Sorted(maps.Keys(services)) {
 					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
-					reg, proc := expandService(svcName, svc, token)
+					reg, proc := expandService(svcName, svc, check)
 					if acl {
 						reg["token"] = sec.agent // registers and syncs the service
 					}
@@ -378,6 +420,9 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 							"tokens": map[string]any{"agent": sec.agent}}
 						cfg["encrypt"] = sec.gossip
 					}
+					if tls {
+						labCA.clientTLS(cfg, rn.Files)
+					}
 					deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Client.Cfg(), dc.Client.Cfg(), node.Config)
 					rn.Files["consul.json"] = mustJSON(cfg)
 					deps := map[string]*spec.Dep{}
@@ -389,7 +434,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
 						DependsOn: deps,
 						ReadyWhen: &spec.Ready{
-							Consul:  &spec.ConsulCheck{Members: ">=" + strconv.Itoa(n+1), Token: token},
+							Consul:  withMembers(check, ">="+strconv.Itoa(n+1)),
 							Timeout: "60s",
 						},
 					}
@@ -414,7 +459,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 
 // expandService returns the agent service registration and, when the
 // service has a run: command, the process that runs it.
-func expandService(name string, svc *spec.Service, token string) (map[string]any, *spec.Process) {
+func expandService(name string, svc *spec.Service, agent spec.ConsulCheck) (map[string]any, *spec.Process) {
 	reg := map[string]any{"name": name}
 	if svc.Port > 0 {
 		reg["port"] = svc.Port
@@ -445,7 +490,8 @@ func expandService(name string, svc *spec.Service, token string) (map[string]any
 	if svc.Port > 0 {
 		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "30s"}
 		if check != "none" {
-			p.ReadyWhen.Consul = &spec.ConsulCheck{ServiceHealthy: name, Token: token}
+			agent.ServiceHealthy = name
+			p.ReadyWhen.Consul = &agent
 		}
 	}
 	return reg, p
@@ -556,4 +602,9 @@ func checkOverlaps(nets map[string]*spec.Network) error {
 		}
 	}
 	return nil
+}
+
+func withMembers(c spec.ConsulCheck, members string) *spec.ConsulCheck {
+	c.Members = members
+	return &c
 }

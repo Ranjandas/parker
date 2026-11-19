@@ -229,11 +229,16 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   token and the gossip key; `parker exec` (and the TUI shell) sets
   `CONSUL_HTTP_TOKEN` to the management token (see `examples/acl.yaml`).
   Federated dcs replicate tokens from the primary.
+- `tls: true`: a CA per lab signs the servers' certificates
+  (`server.<dc>.consul`, node IPs, their `parker proxy` names) and is the
+  Connect root, so clients' `auto_encrypt` certificates chain to it too.
+  RPC is mutual TLS and agent APIs are HTTPS only on 8501; `parker exec`
+  sets `CONSUL_HTTP_ADDR` and `CONSUL_CACERT` (see `examples/tls.yaml`)
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
 Not yet: partitions, mesh-gateway federation, peering, gateways, Envoy,
-TLS, impairments, `scenario:`, modules/overlays/`--set`.
+impairments, `scenario:`, modules/overlays/`--set`.
 
 ## Development
 
