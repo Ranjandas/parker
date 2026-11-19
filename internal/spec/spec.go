@@ -332,9 +332,10 @@ type Service struct {
 	// Register is merged into the Consul service registration as is.
 	Register map[string]any `yaml:"register,omitempty"`
 	// Connect puts the service in the mesh: sidecar registers a sidecar
-	// proxy and runs Envoy for it (needs versions.envoy); none (default)
-	// leaves it out.
-	Connect string `yaml:"connect,omitempty" jsonschema:"enum=none,enum=sidecar"`
+	// proxy and runs Envoy for it (needs versions.envoy); tproxy does the
+	// same as a transparent proxy, redirecting the node's traffic through
+	// Envoy (one per node, needs iptables); none (default) leaves it out.
+	Connect string `yaml:"connect,omitempty" jsonschema:"enum=none,enum=sidecar,enum=tproxy"`
 	// Upstreams the sidecar binds on 127.0.0.1, keyed by destination
 	// service: api: 9091, or {port, dc, peer, partition, namespace}.
 	Upstreams map[string]*Upstream `yaml:"upstreams,omitempty"`
