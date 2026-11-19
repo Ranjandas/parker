@@ -60,6 +60,10 @@ type proc struct {
 	isReady  bool
 	restarts int
 	logPath  string
+	held     bool          // stopped on purpose: no restarts until started
+	paused   bool          // SIGSTOPped
+	kick     chan struct{} // asks supervise to start it now (buffered 1)
+	runDone  chan struct{} // closed when the current run exits
 }
 
 // ProcInfo is a snapshot of one supervised process.
@@ -70,11 +74,14 @@ type ProcInfo struct {
 	Ready      bool
 	Restarts   int
 	LogPath    string
+	Paused     bool // SIGSTOPped by pause
+	Held       bool // stopped by stop; no restarts until start
 }
 
 // Handle supervises a lab's processes after Run returns.
 type Handle struct {
 	lab, runDir string
+	f           *spec.File
 	procs       map[string]*proc
 	stop        context.CancelFunc
 	life        context.Context
@@ -90,7 +97,7 @@ func (h *Handle) Snapshot() map[string]ProcInfo {
 	out := map[string]ProcInfo{}
 	for id, p := range h.procs {
 		p.mu.Lock()
-		out[id] = ProcInfo{Node: p.node, Name: p.name, Pid: p.pid, Alive: p.alive, Ready: p.isReady, Restarts: p.restarts, LogPath: p.logPath}
+		out[id] = ProcInfo{Node: p.node, Name: p.name, Pid: p.pid, Alive: p.alive, Ready: p.isReady, Restarts: p.restarts, LogPath: p.logPath, Paused: p.paused, Held: p.held}
 		p.mu.Unlock()
 	}
 	return out
@@ -168,6 +175,7 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 				id: nodeName + "/" + pn, node: nodeName, name: pn, spec: p,
 				deps:  map[string]string{},
 				start: make(chan struct{}), ready: make(chan struct{}), exited: make(chan struct{}),
+				kick: make(chan struct{}, 1),
 			}
 			for d, dep := range p.DependsOn {
 				if !strings.Contains(d, "/") {
@@ -189,7 +197,7 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 		o.Life = context.Background()
 	}
 	life, stop := context.WithCancel(o.Life)
-	h := &Handle{lab: o.Lab, runDir: o.RunDir, procs: procs, stop: stop, life: life, up: make(chan struct{})}
+	h := &Handle{lab: o.Lab, runDir: o.RunDir, f: f, procs: procs, stop: stop, life: life, up: make(chan struct{})}
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -278,16 +286,18 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 			lf.Close()
 			return nil, fmt.Errorf("start: %w", err)
 		}
+		runDone := make(chan struct{})
 		p.mu.Lock()
-		p.pid, p.alive = cmd.Process.Pid, true
+		p.pid, p.alive, p.runDone = cmd.Process.Pid, true, runDone
 		p.mu.Unlock()
 		done := make(chan error, 1)
 		go func() {
 			err := cmd.Wait()
 			lf.Close()
 			p.mu.Lock()
-			p.alive, p.isReady = false, false
+			p.alive, p.isReady, p.paused = false, false, false
 			p.mu.Unlock()
+			close(runDone)
 			done <- err
 		}()
 		return done, nil
@@ -306,7 +316,7 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 	}()
 
 	t0 := time.Now()
-	if err := waitReady(ctx, p, nsPath, n, logPath); err != nil {
+	if err := waitReady(ctx, p, p.exited, nsPath, logPath); err != nil {
 		return fmt.Errorf("%w\n--- last lines of %s ---\n%s", err, logPath, tail(logPath, 15))
 	}
 	p.mu.Lock()
@@ -320,7 +330,9 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 // supervise applies the restart policy after each exit, once the lab is up
 // and until supervision stops. Restarts back off from 1s to 30s; a run that
 // lasted a minute resets the backoff. Restarted processes count as ready
-// once running (readiness checks run only during up).
+// once running (readiness checks run only during up, and in StartNode). A
+// process stopped on purpose (StopNode) waits for StartNode, which kicks
+// it; a kick also cuts a backoff short.
 func (h *Handle) supervise(p *proc, exitErr error, start func() (<-chan error, error), logf func(string, ...any)) {
 	select {
 	case <-h.up:
@@ -329,13 +341,31 @@ func (h *Handle) supervise(p *proc, exitErr error, start func() (<-chan error, e
 	}
 	backoff := time.Second
 	for {
-		if !ShouldRestart(p.spec.Restart, exitErr) {
-			return
+		p.mu.Lock()
+		held := p.held
+		p.mu.Unlock()
+		if held || !ShouldRestart(p.spec.Restart, exitErr) {
+			if p.kick == nil {
+				return
+			}
+			select {
+			case <-h.life.Done():
+				return
+			case <-p.kick:
+			}
+		} else {
+			select {
+			case <-h.life.Done():
+				return
+			case <-time.After(backoff):
+			case <-p.kick:
+			}
 		}
-		select {
-		case <-h.life.Done():
-			return
-		case <-time.After(backoff):
+		p.mu.Lock()
+		held = p.held
+		p.mu.Unlock()
+		if held {
+			continue // stopped while we waited
 		}
 		t0 := time.Now()
 		done, err := start()
@@ -362,7 +392,7 @@ func (h *Handle) supervise(p *proc, exitErr error, start func() (<-chan error, e
 	}
 }
 
-func waitReady(ctx context.Context, p *proc, nsPath string, n *spec.RawNode, logPath string) error {
+func waitReady(ctx context.Context, p *proc, exited <-chan struct{}, nsPath string, logPath string) error {
 	r := p.spec.ReadyWhen
 	if r == nil {
 		return nil
@@ -388,7 +418,7 @@ func waitReady(ctx context.Context, p *proc, nsPath string, n *spec.RawNode, log
 			return nil
 		}
 		select {
-		case <-p.exited:
+		case <-exited:
 			return fmt.Errorf("process exited before becoming ready")
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {

@@ -72,6 +72,14 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 				{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
 			},
 		}
+	case reflect.TypeOf(spec.NodeGroup{}):
+		return &jsonschema.Schema{
+			Description: "A selector, or a list of selectors.",
+			OneOf: []*jsonschema.Schema{
+				{Type: "string"},
+				{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+			},
+		}
 	case reflect.TypeOf(spec.Servers{}):
 		over := &jsonschema.Schema{
 			Type:                 "object",

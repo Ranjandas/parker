@@ -701,6 +701,52 @@
             "logs"
           ],
           "description": "Snapshot copies state aside for later: logs."
+        },
+        "partition": {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "description": "A selector, or a list of selectors."
+          },
+          "type": "array",
+          "description": "Partition cuts the network between groups of nodes, each a selector\nor a list of them: [dc1, dc2], or [[dc1/server-1, dc1/server-2],\n[dc1/server-3]]. One group is cut off from the rest of the lab.\nPackets between the sides are dropped until heal."
+        },
+        "heal": {
+          "type": "string",
+          "description": "Heal removes partitions: all, or a selector (every cut to or from\nits nodes)."
+        },
+        "kill": {
+          "type": "string",
+          "description": "Kill SIGKILLs the processes of the nodes a selector matches; the\nrestart policy applies, as to a crash."
+        },
+        "stop": {
+          "type": "string",
+          "description": "Stop stops the nodes' processes (SIGTERM, then SIGKILL after 10s)\nand keeps them down until start."
+        },
+        "start": {
+          "type": "string",
+          "description": "Start starts the nodes' processes that aren't running and waits for\ntheir readiness checks."
+        },
+        "restart": {
+          "type": "string",
+          "description": "Restart is stop then start."
+        },
+        "pause": {
+          "type": "string",
+          "description": "Pause freezes the nodes' processes (SIGSTOP) until resume."
+        },
+        "resume": {
+          "type": "string",
+          "description": "Resume continues paused processes (SIGCONT)."
         }
       },
       "additionalProperties": false,

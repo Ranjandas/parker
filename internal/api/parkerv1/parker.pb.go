@@ -598,9 +598,13 @@ type ProcessStatus struct {
 	Pid   int32                  `protobuf:"varint,2,opt,name=pid,proto3" json:"pid,omitempty"`
 	Alive bool                   `protobuf:"varint,3,opt,name=alive,proto3" json:"alive,omitempty"`
 	// Known only for labs this daemon supervises.
-	Ready         *bool  `protobuf:"varint,4,opt,name=ready,proto3,oneof" json:"ready,omitempty"`
-	Restarts      int32  `protobuf:"varint,5,opt,name=restarts,proto3" json:"restarts,omitempty"`
-	LogPath       string `protobuf:"bytes,6,opt,name=log_path,json=logPath,proto3" json:"log_path,omitempty"`
+	Ready    *bool  `protobuf:"varint,4,opt,name=ready,proto3,oneof" json:"ready,omitempty"`
+	Restarts int32  `protobuf:"varint,5,opt,name=restarts,proto3" json:"restarts,omitempty"`
+	LogPath  string `protobuf:"bytes,6,opt,name=log_path,json=logPath,proto3" json:"log_path,omitempty"`
+	// Frozen by a pause fault.
+	Paused bool `protobuf:"varint,7,opt,name=paused,proto3" json:"paused,omitempty"`
+	// Down on purpose (a stop fault) until started again.
+	Stopped       bool `protobuf:"varint,8,opt,name=stopped,proto3" json:"stopped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -675,6 +679,20 @@ func (x *ProcessStatus) GetLogPath() string {
 		return x.LogPath
 	}
 	return ""
+}
+
+func (x *ProcessStatus) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *ProcessStatus) GetStopped() bool {
+	if x != nil {
+		return x.Stopped
+	}
+	return false
 }
 
 type DescribeRequest struct {
@@ -1587,7 +1605,10 @@ type RunRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Lab   string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
 	// Name under scenarios:, or empty for scenario:.
-	Scenario      string `protobuf:"bytes,2,opt,name=scenario,proto3" json:"scenario,omitempty"`
+	Scenario string `protobuf:"bytes,2,opt,name=scenario,proto3" json:"scenario,omitempty"`
+	// A scenario as YAML ({steps: [...]}) to play instead of the lab's own;
+	// parker fault sends one step this way.
+	Inline        string `protobuf:"bytes,3,opt,name=inline,proto3" json:"inline,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1632,6 +1653,13 @@ func (x *RunRequest) GetLab() string {
 func (x *RunRequest) GetScenario() string {
 	if x != nil {
 		return x.Scenario
+	}
+	return ""
+}
+
+func (x *RunRequest) GetInline() string {
+	if x != nil {
+		return x.Inline
 	}
 	return ""
 }
@@ -1681,14 +1709,16 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x03ips\x18\x02 \x03(\tR\x03ips\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\bR\tnamespace\x126\n" +
 	"\tprocesses\x18\x04 \x03(\v2\x18.parker.v1.ProcessStatusR\tprocesses\x12\x12\n" +
-	"\x04role\x18\x05 \x01(\tR\x04role\"\xa7\x01\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\"\xd9\x01\n" +
 	"\rProcessStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03pid\x18\x02 \x01(\x05R\x03pid\x12\x14\n" +
 	"\x05alive\x18\x03 \x01(\bR\x05alive\x12\x19\n" +
 	"\x05ready\x18\x04 \x01(\bH\x00R\x05ready\x88\x01\x01\x12\x1a\n" +
 	"\brestarts\x18\x05 \x01(\x05R\brestarts\x12\x19\n" +
-	"\blog_path\x18\x06 \x01(\tR\alogPathB\b\n" +
+	"\blog_path\x18\x06 \x01(\tR\alogPath\x12\x16\n" +
+	"\x06paused\x18\a \x01(\bR\x06paused\x12\x18\n" +
+	"\astopped\x18\b \x01(\bR\astoppedB\b\n" +
 	"\x06_ready\"7\n" +
 	"\x0fDescribeRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x12\n" +
@@ -1741,11 +1771,12 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x03msg\"$\n" +
 	"\n" +
 	"DialOpened\x12\x16\n" +
-	"\x06remote\x18\x01 \x01(\tR\x06remote\":\n" +
+	"\x06remote\x18\x01 \x01(\tR\x06remote\"R\n" +
 	"\n" +
 	"RunRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
-	"\bscenario\x18\x02 \x01(\tR\bscenario2\xac\x05\n" +
+	"\bscenario\x18\x02 \x01(\tR\bscenario\x12\x16\n" +
+	"\x06inline\x18\x03 \x01(\tR\x06inline2\xac\x05\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +

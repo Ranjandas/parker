@@ -227,3 +227,37 @@ func (l *ScenarioLab) Snapshot(what string) (string, error) {
 	}
 	return dst, nil
 }
+
+// Partition cuts the network between groups of nodes.
+func (l *ScenarioLab) Partition(groups [][]string) error {
+	return PrivHint(netsetup.Partition(l.Low.Name, l.Low, groups))
+}
+
+// Heal removes partitions on and to nodes; nil heals all.
+func (l *ScenarioLab) Heal(nodes []string) error {
+	_, err := netsetup.Heal(l.Low.Name, l.Low, nodes)
+	return PrivHint(err)
+}
+
+// Proc acts on a node's processes through the supervisor.
+func (l *ScenarioLab) Proc(ctx context.Context, action, node string) error {
+	h := l.Handle
+	if h == nil {
+		return fmt.Errorf("%s needs the lab supervised by this daemon (bring it up with parker up or run)", action)
+	}
+	switch action {
+	case "kill":
+		return h.KillNode(ctx, node)
+	case "stop":
+		return h.StopNode(ctx, node)
+	case "start":
+		return h.StartNode(ctx, node)
+	case "restart":
+		return h.RestartNode(ctx, node)
+	case "pause":
+		return h.PauseNode(node)
+	case "resume":
+		return h.ResumeNode(node)
+	}
+	return fmt.Errorf("unknown action %q", action)
+}

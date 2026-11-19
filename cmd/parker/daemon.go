@@ -29,6 +29,7 @@ import (
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/spec"
+	"github.com/Ranjandas/parker/internal/tui"
 )
 
 // isRootless: this CLI runs as a normal user (not inside the rootless
@@ -395,17 +396,7 @@ func printStatus(w io.Writer, st *parkerv1.StatusResponse) {
 			ip += " (no netns)"
 		}
 		for _, p := range n.Processes {
-			state := "dead"
-			if p.Alive {
-				state = "running"
-				if p.Ready != nil {
-					if *p.Ready {
-						state = "ready"
-					} else {
-						state = "starting"
-					}
-				}
-			}
+			state := tui.ProcState(p)
 			pid := "-"
 			if p.Pid > 0 {
 				pid = fmt.Sprint(p.Pid)

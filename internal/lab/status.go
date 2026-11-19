@@ -21,6 +21,8 @@ type ProcStatus struct {
 	Ready    *bool // nil when unknown (lab not supervised by this process)
 	Restarts int
 	LogPath  string
+	Paused   bool // by a pause fault
+	Stopped  bool // by a stop fault, until start
 }
 
 type NodeStatus struct {
@@ -71,6 +73,7 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 			if info, ok := snap[id]; ok {
 				ready := info.Ready
 				ps.Pid, ps.Alive, ps.Ready, ps.Restarts = info.Pid, info.Alive, &ready, info.Restarts
+				ps.Paused, ps.Stopped = info.Paused, info.Held && !info.Alive
 			} else if pid := saved.Pids[id]; pid > 0 {
 				ps.Pid = pid
 				ps.Alive = nsOK && pidInNetns(pid, nsIno)

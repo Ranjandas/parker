@@ -78,6 +78,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker validate FILE` | Structural and semantic checks. Unknown keys come with line numbers, "did you mean" suggestions, and where a misplaced key belongs (e.g. `servers` under a node). |
 | `parker schema` | Print the JSON Schema for topology files. |
 | `parker run FILE [SCENARIO]` | Bring the lab up fresh and play its `scenario:` (or a named one from `scenarios:`); exits 1 when a step fails. `--no-up` plays against the running lab. See [Scenarios](#scenarios). |
+| `parker fault FILE\|LAB ACTION [SELECTOR...]` | Break a running lab on purpose: `partition`, `heal`, `kill`, `stop`, `start`, `restart`, `pause`, `resume`. See [Faults](#faults). |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is a [selector](#selectors) that names one node, e.g. `dc1/server-1` or `dc1/leader`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs. |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table with state and raft role, `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:dc NAME`, `:q`. |
@@ -130,12 +131,32 @@ Steps: `wait` (a selector, optionally followed by `ready`), `sleep`,
 service_healthy, dc}` or `exec: {on, run, output}`, retried until
 `within:`) and `snapshot: logs`. A string `run:` goes through `sh -c`.
 Named scenarios live under `scenarios:` and run with `parker run FILE NAME`.
-Fault steps (partition, kill, stop, pause, upgrade) are next on the roadmap.
 See `examples/scenario.yaml`.
+
+### Faults
+
+```yaml
+    - partition: [[dc1/server-1, dc1/server-2], [dc1/server-3]]   # or [dc1, dc2]
+    - partition: [dc1/leader]          # one group: cut off from the rest of the lab
+    - heal: all                        # or a selector: every cut to or from its nodes
+    - kill: dc1/leader                 # SIGKILL; the process's restart policy applies
+    - stop: dc1/web                    # SIGTERM (SIGKILL after 10s), stays down until start
+    - start: dc1/servers               # starts what isn't running, waits for readiness
+    - restart: dc1/web                 # stop, then start
+    - pause: dc1/leader                # SIGSTOP until resume (SIGCONT)
+```
+
+A partition drops packets between the sides both ways, as a cut link would:
+it adds blackhole routes inside the node namespaces, so it needs no iptables,
+works rootless, and goes away with `heal` or `parker down`. `parker status`
+shows `stopped` and `paused` processes. The same faults work by hand on a
+running lab: `parker fault FILE kill dc1/leader`, `parker fault FILE partition
+dc1/server-1,dc1/server-2 dc1/server-3`, `parker fault FILE heal`. See
+`examples/faults.yaml`.
 
 ## Selectors
 
-`exec` and `port-forward` (and later scenarios and `--set`) pick nodes
+`exec`, `port-forward`, `fault` and scenarios (and later `--set`) pick nodes
 with selectors that follow the YAML tree:
 
 | Selector | Means |

@@ -31,6 +31,7 @@ import (
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
+	"github.com/goccy/go-yaml"
 )
 
 // Version is reported by the Version RPC; main sets it.
@@ -231,6 +232,7 @@ func StatusToProto(st *lab.Status) *parkerv1.StatusResponse {
 		for _, p := range n.Processes {
 			pn.Processes = append(pn.Processes, &parkerv1.ProcessStatus{
 				Name: p.Name, Pid: int32(p.Pid), Alive: p.Alive, Ready: p.Ready, Restarts: int32(p.Restarts), LogPath: p.LogPath,
+				Paused: p.Paused, Stopped: p.Stopped,
 			})
 		}
 		out.Nodes = append(out.Nodes, pn)
@@ -465,6 +467,9 @@ func (s *Server) Run(ctx context.Context, req *connect.Request[parkerv1.RunReque
 		return connect.NewError(connect.CodeNotFound, fmt.Errorf("lab %q is not running: %w", name, err))
 	}
 	sc, err := pickScenario(low, req.Msg.Scenario)
+	if req.Msg.Inline != "" {
+		sc, err = inlineScenario(req.Msg.Inline)
+	}
 	if err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -487,6 +492,18 @@ func (s *Server) Run(ctx context.Context, req *connect.Request[parkerv1.RunReque
 		fmt.Fprintf(w, "lab %s kept for a look (on_failure: keep)\n", name)
 	}
 	return connect.NewError(connect.CodeFailedPrecondition, runErr)
+}
+
+// inlineScenario parses a scenario sent with the request.
+func inlineScenario(y string) (*spec.Scenario, error) {
+	var sc spec.Scenario
+	if err := yaml.UnmarshalWithOptions([]byte(y), &sc, yaml.Strict()); err != nil {
+		return nil, fmt.Errorf("inline scenario: %w", err)
+	}
+	if err := scenario.Validate(&sc); err != nil {
+		return nil, fmt.Errorf("inline scenario: %w", err)
+	}
+	return &sc, nil
 }
 
 // pickScenario is scenarios.<name>, or scenario: when name is empty.

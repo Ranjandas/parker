@@ -78,6 +78,26 @@ if grep "^scenario:" "$F" >/dev/null; then
     echo "failing scenario exits non-zero"
   fi
 fi
+if grep "^name: faults" "$F" >/dev/null; then
+  echo "--- parker fault"
+  web_state() { $P status "$F" | awk '$1=="dc1-web" && $3=="consul" {s=$5} END {print s}'; }
+  $P fault "$F" stop dc1/web
+  [ "$(web_state)" = stopped ] || { echo "after stop: $(web_state)" >&2; exit 1; }
+  $P fault "$F" start dc1/web
+  [ "$(web_state)" = ready ] || { echo "after start: $(web_state)" >&2; exit 1; }
+  $P fault "$F" pause dc1/web
+  [ "$(web_state)" = paused ] || { echo "after pause: $(web_state)" >&2; exit 1; }
+  $P fault "$F" resume dc1/web
+  srv=$($P status "$F" | awk '$1=="dc1-server-1" && !n++ {print $2}')
+  leader() { $P exec "$F" dc1/web -- curl -sf -m 2 "http://$srv:8500/v1/status/leader" </dev/null >/dev/null 2>&1; }
+  leader || { echo "web can't reach $srv before the partition" >&2; exit 1; }
+  $P fault "$F" partition dc1/web
+  if leader; then echo "web still reaches $srv after the partition" >&2; exit 1; fi
+  $P fault "$F" heal
+  leader || { echo "web can't reach $srv after heal" >&2; exit 1; }
+  if $P fault "$F" explode dc1 >/dev/null 2>&1; then echo "unknown fault exited 0" >&2; exit 1; fi
+  echo ok
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"
