@@ -10,8 +10,14 @@ import (
 
 func TestPaths(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	if Dir() != "/run/user/1000/parker" || SocketPath() != "/run/user/1000/parker/parker.sock" || RunBase() != "/run/user/1000/parker/run" {
+	t.Setenv("XDG_STATE_HOME", "/home/u/.state")
+	if Dir() != "/run/user/1000/parker" || SocketPath() != "/run/user/1000/parker/parker.sock" || RunBase() != "/home/u/.state/parker/run" {
 		t.Errorf("XDG paths: %s %s %s", Dir(), SocketPath(), RunBase())
+	}
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "/home/u")
+	if RunBase() != "/home/u/.local/state/parker/run" {
+		t.Errorf("labs go on disk, not the runtime tmpfs: %s", RunBase())
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	if want := "parker-" + strconv.Itoa(os.Getuid()); !strings.HasSuffix(Dir(), want) {
@@ -32,9 +38,10 @@ func TestInChild(t *testing.T) {
 
 func TestCommandSetsUpChild(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	t.Setenv("XDG_STATE_HOME", "/home/u/.state")
 	cmd := Command("/bin/parker", "daemon")
 	env := strings.Join(cmd.Env, "\n")
-	if !strings.Contains(env, childEnv+"=1") || !strings.Contains(env, "PARKER_RUN_DIR=/run/user/1000/parker/run") {
+	if !strings.Contains(env, childEnv+"=1") || !strings.Contains(env, "PARKER_RUN_DIR=/home/u/.state/parker/run") {
 		t.Errorf("child env missing markers")
 	}
 	if cmd.SysProcAttr == nil {

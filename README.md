@@ -232,10 +232,12 @@ and lists them.
    restarting the daemon never loses a lab; a new daemon reports such labs
    as not supervised until the next `up`.
 
-Run directory: `/run/parker/<lab>/` (`PARKER_RUN_DIR` to change), with
-`topology.yaml` (expanded), `nodes/<node>/{consul.json,consul.log,data/}`
-and `state.json`. The daemon's socket and `daemon.log` live in
-`/run/parker/`.
+Run directory: `/var/lib/parker/run/<lab>/` (`PARKER_RUN_DIR` to change),
+with `topology.yaml` (expanded), `nodes/<node>/{consul.json,consul.log,data/}`
+and `state.json`. It is on disk because Consul servers preallocate 64 MB
+Raft WAL segments, which soon fill a `/run` tmpfs; `up` warns when the run
+dir looks too small. `daemon.log` sits in the run base and the socket in
+`/run/parker/` (in the run base with `PARKER_RUN_DIR`).
 
 ## Rootless mode (no sudo)
 
@@ -253,7 +255,9 @@ $ parker down minimal
 
 - The host has no route into the lab, so `exec` (over the API), `logs`,
   `proxy` and `port-forward` are the ways in.
-- Socket and run dirs: `$XDG_RUNTIME_DIR/parker/` (else `/tmp/parker-<uid>/`).
+- Socket: `$XDG_RUNTIME_DIR/parker/` (else `/tmp/parker-<uid>/`). Lab run
+  dirs: `$XDG_STATE_HOME/parker/run/` (else `~/.local/state/parker/run/`),
+  on disk rather than the runtime tmpfs.
 - Binaries are fetched by the CLI (the daemon has no network) into the usual
   cache.
 - Labs live in the daemon's namespaces, so `parker daemon stop` takes them

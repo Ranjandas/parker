@@ -28,7 +28,8 @@ import (
 const TopologyFile = "topology.yaml"
 
 // RunBase is the parent of every lab's run directory: PARKER_RUN_DIR, else
-// /run/parker for root, else the rootless daemon's dir.
+// /var/lib/parker/run for root, else the rootless daemon's state dir. Labs
+// hold Consul data, so they live on disk: /run is a small tmpfs.
 func RunBase() string {
 	if b := os.Getenv("PARKER_RUN_DIR"); b != "" {
 		return b
@@ -36,8 +37,11 @@ func RunBase() string {
 	if os.Geteuid() != 0 {
 		return rootless.RunBase()
 	}
-	return "/run/parker"
+	return RootRunBase
 }
+
+// RootRunBase is root's run base without PARKER_RUN_DIR.
+const RootRunBase = "/var/lib/parker/run"
 
 func RunDir(lab string) string { return filepath.Join(RunBase(), lab) }
 
@@ -79,6 +83,9 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+	if w := spaceWarning(dir, low); w != "" {
+		say("%s", w)
+	}
 	if b, err := yaml.MarshalWithOptions(low, yaml.UseLiteralStyleIfMultiline(true), yaml.IndentSequence(true)); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, TopologyFile), b, 0o644)
 	}
@@ -93,6 +100,7 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	}
 	h, err := supervisor.Run(ctx, low, supervisor.Options{Lab: name, RunDir: dir, Log: o.Log, Life: o.Life})
 	if err != nil {
+		err = spaceHint(dir, err)
 		for _, hint := range netsetup.FirewallHints() {
 			err = fmt.Errorf("%w\nhint: %s", err, hint)
 		}

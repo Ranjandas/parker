@@ -11,11 +11,13 @@ F=${1:-examples/minimal.yaml}
 P=./bin/parker
 if [ "$(id -u)" = 0 ]; then echo "run this as a normal user"; exit 1; fi
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-$(mktemp -d)}
-D=$XDG_RUNTIME_DIR/parker
+export XDG_STATE_HOME=${XDG_STATE_HOME:-$(mktemp -d)}
+D=$XDG_RUNTIME_DIR/parker       # socket
+R=$XDG_STATE_HOME/parker/run    # lab run dirs, on disk
 cleanup() {
   rc=$?
   if [ $rc != 0 ] && [ -n "${PARKER_E2E_LOGS:-}" ]; then
-    mkdir -p "$PARKER_E2E_LOGS/rootless"; cp -r "$D/." "$PARKER_E2E_LOGS/rootless/" 2>/dev/null || true
+    mkdir -p "$PARKER_E2E_LOGS/rootless"; cp -r "$D/." "$R/." "$PARKER_E2E_LOGS/rootless/" 2>/dev/null || true
   fi
   $P daemon stop >/dev/null 2>&1 || true
 }
@@ -25,6 +27,7 @@ $P fetch "$F" >/dev/null
 echo "--- up (starts a rootless daemon)"
 $P up "$F"
 $P daemon status
+ls "$R"/*/topology.yaml >/dev/null || { echo "no lab run dir under $R"; exit 1; }
 lab=$($P status "$F" | awk 'NR==1 {sub(":", "", $2); print $2}')
 first=$($P status "$F" | awk 'NR==3 {print $1}')
 $P status "$F" | awk 'NR>2 && $5 != "ready" {bad=1} END {exit bad}'
@@ -47,5 +50,5 @@ echo "--- down, daemon stop"
 $P down "$F"
 $P daemon stop
 sleep 0.5
-if pgrep -u "$(id -u)" -f "consul agent -config-file=$D" >/dev/null; then echo "consul left running"; exit 1; fi
+if pgrep -u "$(id -u)" -f "consul agent -config-file=$R" >/dev/null; then echo "consul left running"; exit 1; fi
 echo PASS
