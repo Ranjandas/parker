@@ -234,6 +234,10 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   Connect root, so clients' `auto_encrypt` certificates chain to it too.
   RPC is mutual TLS and agent APIs are HTTPS only on 8501; `parker exec`
   sets `CONSUL_HTTP_ADDR` and `CONSUL_CACERT` (see `examples/tls.yaml`)
+- `config_entries:` on a datacenter: applied in order once its servers
+  (and ACLs) are ready, inline in Consul's own casing or
+  `file: entries/x.hcl` (HCL or JSON); a failure names the entry and its
+  YAML line (see `examples/config-entries.yaml`)
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 

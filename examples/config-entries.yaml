@@ -1,0 +1,21 @@
+# Config entries applied in order once the servers are ready: inline in
+# Consul's own casing (paste from the docs) or from an HCL/JSON file.
+parker: v1alpha1
+name: config-entries
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          Config:
+            protocol: http
+        - Kind: service-defaults
+          Name: web
+          Protocol: http
+        - file: entries/web-intentions.hcl
+      nodes:
+        web:
+          service: { port: 8080, run: fake-service }
