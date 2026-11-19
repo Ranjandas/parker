@@ -40,6 +40,15 @@ if grep "federation:" "$F" >/dev/null; then
     $P exec "$F" "$first" -- consul catalog nodes -datacenter "$dc" </dev/null >/dev/null && echo "reached $dc"
   done
 fi
+if grep "acl: true" "$F" >/dev/null; then
+  echo "--- ACLs"
+  if $P exec "$F" "$first" -- env CONSUL_HTTP_TOKEN= consul members </dev/null >/dev/null 2>&1; then
+    echo "anonymous request was allowed" >&2; exit 1
+  fi
+  echo "anonymous denied"
+  $P exec "$F" "$first" -- consul catalog services </dev/null
+  $P exec "$F" "$first" -- consul keyring -list </dev/null | grep -q '\[' && echo "gossip key installed"
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"

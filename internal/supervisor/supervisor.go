@@ -435,6 +435,7 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 		cfg := api.DefaultConfig()
 		cfg.Address = addr
 		cfg.HttpClient = httpc
+		cfg.Token = r.Consul.Token
 		c, err := api.NewClient(cfg)
 		if err != nil {
 			return err

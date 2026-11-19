@@ -4,8 +4,11 @@
 package expand
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/netip"
 	"slices"
@@ -28,6 +31,56 @@ const (
 	WANSubnet  = "10.255.0.0/24"
 	wanStride  = 20 // WAN addresses per datacenter
 )
+
+// Rand is where generated tokens and the gossip key come from; tests
+// replace it to get stable output.
+var Rand io.Reader = rand.Reader
+
+// ACLSetup is the process that creates the agent token once the ACL
+// primary's leader is up; it runs on <dc>-server-1.
+const ACLSetup = "acl-setup"
+
+// ACLReadyLine is what acl-setup logs when the agent token exists.
+const ACLReadyLine = "parker: ACLs set up"
+
+type secrets struct{ management, agent, gossip string }
+
+func newSecrets() (secrets, error) {
+	uuid := func() (string, error) {
+		b := make([]byte, 16)
+		if _, err := io.ReadFull(Rand, b); err != nil {
+			return "", err
+		}
+		b[6] = b[6]&0x0f | 0x40
+		b[8] = b[8]&0x3f | 0x80
+		return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+	}
+	var s secrets
+	var err error
+	if s.management, err = uuid(); err != nil {
+		return s, err
+	}
+	if s.agent, err = uuid(); err != nil {
+		return s, err
+	}
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(Rand, key); err != nil {
+		return s, err
+	}
+	s.gossip = base64.StdEncoding.EncodeToString(key)
+	return s, nil
+}
+
+func aclOn(d *spec.Inheritable, dc *spec.Datacenter) bool {
+	on := false
+	if d.ACL != nil {
+		on = *d.ACL
+	}
+	if dc.ACL != nil {
+		on = *dc.ACL
+	}
+	return on
+}
 
 func addrAt(base netip.Addr, off int) string {
 	a := base
@@ -124,8 +177,40 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		}
 	}
 
+	if c.Federated() {
+		for _, dcName := range dcNames {
+			if aclOn(defaults, c.Datacenters[dcName]) != aclOn(defaults, c.Datacenters[primary]) {
+				return fmt.Errorf("consul.datacenters.%s.acl: federated datacenters must all have acl on or all off (set it under consul.defaults)", dcName)
+			}
+		}
+	}
+	var sec secrets
+	for _, dcName := range dcNames {
+		if aclOn(defaults, c.Datacenters[dcName]) {
+			var err error
+			if sec, err = newSecrets(); err != nil {
+				return err
+			}
+			break
+		}
+	}
+
 	for i, dcName := range dcNames {
 		dc := c.Datacenters[dcName]
+		acl := aclOn(defaults, dc)
+		// Without federation every dc is its own primary.
+		dcPrimary := dcName
+		if c.Federated() {
+			dcPrimary = primary
+		}
+		token := ""
+		if acl {
+			token = sec.management
+		}
+		aclDeps := map[string]*spec.Dep{}
+		if acl {
+			aclDeps[dcPrimary+"-server-1/"+ACLSetup] = &spec.Dep{Condition: "ready"}
+		}
 		subnet := dc.Subnet
 		if subnet == "" {
 			subnet = fmt.Sprintf("10.%d.0.0/24", i+1)
@@ -155,7 +240,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			cfg := map[string]any{
 				"node_name":            name,
 				"datacenter":           dcName,
-				"primary_datacenter":   primary,
+				"primary_datacenter":   dcPrimary,
 				"data_dir":             VarNodeDir + "/data",
 				"server":               true,
 				"bootstrap_expect":     n,
@@ -167,7 +252,19 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				"disable_update_check": true,
 				"ui_config":            map[string]any{"enabled": ui && s == 0},
 			}
-			ready := &spec.Ready{Consul: &spec.ConsulCheck{Leader: true}, Timeout: "90s"}
+			ready := &spec.Ready{Consul: &spec.ConsulCheck{Leader: true, Token: token}, Timeout: "90s"}
+			if acl {
+				tokens := map[string]any{"agent": sec.agent}
+				aclCfg := map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true, "tokens": tokens}
+				if dcName == dcPrimary {
+					tokens["initial_management"] = sec.management
+				} else {
+					aclCfg["enable_token_replication"] = true
+					tokens["replication"] = sec.management
+				}
+				cfg["acl"] = aclCfg
+				cfg["encrypt"] = sec.gossip
+			}
 			attach := map[string]*spec.Attachment{lan: {IP: ip}}
 			if c.Federated() {
 				// Serf LAN on the dc network, serf WAN on the wan network;
@@ -202,6 +299,18 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 			serverRefs = append(serverRefs, key+"/consul")
 		}
+		if acl && dcName == dcPrimary {
+			deps := map[string]*spec.Dep{}
+			for _, r := range serverRefs {
+				deps[r] = &spec.Dep{Condition: "ready"}
+			}
+			out.Nodes[dcName+"-server-1"].Processes[ACLSetup] = &spec.Process{
+				Run:       spec.Command{VarParker, ACLSetup, "--addr", "127.0.0.1:8500", "--agent-token", sec.agent},
+				Env:       map[string]string{"CONSUL_HTTP_TOKEN": sec.management},
+				DependsOn: deps,
+				ReadyWhen: &spec.Ready{Log: ACLReadyLine, Timeout: "60s"},
+			}
+		}
 
 		clientOff := 100
 		for _, nodeName := range slices.Sorted(maps.Keys(dc.Nodes)) {
@@ -234,7 +343,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				var regs []any
 				for _, svcName := range slices.Sorted(maps.Keys(services)) {
 					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
-					reg, proc := expandService(svcName, svc)
+					reg, proc := expandService(svcName, svc, token)
+					if acl {
+						reg["token"] = sec.agent // registers and syncs the service
+					}
 					regs = append(regs, reg)
 					if proc != nil {
 						rn.Processes[svcName] = proc
@@ -245,7 +357,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					cfg := map[string]any{
 						"node_name":            name,
 						"datacenter":           dcName,
-						"primary_datacenter":   primary,
+						"primary_datacenter":   dcPrimary,
 						"data_dir":             VarNodeDir + "/data",
 						"server":               false,
 						"bind_addr":            ip,
@@ -261,17 +373,23 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if len(regs) > 0 {
 						cfg["services"] = regs
 					}
+					if acl {
+						cfg["acl"] = map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true,
+							"tokens": map[string]any{"agent": sec.agent}}
+						cfg["encrypt"] = sec.gossip
+					}
 					deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Client.Cfg(), dc.Client.Cfg(), node.Config)
 					rn.Files["consul.json"] = mustJSON(cfg)
 					deps := map[string]*spec.Dep{}
 					for _, r := range serverRefs {
 						deps[r] = &spec.Dep{Condition: "ready"}
 					}
+					maps.Copy(deps, aclDeps)
 					rn.Processes["consul"] = &spec.Process{
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
 						DependsOn: deps,
 						ReadyWhen: &spec.Ready{
-							Consul:  &spec.ConsulCheck{Members: ">=" + strconv.Itoa(n+1)},
+							Consul:  &spec.ConsulCheck{Members: ">=" + strconv.Itoa(n+1), Token: token},
 							Timeout: "60s",
 						},
 					}
@@ -296,7 +414,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 
 // expandService returns the agent service registration and, when the
 // service has a run: command, the process that runs it.
-func expandService(name string, svc *spec.Service) (map[string]any, *spec.Process) {
+func expandService(name string, svc *spec.Service, token string) (map[string]any, *spec.Process) {
 	reg := map[string]any{"name": name}
 	if svc.Port > 0 {
 		reg["port"] = svc.Port
@@ -327,7 +445,7 @@ func expandService(name string, svc *spec.Service) (map[string]any, *spec.Proces
 	if svc.Port > 0 {
 		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "30s"}
 		if check != "none" {
-			p.ReadyWhen.Consul = &spec.ConsulCheck{ServiceHealthy: name}
+			p.ReadyWhen.Consul = &spec.ConsulCheck{ServiceHealthy: name, Token: token}
 		}
 	}
 	return reg, p

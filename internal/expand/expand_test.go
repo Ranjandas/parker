@@ -1,10 +1,13 @@
 package expand
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -171,5 +174,117 @@ func TestWANSubnetOverride(t *testing.T) {
 	}
 	if low.Networks["wan"].Subnet != "192.168.250.0/24" {
 		t.Errorf("subnet %s", low.Networks["wan"].Subnet)
+	}
+}
+
+// zeros makes generated secrets stable.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+func TestACL(t *testing.T) {
+	Rand = zeros{}
+	defer func() { Rand = rand.Reader }()
+	low, err := Expand(load(t, "../../examples/acl.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const mgmt = "00000000-0000-4000-8000-000000000000"
+	srv := agentConfig(t, low.Nodes["dc1-server-1"])
+	acl, _ := srv["acl"].(map[string]any)
+	if acl["enabled"] != true || acl["default_policy"] != "deny" {
+		t.Errorf("server acl: %v", acl)
+	}
+	tokens, _ := acl["tokens"].(map[string]any)
+	if tokens["initial_management"] != mgmt || tokens["agent"] != mgmt {
+		t.Errorf("server tokens: %v", tokens)
+	}
+	if srv["encrypt"] != base64.StdEncoding.EncodeToString(make([]byte, 32)) {
+		t.Errorf("encrypt: %v", srv["encrypt"])
+	}
+	cli := agentConfig(t, low.Nodes["dc1-web"])
+	ctokens := cli["acl"].(map[string]any)["tokens"].(map[string]any)
+	if _, ok := ctokens["initial_management"]; ok {
+		t.Error("clients must not get the management token")
+	}
+	if cli["encrypt"] != srv["encrypt"] {
+		t.Error("clients need the gossip key")
+	}
+	if reg := cli["services"].([]any)[0].(map[string]any); reg["token"] != mgmt {
+		t.Errorf("service registration token: %v", reg)
+	}
+
+	setup := low.Nodes["dc1-server-1"].Processes[ACLSetup]
+	if setup == nil || setup.Env["CONSUL_HTTP_TOKEN"] != mgmt || setup.ReadyWhen.Log != ACLReadyLine {
+		t.Fatalf("acl-setup: %+v", setup)
+	}
+	if len(setup.DependsOn) != 3 {
+		t.Errorf("acl-setup deps: %v", setup.DependsOn)
+	}
+	if _, ok := low.Nodes["dc1-server-2"].Processes[ACLSetup]; ok {
+		t.Error("acl-setup runs once per primary dc")
+	}
+	if d := low.Nodes["dc1-web"].Processes["consul"].DependsOn["dc1-server-1/"+ACLSetup]; d == nil || d.Condition != "ready" {
+		t.Error("clients wait for acl-setup")
+	}
+	for _, ref := range []struct{ node, proc string }{{"dc1-server-2", "consul"}, {"dc1-web", "consul"}, {"dc1-web", "web"}} {
+		if r := low.Nodes[ref.node].Processes[ref.proc].ReadyWhen.Consul; r == nil || r.Token != mgmt {
+			t.Errorf("%s/%s readiness token: %+v", ref.node, ref.proc, r)
+		}
+	}
+}
+
+func TestACLOffByDefault(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, n := range low.Nodes {
+		if _, ok := n.Processes[ACLSetup]; ok {
+			t.Errorf("%s has acl-setup", name)
+		}
+		if cfg := agentConfig(t, n); cfg["acl"] != nil || cfg["encrypt"] != nil {
+			t.Errorf("%s: acl %v encrypt %v", name, cfg["acl"], cfg["encrypt"])
+		}
+	}
+}
+
+func TestACLFederated(t *testing.T) {
+	f := load(t, "../../examples/federation.yaml")
+	on := true
+	f.Consul.Defaults = &spec.Inheritable{ACL: &on}
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := low.Nodes["dc2-server-1"].Processes[ACLSetup]; ok {
+		t.Error("secondary dc runs acl-setup")
+	}
+	sec := agentConfig(t, low.Nodes["dc2-server-1"])["acl"].(map[string]any)
+	if sec["enable_token_replication"] != true || sec["tokens"].(map[string]any)["replication"] == nil {
+		t.Errorf("secondary acl: %v", sec)
+	}
+	if d := low.Nodes["dc2-api"].Processes["consul"].DependsOn["dc1-server-1/"+ACLSetup]; d == nil {
+		t.Error("dc2 clients wait for the primary's acl-setup")
+	}
+
+	off := false
+	f = load(t, "../../examples/federation.yaml")
+	f.Consul.Defaults = &spec.Inheritable{ACL: &on}
+	f.Consul.Datacenters["dc2"].ACL = &off
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "all have acl on or all off") {
+		t.Errorf("mixed acl: %v", err)
+	}
+}
+
+func TestPrimaryPerDCWithoutFederation(t *testing.T) {
+	f := load(t, "../../examples/federation.yaml")
+	f.Consul.Federation = nil
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := agentConfig(t, low.Nodes["dc2-server-1"])["primary_datacenter"]; p != "dc2" {
+		t.Errorf("primary_datacenter %v", p)
 	}
 }
