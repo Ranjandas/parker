@@ -488,6 +488,13 @@
           "type": "string",
           "description": "Version overrides versions.\u003cbinary\u003e for this process."
         },
+        "uses": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Uses names other pinned binaries the process runs (consul connect\nenvoy starts envoy); they are fetched and put on PATH."
+        },
         "env": {
           "additionalProperties": {
             "type": "string"
@@ -663,6 +670,59 @@
         "register": {
           "type": "object",
           "description": "Register is merged into the Consul service registration as is."
+        },
+        "connect": {
+          "type": "string",
+          "enum": [
+            "none",
+            "sidecar"
+          ],
+          "description": "Connect puts the service in the mesh: sidecar registers a sidecar\nproxy and runs Envoy for it (needs versions.envoy); none (default)\nleaves it out."
+        },
+        "upstreams": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "maximum": 65535,
+                "minimum": 1
+              },
+              {
+                "properties": {
+                  "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "description": "Port to bind on 127.0.0.1."
+                  },
+                  "dc": {
+                    "type": "string",
+                    "description": "DC of the destination, when not the caller's."
+                  },
+                  "peer": {
+                    "type": "string",
+                    "description": "Peer the destination is imported from (cluster peering)."
+                  },
+                  "partition": {
+                    "type": "string",
+                    "description": "Partition of the destination (Enterprise)."
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "description": "Namespace of the destination (Enterprise)."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "port"
+                ]
+              }
+            ],
+            "description": "A local port, or {port, dc, peer, partition, namespace}."
+          },
+          "type": "object",
+          "description": "Upstreams the sidecar binds on 127.0.0.1, keyed by destination\nservice: api: 9091, or {port, dc, peer, partition, namespace}."
         }
       },
       "additionalProperties": false,

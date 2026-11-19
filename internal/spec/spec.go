@@ -331,6 +331,43 @@ type Service struct {
 	Check string `yaml:"check,omitempty" jsonschema:"enum=http,enum=tcp,enum=none"`
 	// Register is merged into the Consul service registration as is.
 	Register map[string]any `yaml:"register,omitempty"`
+	// Connect puts the service in the mesh: sidecar registers a sidecar
+	// proxy and runs Envoy for it (needs versions.envoy); none (default)
+	// leaves it out.
+	Connect string `yaml:"connect,omitempty" jsonschema:"enum=none,enum=sidecar"`
+	// Upstreams the sidecar binds on 127.0.0.1, keyed by destination
+	// service: api: 9091, or {port, dc, peer, partition, namespace}.
+	Upstreams map[string]*Upstream `yaml:"upstreams,omitempty"`
+}
+
+// Upstream is a destination reached through the sidecar on a local port.
+// A bare number is the port.
+type Upstream struct {
+	// Port to bind on 127.0.0.1.
+	Port int `yaml:"port" jsonschema:"minimum=1,maximum=65535"`
+	// DC of the destination, when not the caller's.
+	DC string `yaml:"dc,omitempty"`
+	// Peer the destination is imported from (cluster peering).
+	Peer string `yaml:"peer,omitempty"`
+	// Partition of the destination (Enterprise).
+	Partition string `yaml:"partition,omitempty"`
+	// Namespace of the destination (Enterprise).
+	Namespace string `yaml:"namespace,omitempty"`
+}
+
+func (u *Upstream) UnmarshalYAML(unmarshal func(any) error) error {
+	var port int
+	if err := unmarshal(&port); err == nil {
+		*u = Upstream{Port: port}
+		return nil
+	}
+	type plain Upstream
+	var p plain
+	if err := unmarshal(&p); err != nil {
+		return err
+	}
+	*u = Upstream(p)
+	return nil
 }
 
 // ---------------------------------------------------------------- low level
@@ -379,6 +416,9 @@ type Process struct {
 	Run Command `yaml:"run"`
 	// Version overrides versions.<binary> for this process.
 	Version string `yaml:"version,omitempty"`
+	// Uses names other pinned binaries the process runs (consul connect
+	// envoy starts envoy); they are fetched and put on PATH.
+	Uses []string `yaml:"uses,omitempty"`
 	// Env for the process.
 	Env map[string]string `yaml:"env,omitempty"`
 	// DependsOn lists processes to wait for, keyed by "<node>/<process>"

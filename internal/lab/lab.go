@@ -194,7 +194,7 @@ func allowForwarding(name string, low *spec.File, dryRun bool, say func(string, 
 func Needs(f *spec.File, product string) bool {
 	for _, n := range f.Nodes {
 		for _, p := range n.Processes {
-			if len(p.Run) > 0 && p.Run[0] == product {
+			if len(p.Run) > 0 && p.Run[0] == product || slices.Contains(p.Uses, product) {
 				return true
 			}
 		}

@@ -1,0 +1,33 @@
+# examples/mesh.yaml with ACLs (default deny, so an allow intention first)
+# and TLS (Envoy reaches its agent over gRPC TLS on 8503).
+parker: v1alpha1
+name: meshsec
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults: { acl: true, tls: true }
+  datacenters:
+    dc1:
+      servers: 3
+      service_defaults: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: 9091 }
+        api:
+          service: { port: 9090 }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - exec: { on: dc1/server-1, run: "consul intention create -allow web api" }
+    - name: web reaches api through the mesh
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 60s
+    - exec: { on: dc1/server-1, run: "consul intention create -replace -deny web api" }
+    - name: the intention cuts it
+      assert:
+        exec: { on: dc1/web, run: "! curl -sf -m 2 http://127.0.0.1:9091/" }
+        within: 30s

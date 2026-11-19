@@ -1,0 +1,32 @@
+# Service mesh with sidecars: web reaches api through its Envoy sidecar on
+# 127.0.0.1:9091. The scenario checks the path works, then that an intention
+# denying it stops it.
+parker: v1alpha1
+name: mesh
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      service_defaults: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: 9091 }
+        api:
+          service: { port: 9090 }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - name: web reaches api through the mesh
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 60s
+    - exec: { on: dc1/server-1, run: "consul intention create -deny web api" }
+    - name: the intention cuts it
+      assert:
+        exec: { on: dc1/web, run: "! curl -sf -m 2 http://127.0.0.1:9091/" }
+        within: 30s

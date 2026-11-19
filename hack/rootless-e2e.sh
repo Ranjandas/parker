@@ -144,7 +144,10 @@ pf=$!
 sleep 1
 scheme=http port=8500 cacert=
 if grep "tls: true" "$F" >/dev/null; then
-  # HTTPS only; the server certificates carry the proxy names too.
+  # HTTPS only; the server certificates carry the proxy names too (a
+  # client's auto_encrypt certificate doesn't), so go to a server.
+  first=$($P status "$F" | awk '$1 ~ /-server-/ && !n++ {print $1}')
+  short=${first#*-}; dc=${first%%-*}
   scheme=https port=8501 cacert="--cacert $PARKER_RUN_DIR/$lab/nodes/$first/ca.pem"
   kill $pf; wait $pf 2>/dev/null || true
   $P port-forward "$F" "$first" 18500:8501 </dev/null >/dev/null 2>&1 &
