@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
+	"github.com/Ranjandas/parker/internal/scenario"
 )
 
 type fakeClient struct {
@@ -247,5 +248,194 @@ func TestProcState(t *testing.T) {
 		if got := ProcState(p); got != want {
 			t.Errorf("%+v: %s, want %s", p, got, want)
 		}
+	}
+}
+
+type runCall struct{ lab, scenario, inline string }
+
+// fakeRun records Run calls and answers with lines and err.
+func fakeRun(calls *[]runCall, lines []string, err error) func(context.Context, string, string, string, func(string)) error {
+	return func(_ context.Context, lab, sc, inline string, line func(string)) error {
+		*calls = append(*calls, runCall{lab, sc, inline})
+		for _, l := range lines {
+			line(l)
+		}
+		return err
+	}
+}
+
+func cmdline(s string) []tea.Msg {
+	return append([]tea.Msg{key(":")}, append(typed(s), key("enter"))...)
+}
+
+func TestKillAsksFirst(t *testing.T) {
+	var calls []runCall
+	m := tea.Model(New(Options{Client: sample(), Lab: "a", Run: fakeRun(&calls, []string{"[ 0s] step 1: kill dc1-server-1"}, nil)}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("K"))
+	if v := m.View(); !strings.Contains(v, "kill dc1-server-1?") {
+		t.Fatalf("no confirmation:\n%s", v)
+	}
+	m = drive(t, m, key("n"))
+	if len(calls) != 0 || !strings.Contains(m.View(), "cancelled") {
+		t.Fatalf("n should cancel: %v\n%s", calls, m.View())
+	}
+	m = drive(t, m, key("K"), key("y"))
+	if len(calls) != 1 || calls[0] != (runCall{"a", "", "steps:\n- kill: dc1-server-1\n"}) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	if v := m.View(); !strings.Contains(v, "kill dc1-server-1: done") {
+		t.Errorf("no result:\n%s", v)
+	}
+}
+
+func TestToggleKeysFollowState(t *testing.T) {
+	c := sample()
+	p := c.status["a"].Nodes[0].Processes[0]
+	p.Alive, p.Stopped = false, true
+	var calls []runCall
+	m := tea.Model(New(Options{Client: c, Lab: "a", Run: fakeRun(&calls, nil, nil)}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("S"))
+	// Starting is safe: no confirmation.
+	if len(calls) != 1 || !strings.Contains(calls[0].inline, "start: dc1-server-1") {
+		t.Fatalf("S on a stopped node: %+v", calls)
+	}
+	p.Alive, p.Stopped, p.Paused = true, false, true
+	m = drive(t, m, m.(Model).refresh()(), key("P"))
+	if len(calls) != 2 || !strings.Contains(calls[1].inline, "resume: dc1-server-1") {
+		t.Fatalf("P on a paused node: %+v", calls)
+	}
+	p.Paused = false
+	m = drive(t, m, m.(Model).refresh()(), key("P"), key("y"))
+	m = drive(t, m, key("S"), key("y"))
+	if len(calls) != 4 || !strings.Contains(calls[2].inline, "pause: dc1-server-1") || !strings.Contains(calls[3].inline, "stop: dc1-server-1") {
+		t.Fatalf("P, S on a running node: %+v", calls)
+	}
+}
+
+func TestPartitionHealAndErrors(t *testing.T) {
+	var calls []runCall
+	run := fakeRun(&calls, nil, nil)
+	m := tea.Model(New(Options{Client: sample(), Lab: "a", Run: run}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("x"))
+	if v := m.View(); !strings.Contains(v, "partition dc1-server-1 from the rest?") {
+		t.Fatalf("x:\n%s", v)
+	}
+	m = drive(t, m, key("y"))
+	m = drive(t, m, cmdline("partition dc1-server-1 dc2")...)
+	m = drive(t, m, key("y"))
+	m = drive(t, m, key("H"))
+	want := []string{
+		"steps:\n- partition:\n  - dc1-server-1\n",
+		"steps:\n- partition:\n  - dc1-server-1\n  - dc2\n",
+		"steps:\n- heal: all\n",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	for i, w := range want {
+		if calls[i].inline != w {
+			t.Errorf("call %d inline %q, want %q", i, calls[i].inline, w)
+		}
+	}
+
+	// A failed action says why.
+	c := sample()
+	m = tea.Model(New(Options{Client: c, Lab: "a", Run: fakeRun(&calls, nil, connectErr("needs the lab supervised"))}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("R"), key("y"))
+	if v := m.View(); !strings.Contains(v, "restart dc1-server-1: needs the lab supervised") {
+		t.Errorf("error not shown:\n%s", v)
+	}
+	m = drive(t, m, cmdline("kill a b")...)
+	if v := m.View(); !strings.Contains(v, "kill takes one selector") {
+		t.Errorf("bad args:\n%s", v)
+	}
+
+	// Without the Run API, actions explain themselves.
+	m = tea.Model(New(Options{Client: c, Lab: "a"}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("H"))
+	if v := m.View(); !strings.Contains(v, "actions need the daemon") {
+		t.Errorf("no Run:\n%s", v)
+	}
+}
+
+func TestRunScenarioView(t *testing.T) {
+	var calls []runCall
+	lines := []string{"[    0s] step 1: wait dc1", "[  1.0s] PASS: 1 steps"}
+	m := tea.Model(New(Options{Client: sample(), Lab: "a", Run: fakeRun(&calls, lines, nil)}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20}, m.(Model).refresh()())
+	m = drive(t, m, cmdline("run leader-loss")...)
+	mm := m.(Model)
+	if mm.view != viewRun || len(calls) != 1 || calls[0].scenario != "leader-loss" || calls[0].inline != "" {
+		t.Fatalf("view %d calls %+v", mm.view, calls)
+	}
+	v := mm.View()
+	for _, w := range []string{"a › scenario leader-loss", "step 1: wait dc1", "PASS: 1 steps", "scenario passed"} {
+		if !strings.Contains(v, w) {
+			t.Errorf("run view missing %q:\n%s", w, v)
+		}
+	}
+	m = drive(t, m, key("esc"))
+	if m.(Model).view != viewNodes {
+		t.Error("esc from the run view")
+	}
+
+	m = tea.Model(New(Options{Client: sample(), Lab: "a", Run: fakeRun(&calls, nil, connectErr("step 2 (assert consul): no leader"))}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20}, m.(Model).refresh()())
+	m = drive(t, m, cmdline("run")...)
+	if v := m.View(); !strings.Contains(v, "scenario failed: step 2") || !strings.Contains(v, "a › scenario") {
+		t.Errorf("failed run:\n%s", v)
+	}
+}
+
+func TestOneActionAtATime(t *testing.T) {
+	m := New(Options{Client: sample(), Lab: "a", Run: func(context.Context, string, string, string, func(string)) error { return nil }})
+	m.busy = "kill dc1-server-1"
+	st, _ := scenario.FaultStep("heal", nil)
+	mm, cmd := m.act("heal all", st)
+	if cmd != nil || !strings.Contains(mm.View(), "still running: kill dc1-server-1") {
+		t.Errorf("second action started:\n%s", mm.View())
+	}
+}
+
+func TestPortForward(t *testing.T) {
+	type fw struct{ lab, node, local, remote string }
+	var got []fw
+	var ctxs []context.Context
+	forward := func(ctx context.Context, lab, node, local, remote string) (string, error) {
+		got, ctxs = append(got, fw{lab, node, local, remote}), append(ctxs, ctx)
+		if remote == "9999" {
+			return "", connectErr("address in use")
+		}
+		return "127.0.0.1:" + local, nil
+	}
+	m := tea.Model(New(Options{Client: sample(), Lab: "a", Forward: forward}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()())
+	m = drive(t, m, cmdline("pf 18500:8500")...)
+	if len(got) != 1 || got[0] != (fw{"a", "dc1-server-1", "18500", "8500"}) {
+		t.Fatalf("forward calls %+v", got)
+	}
+	if v := m.View(); !strings.Contains(v, "forwarding 127.0.0.1:18500 → dc1-server-1:8500") || !strings.Contains(v, "1 port-forwards") {
+		t.Errorf("view:\n%s", v)
+	}
+	m = drive(t, m, key("down"))
+	m = drive(t, m, cmdline("pf 8080")...)
+	if got[1] != (fw{"a", "dc2-web-1", "8080", "8080"}) {
+		t.Errorf("second forward %+v", got[1])
+	}
+	m = drive(t, m, cmdline("pf 9999")...)
+	if v := m.View(); !strings.Contains(v, "port-forward: address in use") {
+		t.Errorf("error:\n%s", v)
+	}
+	m = drive(t, m, cmdline("pf x")...)
+	if v := m.View(); !strings.Contains(v, "takes port numbers") {
+		t.Errorf("bad port:\n%s", v)
+	}
+	m = drive(t, m, cmdline("pf")...)
+	if v := m.View(); !strings.Contains(v, "→ dc2-web-1:8080") {
+		t.Errorf("list:\n%s", v)
+	}
+	m = drive(t, m, cmdline("pf stop")...)
+	if v := m.View(); !strings.Contains(v, "stopped 2 port-forwards") || ctxs[0].Err() == nil || ctxs[1].Err() == nil || ctxs[2].Err() == nil {
+		t.Errorf("stop:\n%s", v)
 	}
 }
