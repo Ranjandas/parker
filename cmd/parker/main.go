@@ -17,6 +17,7 @@ import (
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
+	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -133,23 +134,12 @@ func fetchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for k, v := range low.Versions {
-				b, err := fetch.Binary(k, v, os.Stdout)
+			for _, pv := range wantedBinaries(low) {
+				b, err := fetch.Binary(pv[0], pv[1], os.Stdout)
 				if err != nil {
 					return err
 				}
-				say("%s %s: %s", k, v, b)
-			}
-			for _, n := range low.Nodes {
-				for _, p := range n.Processes {
-					if p.Version != "" && len(p.Run) > 0 {
-						b, err := fetch.Binary(p.Run[0], p.Version, os.Stdout)
-						if err != nil {
-							return err
-						}
-						say("%s %s: %s", p.Run[0], p.Version, b)
-					}
-				}
+				say("%s %s: %s", pv[0], pv[1], b)
 			}
 			return nil
 		},
@@ -168,4 +158,38 @@ func fakeServiceCmd() *cobra.Command {
 	c.Flags().StringVar(&name, "name", "fake", "service name")
 	c.Flags().IntVar(&port, "port", 8080, "listen port")
 	return c
+}
+
+// wantedBinaries is every product@version a lab can run: the pinned
+// versions, per-process overrides and the targets of scenario upgrades.
+func wantedBinaries(low *spec.File) [][2]string {
+	seen := map[[2]string]bool{}
+	var out [][2]string
+	add := func(p, v string) {
+		k := [2]string{p, v}
+		if p != "" && v != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(low.Versions)) {
+		add(k, low.Versions[k])
+	}
+	for _, n := range slices.Sorted(maps.Keys(low.Nodes)) {
+		for _, pn := range slices.Sorted(maps.Keys(low.Nodes[n].Processes)) {
+			if p := low.Nodes[n].Processes[pn]; p.Version != "" && len(p.Run) > 0 {
+				add(p.Run[0], p.Version)
+			}
+		}
+	}
+	scs := []*spec.Scenario{low.Scenario}
+	for _, k := range slices.Sorted(maps.Keys(low.Scenarios)) {
+		scs = append(scs, low.Scenarios[k])
+	}
+	for _, sc := range scs {
+		for _, u := range scenario.Upgrades(sc) {
+			add(u.Product(), u.To)
+		}
+	}
+	return out
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-yaml"
+	"github.com/hashicorp/consul/api"
 
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -339,5 +340,60 @@ func TestScenarioLabSnapshotAndDC(t *testing.T) {
 	low.Nodes["box"].Labels = &spec.NodeLabels{DC: "dc2"}
 	if _, err := l.dc(""); err == nil || !strings.Contains(err.Error(), "say which dc: (have dc1, dc2)") {
 		t.Errorf("two dcs: %v", err)
+	}
+}
+
+func TestUpgradeOrder(t *testing.T) {
+	low := &spec.File{Nodes: map[string]*spec.RawNode{}}
+	add := func(n, dc, role string) {
+		low.Nodes[n] = &spec.RawNode{Labels: &spec.NodeLabels{DC: dc, Role: role}}
+	}
+	add("dc1-server-1", "dc1", "server")
+	add("dc1-server-2", "dc1", "server")
+	add("dc1-server-3", "dc1", "server")
+	add("dc2-server-1", "dc2", "server")
+	add("dc1-web", "dc1", "client")
+	add("dc1-gw", "dc1", "gateway")
+	asked := []string{}
+	leader := func(dc string) (string, error) {
+		asked = append(asked, dc)
+		return "dc1-server-1", nil
+	}
+	got, err := upgradeOrder(low, []string{"dc1-web", "dc1-server-1", "dc2-server-1", "dc1-gw", "dc1-server-3", "dc1-server-2"}, leader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "dc1-server-2 dc1-server-3 dc1-server-1 dc2-server-1 dc1-gw dc1-web"
+	if strings.Join(got, " ") != want {
+		t.Errorf("order = %v, want %s", got, want)
+	}
+	// A lone server in a dc needs no leader lookup.
+	if strings.Join(asked, " ") != "dc1" {
+		t.Errorf("asked for leaders of %v", asked)
+	}
+	if _, err := upgradeOrder(low, []string{"dc1-server-1", "dc1-server-2"}, func(string) (string, error) {
+		return "", errors.New("no leader")
+	}); err == nil || !strings.Contains(err.Error(), "leader goes last") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestHealthyOn(t *testing.T) {
+	srv := func(name, v string, ok bool) api.ServerHealth {
+		return api.ServerHealth{Name: name, Version: v, Healthy: ok}
+	}
+	for _, c := range []struct {
+		h    api.OperatorHealthReply
+		want string
+	}{
+		{api.OperatorHealthReply{Healthy: true, Servers: []api.ServerHealth{srv("server-1", "1.22.7", true), srv("server-2", "1.22.6", true)}}, ""},
+		{api.OperatorHealthReply{Healthy: true, Servers: []api.ServerHealth{srv("server-1", "1.22.6", true)}}, "still reports 1.22.6"},
+		{api.OperatorHealthReply{Healthy: false, Servers: []api.ServerHealth{srv("server-1", "1.22.7", true), srv("server-2", "1.22.6", false)}}, "unhealthy: server-2"},
+		{api.OperatorHealthReply{Healthy: true, Servers: []api.ServerHealth{srv("server-2", "1.22.7", true)}}, "doesn't list server-1"},
+	} {
+		err := healthyOn(&c.h, "server-1", "1.22.7")
+		if (c.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%+v: %v, want %q", c.h, err, c.want)
+		}
 	}
 }

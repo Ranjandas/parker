@@ -747,11 +747,37 @@
         "resume": {
           "type": "string",
           "description": "Resume continues paused processes (SIGCONT)."
+        },
+        "upgrade": {
+          "$ref": "#/$defs/UpgradeStep",
+          "description": "Upgrade moves the nodes to another version of a pinned binary, one\nnode at a time: servers before clients, the leader last, each one\nhealthy again before the next."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "description": "Step is one action, optionally delayed with at:."
+    },
+    "UpgradeStep": {
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "On is a selector: dc1/servers, dc1, ..."
+        },
+        "to": {
+          "type": "string",
+          "description": "To is the version to run, e.g. 1.22.8."
+        },
+        "binary": {
+          "type": "string",
+          "description": "Binary is the pinned binary to swap; default consul."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on",
+        "to"
+      ]
     }
   },
   "properties": {

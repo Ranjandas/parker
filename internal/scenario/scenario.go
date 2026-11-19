@@ -35,6 +35,26 @@ type Lab interface {
 	// Proc runs a process action (kill, stop, start, restart, pause,
 	// resume) on one node's processes.
 	Proc(ctx context.Context, action, node string) error
+	// UpgradeOrder sorts nodes into the order to upgrade them in.
+	UpgradeOrder(nodes []string) ([]string, error)
+	// Upgrade moves one node's product processes to version and waits for
+	// the node, and its cluster, to be healthy again.
+	Upgrade(ctx context.Context, node, product, version string) error
+}
+
+// Upgrades lists a scenario's upgrade steps, so their binaries can be
+// fetched up front.
+func Upgrades(sc *spec.Scenario) []*spec.UpgradeStep {
+	var out []*spec.UpgradeStep
+	if sc == nil {
+		return nil
+	}
+	for _, st := range sc.Steps {
+		if st != nil && st.Upgrade != nil {
+			out = append(out, st.Upgrade)
+		}
+	}
+	return out
 }
 
 // ProcActions are the step actions that act on nodes' processes.
@@ -119,7 +139,7 @@ func Validate(sc *spec.Scenario) error {
 func validateStep(st *spec.Step) error {
 	if n := len(actions(st)); n != 1 {
 		if n == 0 {
-			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ")")
+			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ", upgrade)")
 		}
 		return fmt.Errorf("one action per step, got %s", strings.Join(actions(st), ", "))
 	}
@@ -155,6 +175,9 @@ func validateStep(st *spec.Step) error {
 	if st.Snapshot != "" && st.Snapshot != "logs" {
 		return fmt.Errorf("snapshot: want logs, got %q", st.Snapshot)
 	}
+	if u := st.Upgrade; u != nil && (u.On == "" || u.To == "") {
+		return errors.New("upgrade: needs on: and to:")
+	}
 	for i, g := range st.Partition {
 		if len(g) == 0 || slices.Contains(g, "") {
 			return fmt.Errorf("partition: group %d is empty", i+1)
@@ -185,6 +208,9 @@ func actions(st *spec.Step) []string {
 	}
 	if st.Heal != "" {
 		a = append(a, "heal")
+	}
+	if st.Upgrade != nil {
+		a = append(a, "upgrade")
 	}
 	for _, x := range []struct{ name, sel string }{
 		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
@@ -222,6 +248,9 @@ func Selectors(sc *spec.Scenario) []string {
 		}
 		if _, sel := procTarget(st); sel != "" {
 			out = append(out, sel)
+		}
+		if st.Upgrade != nil {
+			out = append(out, st.Upgrade.On)
 		}
 	}
 	return out
@@ -277,6 +306,8 @@ func Label(st *spec.Step) string {
 		return "partition " + strings.Join(gs, " | ")
 	case st.Heal != "":
 		return "heal " + st.Heal
+	case st.Upgrade != nil:
+		return fmt.Sprintf("upgrade %s %s to %s", st.Upgrade.On, st.Upgrade.Product(), st.Upgrade.To)
 	}
 	if a, sel := procTarget(st); a != "" {
 		return a + " " + sel
@@ -408,6 +439,23 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 			return err
 		}
 		return l.Heal(nodes)
+
+	case st.Upgrade != nil:
+		u := st.Upgrade
+		nodes, err := l.Resolve(u.On)
+		if err != nil {
+			return err
+		}
+		if nodes, err = l.UpgradeOrder(nodes); err != nil {
+			return err
+		}
+		for _, n := range nodes {
+			say("  upgrading %s to %s %s", n, u.Product(), u.To)
+			if err := l.Upgrade(ctx, n, u.Product(), u.To); err != nil {
+				return fmt.Errorf("%s: %w", n, err)
+			}
+		}
+		return nil
 	}
 	if action, sel := procTarget(st); action != "" {
 		nodes, err := l.Resolve(sel)

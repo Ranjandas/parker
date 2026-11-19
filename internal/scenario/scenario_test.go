@@ -107,6 +107,20 @@ func (f *fakeLab) Proc(_ context.Context, action, node string) error {
 	return nil
 }
 
+func (f *fakeLab) UpgradeOrder(nodes []string) ([]string, error) {
+	out := slices.Clone(nodes)
+	slices.Reverse(out)
+	return out, nil
+}
+
+func (f *fakeLab) Upgrade(_ context.Context, node, product, version string) error {
+	f.log = append(f.log, "upgrade "+node+" "+product+"@"+version)
+	if node == f.procFail {
+		return errors.New("unhealthy")
+	}
+	return nil
+}
+
 func parse(t *testing.T, y string) *spec.Scenario {
 	t.Helper()
 	var sc spec.Scenario
@@ -319,5 +333,42 @@ func TestFaultValidationAndSelectors(t *testing.T) {
 	sc := parse(t, "steps:\n  - partition: [[a, b], c]\n  - heal: all\n  - heal: d\n  - pause: e\n")
 	if got := strings.Join(Selectors(sc), " "); got != "a b c d e" {
 		t.Errorf("Selectors = %q", got)
+	}
+}
+
+func TestUpgradeStep(t *testing.T) {
+	sc := parse(t, "steps:\n  - upgrade: { on: dc1/web, to: 1.22.8 }\n  - upgrade: { on: dc1/leader, to: 1.4.0, binary: nomad }\n")
+	f := &fakeLab{clk: &fakeClock{}}
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// In the lab's order (the fake reverses), one node at a time.
+	want := []string{"upgrade dc1-web-2 consul@1.22.8", "upgrade dc1-web-1 consul@1.22.8", "upgrade dc1-server-1 nomad@1.4.0"}
+	if !slices.Equal(f.log, want) {
+		t.Errorf("log = %v", f.log)
+	}
+	if !strings.Contains(out, "step 1: upgrade dc1/web consul to 1.22.8") || !strings.Contains(out, "upgrading dc1-web-2 to consul 1.22.8") {
+		t.Errorf("output:\n%s", out)
+	}
+
+	// A failed node stops the rollout there.
+	f = &fakeLab{clk: &fakeClock{}, procFail: "dc1-web-2"}
+	if _, err := run(t, parse(t, "steps:\n  - upgrade: { on: dc1/web, to: 1.22.8 }\n"), f); err == nil || !strings.Contains(err.Error(), "dc1-web-2: unhealthy") {
+		t.Errorf("err = %v", err)
+	}
+	if len(f.log) != 1 {
+		t.Errorf("kept going after a failure: %v", f.log)
+	}
+
+	if err := Validate(parse(t, "steps:\n  - upgrade: { on: dc1 }\n")); err == nil || !strings.Contains(err.Error(), "needs on: and to:") {
+		t.Errorf("validate: %v", err)
+	}
+	ups := Upgrades(parse(t, "steps:\n  - sleep: 1s\n  - upgrade: { on: dc1, to: 1.2.3 }\n"))
+	if len(ups) != 1 || ups[0].To != "1.2.3" || ups[0].Product() != "consul" {
+		t.Errorf("Upgrades = %+v", ups)
+	}
+	if got := Selectors(parse(t, "steps:\n  - upgrade: { on: dc1/servers, to: 1.2.3 }\n")); !slices.Equal(got, []string{"dc1/servers"}) {
+		t.Errorf("Selectors = %v", got)
 	}
 }

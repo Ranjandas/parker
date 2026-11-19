@@ -121,6 +121,10 @@ func (h *Handle) StopNode(ctx context.Context, node string) error {
 		return err
 	}
 	slices.Reverse(ps)
+	return stopProcs(ctx, ps)
+}
+
+func stopProcs(ctx context.Context, ps []*proc) error {
 	for _, p := range ps {
 		p.mu.Lock()
 		p.held = true
@@ -159,6 +163,10 @@ func (h *Handle) StartNode(ctx context.Context, node string) error {
 	if err != nil {
 		return err
 	}
+	return h.startProcs(ctx, ps)
+}
+
+func (h *Handle) startProcs(ctx context.Context, ps []*proc) error {
 	for _, p := range ps {
 		p.mu.Lock()
 		p.held = false
@@ -244,4 +252,37 @@ func (h *Handle) pause(node string, stop bool) error {
 		}
 	}
 	return nil
+}
+
+// UpgradeNode swaps the binary of the node's processes that run product
+// (consul) for bin, the given version of it: each is stopped, switched and
+// started again, waiting for its readiness check. The processes that
+// depend on it keep running.
+func (h *Handle) UpgradeNode(ctx context.Context, node, product, version, bin string) error {
+	ps, err := h.nodeProcs(node)
+	if err != nil {
+		return err
+	}
+	var hit []*proc
+	for _, p := range ps {
+		p.mu.Lock()
+		ok := len(p.spec.Run) > 0 && p.spec.Run[0] == product && len(p.argv) > 0
+		p.mu.Unlock()
+		if ok {
+			hit = append(hit, p)
+		}
+	}
+	if len(hit) == 0 {
+		return fmt.Errorf("node %s runs no %s", node, product)
+	}
+	if err := stopProcs(ctx, hit); err != nil {
+		return err
+	}
+	for _, p := range hit {
+		p.mu.Lock()
+		p.argv = append([]string{bin}, p.argv[1:]...)
+		p.version = version
+		p.mu.Unlock()
+	}
+	return h.startProcs(ctx, hit)
 }

@@ -64,6 +64,8 @@ type proc struct {
 	paused   bool          // SIGSTOPped
 	kick     chan struct{} // asks supervise to start it now (buffered 1)
 	runDone  chan struct{} // closed when the current run exits
+	argv     []string      // resolved command line; Upgrade swaps argv[0]
+	version  string        // pinned version of argv[0], when it has one
 }
 
 // ProcInfo is a snapshot of one supervised process.
@@ -74,8 +76,9 @@ type ProcInfo struct {
 	Ready      bool
 	Restarts   int
 	LogPath    string
-	Paused     bool // SIGSTOPped by pause
-	Held       bool // stopped by stop; no restarts until start
+	Paused     bool   // SIGSTOPped by pause
+	Held       bool   // stopped by stop; no restarts until start
+	Version    string // the pinned binary's version, after any upgrade
 }
 
 // Handle supervises a lab's processes after Run returns.
@@ -97,7 +100,7 @@ func (h *Handle) Snapshot() map[string]ProcInfo {
 	out := map[string]ProcInfo{}
 	for id, p := range h.procs {
 		p.mu.Lock()
-		out[id] = ProcInfo{Node: p.node, Name: p.name, Pid: p.pid, Alive: p.alive, Ready: p.isReady, Restarts: p.restarts, LogPath: p.logPath, Paused: p.paused, Held: p.held}
+		out[id] = ProcInfo{Node: p.node, Name: p.name, Pid: p.pid, Alive: p.alive, Ready: p.isReady, Restarts: p.restarts, LogPath: p.logPath, Paused: p.paused, Held: p.held, Version: p.version}
 		p.mu.Unlock()
 	}
 	return out
@@ -259,6 +262,10 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 	}
 	if key, ok := binaryKey(f, p.spec); ok {
 		argv[0] = bins[key]
+		_, v, _ := strings.Cut(key, "@")
+		p.mu.Lock()
+		p.version = v
+		p.mu.Unlock()
 	}
 	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
 	for k, v := range p.spec.Env {
@@ -267,7 +274,7 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 	logPath := filepath.Join(dir, p.name+".log")
 	nsPath := netsetup.NetnsPath(o.Lab, p.node)
 	p.mu.Lock()
-	p.logPath = logPath
+	p.logPath, p.argv = logPath, argv
 	p.mu.Unlock()
 
 	// start forks one run of the process; the returned channel yields its
@@ -277,6 +284,9 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 		if err != nil {
 			return nil, err
 		}
+		p.mu.Lock()
+		argv := slices.Clone(p.argv)
+		p.mu.Unlock()
 		cmd := exec.Command(argv[0], argv[1:]...)
 		cmd.Dir = dir
 		cmd.Stdout, cmd.Stderr = lf, lf
