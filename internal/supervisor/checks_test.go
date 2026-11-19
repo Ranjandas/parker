@@ -109,7 +109,11 @@ func fakeConsul(t *testing.T, leader string, alive int, healthyOn []string) *htt
 	mux.HandleFunc("/v1/status/leader", func(w http.ResponseWriter, r *http.Request) { js(w, leader) })
 	mux.HandleFunc("/v1/agent/members", func(w http.ResponseWriter, r *http.Request) {
 		var ms []map[string]any
-		for range alive {
+		n := alive
+		if r.URL.Query().Get("wan") == "1" {
+			n = alive * 2 // pretend another dc has as many servers
+		}
+		for range n {
 			ms = append(ms, map[string]any{"Name": "n", "Status": 1})
 		}
 		ms = append(ms, map[string]any{"Name": "gone", "Status": 4})
@@ -144,6 +148,8 @@ func TestCheckOnceConsul(t *testing.T) {
 		{"no leader", "", 3, nil, spec.ConsulCheck{Leader: true}, false},
 		{"enough members", "", 4, nil, spec.ConsulCheck{Members: ">=4"}, true},
 		{"too few members", "", 3, nil, spec.ConsulCheck{Members: ">=4"}, false},
+		{"enough wan members", "", 3, nil, spec.ConsulCheck{WANMembers: ">=6"}, true},
+		{"too few wan members", "", 2, nil, spec.ConsulCheck{WANMembers: ">=6"}, false},
 		{"service passing here", "", 1, []string{"web-1"}, spec.ConsulCheck{ServiceHealthy: "web"}, true},
 		{"service passing elsewhere", "", 1, []string{"web-2"}, spec.ConsulCheck{ServiceHealthy: "web"}, false},
 	} {
