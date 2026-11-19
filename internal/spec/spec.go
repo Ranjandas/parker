@@ -130,6 +130,9 @@ type Process struct {
 	Env       map[string]string `yaml:"env,omitempty"`
 	DependsOn map[string]*Dep   `yaml:"depends_on,omitempty"` // key: "<node>/<process>"
 	ReadyWhen *Ready            `yaml:"ready_when,omitempty"`
+	// Restart is no (default), on-failure or always. It applies once the lab
+	// is up, and only while `parker daemon` supervises the lab.
+	Restart string `yaml:"restart,omitempty"`
 }
 
 type Dep struct {

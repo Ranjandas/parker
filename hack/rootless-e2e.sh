@@ -10,6 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 F=${1:-examples/minimal.yaml}
 ./bin/parker fetch "$F" >/dev/null
+./bin/parker fetch hack/e2e/restart.yaml >/dev/null
 
 exec unshare -Urnm --propagation private bash -s "$F" <<'INNER'
 set -euo pipefail
@@ -25,13 +26,39 @@ fi
 ip link set lo up
 
 $P up "$F"
-first=$($P status "$F" | head -1)
+$P daemon status
+echo "--- status"
+$P status "$F"
+first=$($P status "$F" | awk 'NR==3 {print $1}')
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
+echo "--- logs"
+$P logs "$F" "$first" -n 3
 echo "--- re-up is idempotent"
 $P up "$F" >/dev/null && echo ok
+
+echo "--- restart policy"
+R=hack/e2e/restart.yaml
+$P up "$R" >/dev/null
+pid=$($P status "$R" | awk '$1=="sleeper" {print $4}')
+kill "$pid"
+for _ in $(seq 50); do
+  line=$($P status "$R" | awk '$1=="sleeper"')
+  set -- $line
+  [ "${6:-0}" = 1 ] && [ "$5" = ready ] && [ "$4" != "$pid" ] && break
+  sleep 0.2
+done
+echo "$line"
+[ "${6:-0}" = 1 ] || { echo "process was not restarted"; exit 1; }
+$P down "$R"
+
 echo "--- down, twice"
 $P down "$F"
+$P down "$F"
+echo "--- down works without the daemon"
+$P up "$F" >/dev/null
+$P daemon stop
+$P status "$F" | head -1
 $P down "$F"
 left_ns=$(ls /run/netns | wc -l)
 left_links=$(ip -o link | grep -c ' pk-\| pk[0-9a-f]' || true)

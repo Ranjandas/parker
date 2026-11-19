@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package parker.v1;
+
+option go_package = "github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1";
+
+// ParkerService is served by `parker daemon`. The CLI is a client of it.
+// Served with ConnectRPC, so it speaks gRPC, gRPC-Web and plain HTTP/JSON:
+//
+//   curl --unix-socket /run/parker/parker.sock -H 'Content-Type: application/json' \
+//     -d '{}' http://parker/parker.v1.ParkerService/ListLabs
+service ParkerService {
+  // Version of the daemon.
+  rpc Version(VersionRequest) returns (VersionResponse);
+
+  // Up creates (or recreates) a lab and returns when every readiness check
+  // passes. Progress lines stream back as it goes.
+  rpc Up(UpRequest) returns (stream LogLine);
+
+  // Down tears a lab down. Idempotent.
+  rpc Down(DownRequest) returns (stream LogLine);
+
+  // ListLabs lists labs that have a run directory.
+  rpc ListLabs(ListLabsRequest) returns (ListLabsResponse);
+
+  // Status of one lab's nodes and processes.
+  rpc Status(StatusRequest) returns (StatusResponse);
+
+  // Logs of one process: the last lines, then (with follow) new ones.
+  rpc Logs(LogsRequest) returns (stream LogChunk);
+
+  // Shutdown stops the daemon. Labs keep running.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message VersionRequest {}
+message VersionResponse {
+  string version = 1;
+  int32 pid = 2;
+}
+
+message UpRequest {
+  // Low-level topology (`parker expand` output), YAML. The client expands
+  // the user's file so relative paths resolve on the client side.
+  bytes topology_yaml = 1;
+  // Leave the lab running if a readiness check fails.
+  bool keep_on_failure = 2;
+  // Don't add iptables rules; report them instead.
+  bool no_firewall = 3;
+}
+
+message LogLine {
+  string line = 1;
+}
+
+message DownRequest {
+  string lab = 1;
+}
+
+message ListLabsRequest {}
+message ListLabsResponse {
+  repeated LabSummary labs = 1;
+}
+
+message LabSummary {
+  string name = 1;
+  int32 namespaces = 2;
+  // True if this daemon started the lab and is supervising its processes.
+  bool supervised = 3;
+}
+
+message StatusRequest {
+  string lab = 1;
+}
+
+message StatusResponse {
+  string lab = 1;
+  string run_dir = 2;
+  bool supervised = 3;
+  repeated NodeStatus nodes = 4;
+}
+
+message NodeStatus {
+  string name = 1;
+  repeated string ips = 2;
+  bool namespace = 3; // the node's netns exists
+  repeated ProcessStatus processes = 4;
+}
+
+message ProcessStatus {
+  string name = 1;
+  int32 pid = 2;
+  bool alive = 3;
+  // Known only for labs this daemon supervises.
+  optional bool ready = 4;
+  int32 restarts = 5;
+  string log_path = 6;
+}
+
+message LogsRequest {
+  string lab = 1;
+  string node = 2;
+  string process = 3; // default: the node's only process, or "consul"
+  int32 tail_lines = 4; // default 50; -1 for the whole file
+  bool follow = 5;
+}
+
+message LogChunk {
+  bytes data = 1;
+}
+
+message ShutdownRequest {}
+message ShutdownResponse {}
