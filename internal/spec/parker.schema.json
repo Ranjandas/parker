@@ -16,6 +16,24 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "Assert": {
+      "properties": {
+        "consul": {
+          "$ref": "#/$defs/ConsulAssert",
+          "description": "Consul checks the cluster through the dc's servers."
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecAssert",
+          "description": "Exec passes when the command exits 0 (and its output contains\noutput:, if set)."
+        },
+        "within": {
+          "type": "string",
+          "description": "Within is how long to keep retrying, e.g. 20s; default once."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Attachment": {
       "properties": {
         "ip": {
@@ -56,6 +74,32 @@
       "required": [
         "datacenters"
       ]
+    },
+    "ConsulAssert": {
+      "properties": {
+        "dc": {
+          "type": "string",
+          "description": "DC to check; default: the only datacenter."
+        },
+        "leader": {
+          "type": "boolean",
+          "description": "Leader: the dc has a raft leader."
+        },
+        "members": {
+          "type": "string",
+          "description": "Members, e.g. \"\u003e=5\": alive LAN members."
+        },
+        "peers": {
+          "type": "string",
+          "description": "Peers, e.g. \"\u003e=3\": raft peers (voters and non-voters)."
+        },
+        "service_healthy": {
+          "type": "string",
+          "description": "ServiceHealthy: at least one instance of the service passes."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ConsulCheck": {
       "properties": {
@@ -197,6 +241,67 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "ExecAssert": {
+      "properties": {
+        "on": {
+          "type": "string"
+        },
+        "run": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on",
+        "run"
+      ]
+    },
+    "ExecStep": {
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "On is a selector; the command runs on every node it matches."
+        },
+        "run": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Run is the command: a string runs with sh -c (pipes and quotes\nwork), a list runs as is."
+        },
+        "allow_failure": {
+          "type": "boolean",
+          "description": "AllowFailure keeps going when the command exits non-zero."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on",
+        "run"
+      ]
     },
     "Federation": {
       "properties": {
@@ -479,6 +584,30 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "Scenario": {
+      "properties": {
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array",
+          "description": "Steps run in order; a failing step ends the scenario."
+        },
+        "on_failure": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "teardown"
+          ],
+          "description": "OnFailure: keep (default) leaves the lab running for a look, teardown\ntakes it down."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "steps"
+      ]
+    },
     "ServerOverride": {
       "properties": {
         "version": {
@@ -538,6 +667,45 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "Step": {
+      "properties": {
+        "at": {
+          "type": "string",
+          "pattern": "^T?\\+[0-9].*$",
+          "description": "At delays the step: +30s after the previous step finished, or T+30s\nafter the scenario started."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name labels the step in the output."
+        },
+        "wait": {
+          "type": "string",
+          "description": "Wait for nodes to be ready: \"dc1 ready\", or any selector."
+        },
+        "sleep": {
+          "type": "string",
+          "description": "Sleep for a duration, e.g. 10s."
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecStep",
+          "description": "Exec runs a command on one or more nodes; a non-zero exit fails the\nstep unless allow_failure is set."
+        },
+        "assert": {
+          "$ref": "#/$defs/Assert",
+          "description": "Assert checks a condition, retried until within: runs out."
+        },
+        "snapshot": {
+          "type": "string",
+          "enum": [
+            "logs"
+          ],
+          "description": "Snapshot copies state aside for later: logs."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Step is one action, optionally delayed with at:."
     }
   },
   "properties": {
@@ -582,6 +750,17 @@
       },
       "type": "object",
       "description": "Nodes are low-level network namespaces running arbitrary processes,\nkeyed by name. They may join generated \u003cdc\u003e-lan networks."
+    },
+    "scenario": {
+      "$ref": "#/$defs/Scenario",
+      "description": "Scenario is the steps `parker run FILE` plays against the lab."
+    },
+    "scenarios": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Scenario"
+      },
+      "type": "object",
+      "description": "Scenarios are named ones: `parker run FILE NAME`."
     }
   },
   "additionalProperties": false,

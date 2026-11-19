@@ -53,6 +53,8 @@ const (
 	ParkerServiceDialProcedure = "/parker.v1.ParkerService/Dial"
 	// ParkerServiceShutdownProcedure is the fully-qualified name of the ParkerService's Shutdown RPC.
 	ParkerServiceShutdownProcedure = "/parker.v1.ParkerService/Shutdown"
+	// ParkerServiceRunProcedure is the fully-qualified name of the ParkerService's Run RPC.
+	ParkerServiceRunProcedure = "/parker.v1.ParkerService/Run"
 )
 
 // ParkerServiceClient is a client for the parker.v1.ParkerService service.
@@ -84,6 +86,9 @@ type ParkerServiceClient interface {
 	Dial(context.Context) *connect.BidiStreamForClient[parkerv1.DialRequest, parkerv1.DialResponse]
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
+	// Run plays a scenario of a running lab, streaming its progress. A
+	// failed step ends the stream with FAILED_PRECONDITION.
+	Run(context.Context, *connect.Request[parkerv1.RunRequest]) (*connect.ServerStreamForClient[parkerv1.LogLine], error)
 }
 
 // NewParkerServiceClient constructs a client for the parker.v1.ParkerService service. By default,
@@ -157,6 +162,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Shutdown")),
 			connect.WithClientOptions(opts...),
 		),
+		run: connect.NewClient[parkerv1.RunRequest, parkerv1.LogLine](
+			httpClient,
+			baseURL+ParkerServiceRunProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Run")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -172,6 +183,7 @@ type parkerServiceClient struct {
 	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
 	dial     *connect.Client[parkerv1.DialRequest, parkerv1.DialResponse]
 	shutdown *connect.Client[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse]
+	run      *connect.Client[parkerv1.RunRequest, parkerv1.LogLine]
 }
 
 // Version calls parker.v1.ParkerService.Version.
@@ -224,6 +236,11 @@ func (c *parkerServiceClient) Shutdown(ctx context.Context, req *connect.Request
 	return c.shutdown.CallUnary(ctx, req)
 }
 
+// Run calls parker.v1.ParkerService.Run.
+func (c *parkerServiceClient) Run(ctx context.Context, req *connect.Request[parkerv1.RunRequest]) (*connect.ServerStreamForClient[parkerv1.LogLine], error) {
+	return c.run.CallServerStream(ctx, req)
+}
+
 // ParkerServiceHandler is an implementation of the parker.v1.ParkerService service.
 type ParkerServiceHandler interface {
 	// Version of the daemon.
@@ -253,6 +270,9 @@ type ParkerServiceHandler interface {
 	Dial(context.Context, *connect.BidiStream[parkerv1.DialRequest, parkerv1.DialResponse]) error
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
+	// Run plays a scenario of a running lab, streaming its progress. A
+	// failed step ends the stream with FAILED_PRECONDITION.
+	Run(context.Context, *connect.Request[parkerv1.RunRequest], *connect.ServerStream[parkerv1.LogLine]) error
 }
 
 // NewParkerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -322,6 +342,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Shutdown")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceRunHandler := connect.NewServerStreamHandler(
+		ParkerServiceRunProcedure,
+		svc.Run,
+		connect.WithSchema(parkerServiceMethods.ByName("Run")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/parker.v1.ParkerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ParkerServiceVersionProcedure:
@@ -344,6 +370,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceDialHandler.ServeHTTP(w, r)
 		case ParkerServiceShutdownProcedure:
 			parkerServiceShutdownHandler.ServeHTTP(w, r)
+		case ParkerServiceRunProcedure:
+			parkerServiceRunHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -391,4 +419,8 @@ func (UnimplementedParkerServiceHandler) Dial(context.Context, *connect.BidiStre
 
 func (UnimplementedParkerServiceHandler) Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Shutdown is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Run(context.Context, *connect.Request[parkerv1.RunRequest], *connect.ServerStream[parkerv1.LogLine]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Run is not implemented"))
 }

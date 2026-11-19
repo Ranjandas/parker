@@ -64,6 +64,14 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 				{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
 			},
 		}
+	case reflect.TypeOf(spec.Script{}):
+		return &jsonschema.Schema{
+			Description: "A command: a string run with sh -c, or an argv list.",
+			OneOf: []*jsonschema.Schema{
+				{Type: "string"},
+				{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+			},
+		}
 	case reflect.TypeOf(spec.Servers{}):
 		over := &jsonschema.Schema{
 			Type:                 "object",

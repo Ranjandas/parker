@@ -28,6 +28,7 @@ import (
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/rootless"
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 // isRootless: this CLI runs as a normal user (not inside the rootless
@@ -187,6 +188,42 @@ func printLines(stream interface {
 	return rpcErr(stream.Err())
 }
 
+type upOptions struct{ keepOnFail, noFirewall, noDaemon bool }
+
+// bringUp starts the lab, through the daemon unless noDaemon.
+func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
+	// Fetch here: a rootless daemon has no network of its own, and the
+	// cache is shared.
+	if !target().IsRemote() {
+		for k, v := range low.Versions {
+			if lab.Needs(low, k) {
+				if _, err := fetch.Binary(k, v, os.Stdout); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if o.noDaemon {
+		_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall})
+		return err
+	}
+	c, err := ensureDaemon(ctx)
+	if err != nil {
+		return err
+	}
+	b, err := yaml.Marshal(low)
+	if err != nil {
+		return err
+	}
+	stream, err := c.Up(ctx, connect.NewRequest(&parkerv1.UpRequest{
+		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall,
+	}))
+	if err != nil {
+		return rpcErr(err)
+	}
+	return printLines(stream)
+}
+
 func upCmd() *cobra.Command {
 	var keepOnFail, noFirewall, noDaemon bool
 	c := &cobra.Command{
@@ -203,40 +240,8 @@ func upCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
-			// Fetch here: a rootless daemon has no network of its own, and
-			// the cache is shared.
-			if !target().IsRemote() {
-				for k, v := range low.Versions {
-					if lab.Needs(low, k) {
-						if _, err := fetch.Binary(k, v, os.Stdout); err != nil {
-							return err
-						}
-					}
-				}
-			}
-			if noDaemon {
-				_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: keepOnFail, NoFirewall: noFirewall})
-				if err != nil {
-					return err
-				}
-			} else {
-				c, err := ensureDaemon(ctx)
-				if err != nil {
-					return err
-				}
-				b, err := yaml.Marshal(low)
-				if err != nil {
-					return err
-				}
-				stream, err := c.Up(ctx, connect.NewRequest(&parkerv1.UpRequest{
-					TopologyYaml: b, KeepOnFailure: keepOnFail, NoFirewall: noFirewall,
-				}))
-				if err != nil {
-					return rpcErr(err)
-				}
-				if err := printLines(stream); err != nil {
-					return err
-				}
+			if err := bringUp(ctx, low, upOptions{keepOnFail, noFirewall, noDaemon}); err != nil {
+				return err
 			}
 			say("shell: parker exec %s %s -- consul members", args[0], firstNode(low))
 			say("logs:  parker logs %s %s -f", args[0], firstNode(low))

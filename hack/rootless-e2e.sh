@@ -68,6 +68,16 @@ if grep "tls: true" "$F" >/dev/null; then
     echo "client HTTPS ($client, auto-encrypt cert) verifies against the lab CA"
   fi
 fi
+if grep "^scenario:" "$F" >/dev/null; then
+  echo "--- scenario"
+  $P run --no-up "$F"
+  if grep "^scenarios:" "$F" >/dev/null && grep "wrong-peers:" "$F" >/dev/null; then
+    if $P run --no-up "$F" wrong-peers >/dev/null 2>&1; then
+      echo "a failing scenario exited 0" >&2; exit 1
+    fi
+    echo "failing scenario exits non-zero"
+  fi
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"

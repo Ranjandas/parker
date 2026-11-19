@@ -293,3 +293,51 @@ func TestResolveNodeSelectors(t *testing.T) {
 		t.Errorf("dc1 as one node: %v", err)
 	}
 }
+
+func TestPickLeader(t *testing.T) {
+	low := topo()
+	low.Nodes["dc1-server-1"].Labels = &spec.NodeLabels{DC: "dc1", Name: "server-1", Role: "server"}
+	low.Nodes["dc1-server-2"] = &spec.RawNode{
+		Networks: map[string]*spec.Attachment{"lan": {IP: "10.77.0.11"}},
+		Labels:   &spec.NodeLabels{DC: "dc1", Name: "server-2", Role: "server"},
+	}
+	// A cut-off server still names the old leader; the majority wins.
+	n, err := pickLeader(low, "dc1", map[string]int{"10.77.0.10:8300": 1, "10.77.0.11:8300": 2}, nil)
+	if err != nil || n != "dc1-server-2" {
+		t.Errorf("majority: %s %v", n, err)
+	}
+	if _, err := pickLeader(low, "dc1", map[string]int{}, []error{errors.New("server-1: connection refused")}); err == nil || !strings.Contains(err.Error(), "no raft leader (server-1: connection refused)") {
+		t.Errorf("no votes: %v", err)
+	}
+}
+
+func TestScenarioLabSnapshotAndDC(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("PARKER_RUN_DIR", base)
+	low := topo()
+	low.Nodes["dc1-server-1"].Labels = &spec.NodeLabels{DC: "dc1", Name: "server-1", Role: "server"}
+	nd := filepath.Join(base, "demo", "nodes", "dc1-server-1")
+	os.MkdirAll(nd, 0o755)
+	os.WriteFile(filepath.Join(nd, "consul.log"), []byte("raft: elected\n"), 0o644)
+	l := &ScenarioLab{Low: low}
+	where, err := l.Snapshot("logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(where, "dc1-server-1", "consul.log")); string(b) != "raft: elected\n" {
+		t.Errorf("snapshot in %s: %q", where, b)
+	}
+	if _, err := l.Snapshot("heap"); err == nil {
+		t.Error("snapshot heap accepted")
+	}
+	if dc, err := l.dc(""); err != nil || dc != "dc1" {
+		t.Errorf("only dc: %s %v", dc, err)
+	}
+	if _, err := l.dc("dc2"); err == nil {
+		t.Error("unknown dc accepted")
+	}
+	low.Nodes["box"].Labels = &spec.NodeLabels{DC: "dc2"}
+	if _, err := l.dc(""); err == nil || !strings.Contains(err.Error(), "say which dc: (have dc1, dc2)") {
+		t.Errorf("two dcs: %v", err)
+	}
+}

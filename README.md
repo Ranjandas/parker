@@ -77,6 +77,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
 | `parker validate FILE` | Structural and semantic checks. Unknown keys come with line numbers, "did you mean" suggestions, and where a misplaced key belongs (e.g. `servers` under a node). |
 | `parker schema` | Print the JSON Schema for topology files. |
+| `parker run FILE [SCENARIO]` | Bring the lab up fresh and play its `scenario:` (or a named one from `scenarios:`); exits 1 when a step fails. `--no-up` plays against the running lab. See [Scenarios](#scenarios). |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is a [selector](#selectors) that names one node, e.g. `dc1/server-1` or `dc1/leader`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs. |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table with state and raft role, `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:dc NAME`, `:q`. |
@@ -103,6 +104,34 @@ get autocomplete, hover docs and inline errors in any editor using
 (VS Code's YAML extension, Neovim, Helix, ...). `parker init` writes that
 line. Until releases publish the schema (and while the repository is private), save it locally:
 `parker schema > parker.schema.json` and `parker init --schema ./parker.schema.json`.
+
+## Scenarios
+
+A scenario is a list of steps that `parker run` plays against the lab, on
+the daemon, so it keeps running if your terminal goes away:
+
+```yaml
+scenario:
+  steps:
+    - wait: dc1 ready
+    - exec: { on: dc1/leader, run: "consul operator raft list-peers" }
+    - assert: { consul: { leader: true, peers: ">=3" }, within: 10s }
+    - at: +30s                               # after the previous step; T+30s = after the start
+      assert:
+        exec: { on: dc1/web, run: "curl -sf localhost:8080", output: web }
+        within: 10s
+    - snapshot: logs                         # copied to <run dir>/snapshots/<time>/
+  on_failure: keep                           # keep (default) | teardown
+```
+
+Steps: `wait` (a selector, optionally followed by `ready`), `sleep`,
+`exec` (on every node a selector matches; non-zero fails the step unless
+`allow_failure: true`), `assert` (`consul: {leader, members, peers,
+service_healthy, dc}` or `exec: {on, run, output}`, retried until
+`within:`) and `snapshot: logs`. A string `run:` goes through `sh -c`.
+Named scenarios live under `scenarios:` and run with `parker run FILE NAME`.
+Fault steps (partition, kill, stop, pause, upgrade) are next on the roadmap.
+See `examples/scenario.yaml`.
 
 ## Selectors
 

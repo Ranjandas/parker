@@ -1,0 +1,213 @@
+package scenario
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goccy/go-yaml"
+
+	"github.com/Ranjandas/parker/internal/spec"
+)
+
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.t }
+func (c *fakeClock) Sleep(_ context.Context, d time.Duration) error {
+	if d > 0 {
+		c.t = c.t.Add(d)
+	}
+	return nil
+}
+
+type fakeLab struct {
+	clk      *fakeClock
+	log      []string
+	readyAt  time.Time         // Ready fails before this
+	leaderAt time.Time         // Consul leader fails before this
+	exec     map[string]string // node -> output; "FAIL" exits 1
+}
+
+func (f *fakeLab) Resolve(sel string) ([]string, error) {
+	switch sel {
+	case "dc1":
+		return []string{"dc1-server-1", "dc1-web-1"}, nil
+	case "dc1/web":
+		return []string{"dc1-web-1", "dc1-web-2"}, nil
+	case "dc1/leader":
+		return []string{"dc1-server-1"}, nil
+	}
+	return nil, fmt.Errorf("selector %q matches no nodes", sel)
+}
+
+func (f *fakeLab) Ready(nodes []string) error {
+	f.log = append(f.log, "ready "+strings.Join(nodes, ","))
+	if f.clk.Now().Before(f.readyAt) {
+		return errors.New("not ready: dc1-web-1/web")
+	}
+	return nil
+}
+
+func (f *fakeLab) Exec(_ context.Context, node string, argv []string) (string, int, error) {
+	f.log = append(f.log, "exec "+node+" "+strings.Join(argv, " "))
+	out := f.exec[node]
+	if out == "FAIL" {
+		return "boom\n", 1, nil
+	}
+	return out, 0, nil
+}
+
+func (f *fakeLab) Consul(_ context.Context, a *spec.ConsulAssert) error {
+	f.log = append(f.log, "consul")
+	if a.Leader && f.clk.Now().Before(f.leaderAt) {
+		return errors.New("dc1 has no raft leader")
+	}
+	return nil
+}
+
+func (f *fakeLab) Snapshot(what string) (string, error) {
+	f.log = append(f.log, "snapshot "+what)
+	return "/run/parker/x/snapshots/1", nil
+}
+
+func parse(t *testing.T, y string) *spec.Scenario {
+	t.Helper()
+	var sc spec.Scenario
+	if err := yaml.UnmarshalWithOptions([]byte(y), &sc, yaml.Strict()); err != nil {
+		t.Fatal(err)
+	}
+	return &sc
+}
+
+func run(t *testing.T, sc *spec.Scenario, f *fakeLab) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	err := Run(context.Background(), sc, f, f.clk, &out)
+	return out.String(), err
+}
+
+func newLab() *fakeLab {
+	clk := &fakeClock{t: time.Unix(1000, 0)}
+	return &fakeLab{clk: clk, exec: map[string]string{"dc1-server-1": "peers ok\n", "dc1-web-1": "hello web\n", "dc1-web-2": "hello web\n"}}
+}
+
+func TestRunPasses(t *testing.T) {
+	f := newLab()
+	f.readyAt = f.clk.t.Add(3 * time.Second)
+	f.leaderAt = f.clk.t.Add(20 * time.Second)
+	sc := parse(t, `
+steps:
+  - wait: dc1 ready
+  - exec: { on: dc1/leader, run: "consul operator raft list-peers | head -1" }
+  - at: +10s
+    sleep: 1s
+  - assert: { consul: { leader: true }, within: 30s }
+  - assert: { exec: { on: dc1/web, run: [curl, -sf, "localhost:8080"], output: web } }
+  - snapshot: logs
+`)
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"step 1: wait dc1", "dc1-server-1 | peers ok", "logs saved to /run/parker/x/snapshots/1", "PASS: 6 steps"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if f.log[len(f.log)-1] != "snapshot logs" {
+		t.Errorf("log %v", f.log)
+	}
+	if !strings.Contains(strings.Join(f.log, "\n"), "exec dc1-server-1 sh -c consul operator raft list-peers | head -1") {
+		t.Errorf("string run: goes through sh -c: %v", f.log)
+	}
+	if !strings.Contains(strings.Join(f.log, "\n"), "exec dc1-web-2 curl -sf localhost:8080") {
+		t.Errorf("list run: and every node of the selector: %v", f.log)
+	}
+	// wait polled until 3s, exec, at:+10s, sleep 1s, leader polled to 20s.
+	if got := f.clk.t.Sub(time.Unix(1000, 0)); got < 20*time.Second || got > 21*time.Second {
+		t.Errorf("elapsed %s", got)
+	}
+}
+
+func TestRunAtAbsoluteAndLate(t *testing.T) {
+	f := newLab()
+	sc := parse(t, `
+steps:
+  - sleep: 5s
+  - at: T+8s
+    snapshot: logs
+  - at: T+2s
+    snapshot: logs
+`)
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.clk.t.Sub(time.Unix(1000, 0)); got != 8*time.Second {
+		t.Errorf("elapsed %s, want 8s", got)
+	}
+	if !strings.Contains(out, "step 3 (snapshot logs) is 6s late for at: T+2s") {
+		t.Errorf("late warning missing:\n%s", out)
+	}
+}
+
+func TestRunFails(t *testing.T) {
+	for _, c := range []struct{ name, steps, want string }{
+		{"assert within", `[{assert: {consul: {leader: true}, within: 5s}}]`, "step 1 (assert consul): not true within 5s: dc1 has no raft leader"},
+		{"assert once", `[{assert: {consul: {leader: true}}}]`, "step 1 (assert consul): dc1 has no raft leader"},
+		{"exec exit", `[{exec: {on: dc1/web, run: "false"}}]`, "step 1 (exec on dc1/web): dc1-web-2 exited 1"},
+		{"exec output", `[{assert: {exec: {on: dc1/leader, run: x, output: nope}}}]`, `output has no "nope": peers ok`},
+		{"bad selector", `[{name: poke, exec: {on: dc9, run: x}}]`, `step 1 (poke): selector "dc9" matches no nodes`},
+		{"wait times out", `[{wait: dc1}]`, "not true within 2m0s: not ready"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newLab()
+			f.leaderAt = f.clk.t.Add(time.Hour)
+			f.readyAt = f.clk.t.Add(time.Hour)
+			f.exec["dc1-web-2"] = "FAIL"
+			_, err := run(t, parse(t, "steps: "+c.steps), f)
+			var se *StepError
+			if !errors.As(err, &se) || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err %v, want %q", err, c.want)
+			}
+		})
+	}
+	// allow_failure keeps going.
+	f := newLab()
+	f.exec["dc1-web-2"] = "FAIL"
+	if _, err := run(t, parse(t, `steps: [{exec: {on: dc1/web, run: x, allow_failure: true}}, {snapshot: logs}]`), f); err != nil {
+		t.Errorf("allow_failure: %v", err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	for steps, want := range map[string]string{
+		`[]`:                              "no steps",
+		`[{name: x}]`:                     "no action",
+		`[{sleep: 1s, snapshot: logs}]`:   "one action per step, got sleep, snapshot",
+		`[{at: "30s", sleep: 1s}]`:        "want +DURATION or T+DURATION",
+		`[{at: "+3x", sleep: 1s}]`:        "at:",
+		`[{sleep: soon}]`:                 "sleep:",
+		`[{exec: {on: dc1}}]`:             "exec: needs on: and run:",
+		`[{assert: {within: 3s}}]`:        "exactly one of consul: or exec:",
+		`[{assert: {consul: {dc: dc1}}}]`: "nothing to check",
+		`[{assert: {consul: {leader: true}, within: x}}]`: "assert.within",
+		`[{snapshot: everything}]`:                        "want logs",
+	} {
+		err := Validate(parse(t, "steps: "+steps))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", steps, err, want)
+		}
+	}
+	if err := Validate(parse(t, "steps: [{sleep: 1s}]\non_failure: explode")); err == nil {
+		t.Error("bad on_failure accepted")
+	}
+	sc := parse(t, `steps: [{wait: dc1 ready}, {exec: {on: dc1/web, run: x}}, {assert: {exec: {on: svc:api, run: x}}}, {sleep: 1s}]`)
+	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/web svc:api" {
+		t.Errorf("selectors %q", got)
+	}
+}

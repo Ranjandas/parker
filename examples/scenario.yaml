@@ -1,0 +1,31 @@
+# A scenario `parker run` plays against the lab: wait, exec, asserts with
+# retries, timing with at:, and a log snapshot. Fault steps (partition,
+# kill, ...) come in a later release.
+parker: v1alpha1
+name: scenario
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          count: 2
+          service: { port: 8080, run: fake-service }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - exec: { on: dc1/leader, run: "consul operator raft list-peers" }
+    - assert: { consul: { leader: true, peers: ">=3", members: ">=5" }, within: 10s }
+    - at: +2s
+      assert:
+        exec: { on: dc1/web, run: "curl -sf http://127.0.0.1:8080/", output: web }
+        within: 10s
+    - assert: { consul: { service_healthy: web } }
+    - snapshot: logs
+
+scenarios:
+  wrong-peers:
+    steps:
+      - assert: { consul: { peers: ">=5" }, within: 2s }
