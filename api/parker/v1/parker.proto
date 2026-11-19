@@ -96,6 +96,9 @@ message NodeStatus {
   repeated string ips = 2;
   bool namespace = 3; // the node's netns exists
   repeated ProcessStatus processes = 4;
+  // Consul role from the node's agent: leader, follower, client; "" if the
+  // node has no reachable agent.
+  string role = 5;
 }
 
 message ProcessStatus {

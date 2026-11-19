@@ -515,11 +515,14 @@ func (x *StatusResponse) GetNodes() []*NodeStatus {
 }
 
 type NodeStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Ips           []string               `protobuf:"bytes,2,rep,name=ips,proto3" json:"ips,omitempty"`
-	Namespace     bool                   `protobuf:"varint,3,opt,name=namespace,proto3" json:"namespace,omitempty"` // the node's netns exists
-	Processes     []*ProcessStatus       `protobuf:"bytes,4,rep,name=processes,proto3" json:"processes,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Ips       []string               `protobuf:"bytes,2,rep,name=ips,proto3" json:"ips,omitempty"`
+	Namespace bool                   `protobuf:"varint,3,opt,name=namespace,proto3" json:"namespace,omitempty"` // the node's netns exists
+	Processes []*ProcessStatus       `protobuf:"bytes,4,rep,name=processes,proto3" json:"processes,omitempty"`
+	// Consul role from the node's agent: leader, follower, client; "" if the
+	// node has no reachable agent.
+	Role          string `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -580,6 +583,13 @@ func (x *NodeStatus) GetProcesses() []*ProcessStatus {
 		return x.Processes
 	}
 	return nil
+}
+
+func (x *NodeStatus) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
 }
 
 type ProcessStatus struct {
@@ -1507,13 +1517,14 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\n" +
 	"supervised\x18\x03 \x01(\bR\n" +
 	"supervised\x12+\n" +
-	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\x88\x01\n" +
+	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\x9c\x01\n" +
 	"\n" +
 	"NodeStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ips\x18\x02 \x03(\tR\x03ips\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\bR\tnamespace\x126\n" +
-	"\tprocesses\x18\x04 \x03(\v2\x18.parker.v1.ProcessStatusR\tprocesses\"\xa7\x01\n" +
+	"\tprocesses\x18\x04 \x03(\v2\x18.parker.v1.ProcessStatusR\tprocesses\x12\x12\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\"\xa7\x01\n" +
 	"\rProcessStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03pid\x18\x02 \x01(\x05R\x03pid\x12\x14\n" +
