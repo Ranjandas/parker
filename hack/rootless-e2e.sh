@@ -49,6 +49,18 @@ if grep "acl: true" "$F" >/dev/null; then
   $P exec "$F" "$first" -- consul catalog services </dev/null
   $P exec "$F" "$first" -- consul keyring -list </dev/null | grep -q '\[' && echo "gossip key installed"
 fi
+if grep "tls: true" "$F" >/dev/null; then
+  echo "--- TLS"
+  if $P exec "$F" "$first" -- curl -sf http://127.0.0.1:8500/v1/status/leader </dev/null >/dev/null 2>&1; then
+    echo "plain HTTP API is open" >&2; exit 1
+  fi
+  echo "plain HTTP closed"
+  client=$($P status "$F" | awk 'NR>2 && $1 !~ /-server-/ && $3=="consul" {print $1; exit}')
+  if [ -n "$client" ]; then
+    $P exec "$F" "$client" -- sh -c 'curl -sf --cacert "$CONSUL_CACERT" "$CONSUL_HTTP_ADDR/v1/agent/self" -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" >/dev/null' </dev/null
+    echo "client HTTPS ($client, auto-encrypt cert) verifies against the lab CA"
+  fi
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"
@@ -89,9 +101,18 @@ pp=$!
 $P port-forward "$F" "$first" 18500:8500 </dev/null >/dev/null 2>&1 &
 pf=$!
 sleep 1
-curl -sf --proxy "socks5h://127.0.0.1:1080" "http://$short.$dc.$lab.parker:8500/v1/status/leader" | grep 8300 >/dev/null
-curl -sf --proxy "http://127.0.0.1:1080" "http://$first.$lab.parker:8500/v1/status/leader" | grep 8300 >/dev/null
-curl -sf "http://127.0.0.1:18500/v1/status/leader" | grep 8300 >/dev/null
+scheme=http port=8500 cacert=
+if grep "tls: true" "$F" >/dev/null; then
+  # HTTPS only; the server certificates carry the proxy names too.
+  scheme=https port=8501 cacert="--cacert $PARKER_RUN_DIR/$lab/nodes/$first/ca.pem"
+  kill $pf; wait $pf 2>/dev/null || true
+  $P port-forward "$F" "$first" 18500:8501 </dev/null >/dev/null 2>&1 &
+  pf=$!
+  sleep 1
+fi
+curl -sf $cacert --proxy "socks5h://127.0.0.1:1080" "$scheme://$short.$dc.$lab.parker:$port/v1/status/leader" | grep 8300 >/dev/null
+curl -sf $cacert --proxy "http://127.0.0.1:1080" "$scheme://$first.$lab.parker:$port/v1/status/leader" | grep 8300 >/dev/null
+curl -sf $cacert "$scheme://127.0.0.1:18500/v1/status/leader" | grep 8300 >/dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' --proxy "http://127.0.0.1:1080" http://192.0.2.1:80/ || true)
 [ "$code" = 403 ] || { echo "proxy reached a non-lab address ($code)"; exit 1; }
 kill $pp $pf

@@ -57,7 +57,6 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 		_ = json.Unmarshal(b, &saved)
 	}
 
-	token := ManagementToken(low)
 	nodes := slices.Sorted(maps.Keys(low.Nodes))
 	roles := make([]string, len(nodes))
 	var roleWG sync.WaitGroup
@@ -85,7 +84,7 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 			roleWG.Add(1)
 			go func() {
 				defer roleWG.Done()
-				roles[i] = consulRole(name, node, ns.IPs, token)
+				roles[i] = consulRole(name, node, ns.IPs, AgentCheck(low, node))
 			}()
 		}
 		st.Nodes = append(st.Nodes, ns)

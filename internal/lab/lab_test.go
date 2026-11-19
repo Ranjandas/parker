@@ -255,3 +255,24 @@ func TestRoleFromSendsToken(t *testing.T) {
 		t.Errorf("without token: %q", got)
 	}
 }
+
+func TestExecEnvTLS(t *testing.T) {
+	t.Setenv("PARKER_RUN_DIR", "/run/parker")
+	low := topo()
+	low.Versions = nil
+	low.Nodes["box"].Processes["consul"] = &spec.Process{
+		Run:       spec.Command{"consul", "agent"},
+		ReadyWhen: &spec.Ready{Consul: &spec.ConsulCheck{Members: ">=2", Token: "mgmt", CAFile: "ca.pem"}},
+	}
+	_, env := ExecEnv(low, "box", nil, nil)
+	for _, want := range []string{"CONSUL_HTTP_TOKEN=mgmt", "CONSUL_HTTP_ADDR=https://127.0.0.1:8501", "CONSUL_CACERT=/run/parker/demo/nodes/box/ca.pem"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("missing %s in %v", want, env)
+		}
+	}
+	// Other nodes keep plain HTTP.
+	_, env = ExecEnv(low, "dc1-server-1", nil, nil)
+	if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "CONSUL_CACERT=") }) {
+		t.Errorf("CA for a node without TLS: %v", env)
+	}
+}

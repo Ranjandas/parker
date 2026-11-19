@@ -9,6 +9,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -428,14 +430,10 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 		}
 	}
 	if r.Consul != nil {
-		addr := r.Consul.Addr
-		if addr == "" {
-			addr = "127.0.0.1:8500"
+		cfg, err := ConsulConfig(r.Consul, httpc, filepath.Dir(logPath))
+		if err != nil {
+			return err
 		}
-		cfg := api.DefaultConfig()
-		cfg.Address = addr
-		cfg.HttpClient = httpc
-		cfg.Token = r.Consul.Token
 		c, err := api.NewClient(cfg)
 		if err != nil {
 			return err
@@ -590,4 +588,46 @@ func tail(path string, n int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ConsulConfig is the API client config for a consul check: HTTPS with the
+// check's CA when it has one (relative to nodeDir), else plain HTTP.
+func ConsulConfig(cc *spec.ConsulCheck, httpc *http.Client, nodeDir string) (*api.Config, error) {
+	cfg := api.DefaultConfig()
+	cfg.Address = cc.Addr
+	cfg.Token = cc.Token
+	cfg.HttpClient = httpc
+	cfg.Scheme = "http"
+	if cc.CAFile == "" {
+		if cfg.Address == "" {
+			cfg.Address = "127.0.0.1:8500"
+		}
+		return cfg, nil
+	}
+	if cfg.Address == "" {
+		cfg.Address = "127.0.0.1:8501"
+	}
+	ca := cc.CAFile
+	if !filepath.IsAbs(ca) {
+		ca = filepath.Join(nodeDir, ca)
+	}
+	pemBytes, err := os.ReadFile(ca)
+	if err != nil {
+		return nil, fmt.Errorf("consul check: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("consul check: no certificates in %s", ca)
+	}
+	t, ok := httpc.Transport.(*http.Transport)
+	if !ok {
+		t = http.DefaultTransport.(*http.Transport)
+	}
+	t = t.Clone()
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	hc := *httpc
+	hc.Transport = t
+	cfg.HttpClient = &hc
+	cfg.Scheme = "https"
+	return cfg, nil
 }
