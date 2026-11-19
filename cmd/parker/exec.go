@@ -32,7 +32,9 @@ func execCmd() *cobra.Command {
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			argv := args[2:]
-			if target().Host != "" {
+			// Remote daemons, and a rootless one (whose namespaces this
+			// process can't enter), get exec over the API.
+			if target().Host != "" || isRootless() {
 				name, err := labName(args[0])
 				if err != nil {
 					return err
