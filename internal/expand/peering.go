@@ -178,12 +178,15 @@ echo %[3]q
 	}
 }
 
-// establishProc establishes the peering on the dialer's server-1 and waits
-// until it is active.
+// establishProc establishes the peering on the dialer's server-1, retrying
+// while the acceptor side isn't reachable yet, and waits until it is active.
 func (p peering) establishProc(deps map[string]*spec.Dep, env map[string]string) *spec.Process {
 	active := PeeringActiveLine(p.name)
 	script := fmt.Sprintf(`if ! consul peering read -name %[1]s 2>/dev/null | grep -q ACTIVE; then
-  consul peering establish -name %[1]s -peering-token "$(cat %[2]s)" || exit 1
+  # The acceptor's gateway can lag its servers: until it routes to them the
+  # exchange fails (tls: unrecognized name), so retry until ready_when's
+  # timeout.
+  until consul peering establish -name %[1]s -peering-token "$(cat %[2]s)"; do sleep 2; done
 fi
 until consul peering read -name %[1]s | grep -q ACTIVE; do sleep 1; done
 echo %[3]q
