@@ -4,7 +4,7 @@ parker: v1alpha1
 name: clients
 vars:
   consul_version: 1.22.7
-versions: { consul: "${vars.consul_version}" }
+versions: { consul: "${vars.consul_version}", envoy: 1.35.12 }
 consul:
   datacenters:
     dc1:

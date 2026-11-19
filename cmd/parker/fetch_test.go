@@ -28,3 +28,17 @@ func TestWantedBinaries(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+func TestUpBinaries(t *testing.T) {
+	low := &spec.File{
+		Versions: map[string]string{"consul": "1.22.6", "envoy": "1.35.9"},
+		Nodes: map[string]*spec.RawNode{
+			"a": {Processes: map[string]*spec.Process{"consul": {Run: []string{"consul", "agent"}}}},
+		},
+		Scenario: &spec.Scenario{Steps: []*spec.Step{{Upgrade: &spec.UpgradeStep{On: "dc1", To: "1.22.7"}}}},
+	}
+	// envoy is pinned but nothing runs it yet: up leaves it to parker fetch.
+	if got := fmt.Sprint(upBinaries(low)); got != "[[consul 1.22.6] [consul 1.22.7]]" {
+		t.Errorf("upBinaries = %s", got)
+	}
+}

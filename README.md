@@ -211,6 +211,10 @@ and lists them.
    verified, cached in `~/.cache/parker/<product>/<version>/` (the invoking
    user's cache under sudo). `versions.consul: path:/abs/consul` uses a local
    build; `servers.overrides.server-3.version` gives mixed-version clusters.
+   `versions.envoy: 1.35.12` fetches HashiCorp's Envoy build the same way
+   (`parker fetch`, and `parker exec` puts it on `PATH` once cached), and
+   `validate` / `up` warn when the pinned Consul doesn't support that Envoy
+   (from Consul's own supported-versions list, 1.16 to 1.22).
 
 6. **Daemon** (`internal/daemon`, API in `api/parker/v1/parker.proto`):
    `parker daemon` serves the Parker API with ConnectRPC on
@@ -322,8 +326,11 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
-Not yet: partitions, mesh-gateway federation, peering, gateways, Envoy,
-impairments, `scenario:`, modules/overlays/`--set`.
+- `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
+  upgrades (see [Scenarios](#scenarios))
+
+Not yet: partitions, Connect sidecars, mesh-gateway federation, peering,
+gateways, impairments, modules/overlays/`--set`.
 
 ## Development
 

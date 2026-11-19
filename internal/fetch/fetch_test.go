@@ -119,3 +119,26 @@ func TestCacheDir(t *testing.T) {
 		}
 	}
 }
+
+func TestCached(t *testing.T) {
+	t.Setenv("PARKER_CACHE", t.TempDir())
+	if _, ok := Cached("envoy", "1.35.9"); ok {
+		t.Fatal("empty cache says cached")
+	}
+	dir := filepath.Join(CacheDir(), "envoy", "1.35.9")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "envoy"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := Cached("envoy", "1.35.9"); !ok || p != filepath.Join(dir, "envoy") {
+		t.Errorf("Cached = %q %v", p, ok)
+	}
+	if p, ok := Cached("envoy", "path:"+filepath.Join(dir, "envoy")); !ok || p != filepath.Join(dir, "envoy") {
+		t.Errorf("path: build = %q %v", p, ok)
+	}
+	if _, ok := Cached("envoy", "path:/nope"); ok {
+		t.Error("missing path: build says cached")
+	}
+}

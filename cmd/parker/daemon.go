@@ -24,10 +24,12 @@ import (
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
+	"github.com/Ranjandas/parker/internal/compat"
 	"github.com/Ranjandas/parker/internal/daemon"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/rootless"
+	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/tui"
 )
@@ -193,14 +195,15 @@ type upOptions struct{ keepOnFail, noFirewall, noDaemon bool }
 
 // bringUp starts the lab, through the daemon unless noDaemon.
 func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
+	for _, w := range compat.Warnings(low) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 	// Fetch here: a rootless daemon has no network of its own, and the
-	// cache is shared.
+	// cache is shared. Scenario upgrade targets too, for the same reason.
 	if !target().IsRemote() {
-		for k, v := range low.Versions {
-			if lab.Needs(low, k) {
-				if _, err := fetch.Binary(k, v, os.Stdout); err != nil {
-					return err
-				}
+		for _, pv := range upBinaries(low) {
+			if _, err := fetch.Binary(pv[0], pv[1], os.Stdout); err != nil {
+				return err
 			}
 		}
 	}
@@ -585,4 +588,22 @@ func daemonCmd() *cobra.Command {
 		},
 	})
 	return c
+}
+
+// upBinaries is what up must have cached: the pinned binaries a process
+// runs (and their per-process versions), and scenario upgrade targets.
+func upBinaries(low *spec.File) [][2]string {
+	up := map[string]bool{}
+	for _, sc := range allScenarios(low) {
+		for _, u := range scenario.Upgrades(sc) {
+			up[u.Product()+"@"+u.To] = true
+		}
+	}
+	var out [][2]string
+	for _, pv := range wantedBinaries(low) {
+		if lab.Needs(low, pv[0]) || up[pv[0]+"@"+pv[1]] {
+			out = append(out, pv)
+		}
+	}
+	return out
 }

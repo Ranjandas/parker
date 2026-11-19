@@ -98,6 +98,10 @@ if grep "^name: faults" "$F" >/dev/null; then
   if $P fault "$F" explode dc1 >/dev/null 2>&1; then echo "unknown fault exited 0" >&2; exit 1; fi
   echo ok
 fi
+if grep -E "^versions:.*envoy" "$F" >/dev/null; then
+  echo "--- pinned envoy on exec PATH"
+  $P exec "$F" "$first" -- envoy --version </dev/null | grep -o "/1\.[0-9]*\.[0-9]*/"
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"
