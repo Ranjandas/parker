@@ -21,6 +21,22 @@ const (
 	VarParker  = "${parker}"   // path to the parker binary (built-in processes)
 )
 
+// The generated WAN network for federated datacenters. Declare
+// `networks: { wan: {...} }` to amend it (e.g. another subnet).
+const (
+	WANNetwork = "wan"
+	WANSubnet  = "10.255.0.0/24"
+	wanStride  = 20 // WAN addresses per datacenter
+)
+
+func addrAt(base netip.Addr, off int) string {
+	a := base
+	for range off {
+		a = a.Next()
+	}
+	return a.String()
+}
+
 // Expand returns a new File with consul: replaced by networks: and nodes:.
 // User-declared low-level networks and nodes are kept and win on conflict.
 func Expand(in *spec.File) (*spec.File, error) {
@@ -32,7 +48,11 @@ func Expand(in *spec.File) (*spec.File, error) {
 		Nodes:    map[string]*spec.RawNode{},
 	}
 	if in.Consul != nil {
-		if err := expandConsul(in.Consul, out); err != nil {
+		wanSubnet := WANSubnet
+		if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
+			wanSubnet = w.Subnet
+		}
+		if err := expandConsul(in.Consul, wanSubnet, out); err != nil {
 			return nil, err
 		}
 	}
@@ -61,7 +81,7 @@ func Expand(in *spec.File) (*spec.File, error) {
 	return out, nil
 }
 
-func expandConsul(c *spec.Consul, out *spec.File) error {
+func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	dcNames := slices.Sorted(maps.Keys(c.Datacenters))
 	primary := ""
 	for _, n := range dcNames {
@@ -77,6 +97,33 @@ func expandConsul(c *spec.Consul, out *spec.File) error {
 		defaults = &spec.Inheritable{}
 	}
 
+	// WAN federation: every server also joins the generated `wan` network,
+	// at .10+ for the first dc, .30+ for the second, and so on.
+	wanIPs := map[string][]string{}
+	var allWAN []string
+	if c.Federated() {
+		wp, err := netip.ParsePrefix(wanSubnet)
+		if err != nil {
+			return fmt.Errorf("networks.%s.subnet: %w", WANNetwork, err)
+		}
+		wanBase := wp.Masked().Addr()
+		out.Networks[WANNetwork] = &spec.Network{Subnet: wanSubnet}
+		for i, dcName := range dcNames {
+			n := c.Datacenters[dcName].Servers.Count
+			if n > wanStride {
+				return fmt.Errorf("consul.datacenters.%s.servers: at most %d servers per datacenter with WAN federation", dcName, wanStride)
+			}
+			for s := range n {
+				ip := addrAt(wanBase, 10+i*wanStride+s)
+				wanIPs[dcName] = append(wanIPs[dcName], ip)
+				allWAN = append(allWAN, ip)
+			}
+		}
+		if hosts := 1<<(32-wp.Bits()) - 2; 10+len(dcNames)*wanStride > hosts {
+			return fmt.Errorf("consul.federation: %d datacenters don't fit the %s wan network", len(dcNames), wanSubnet)
+		}
+	}
+
 	for i, dcName := range dcNames {
 		dc := c.Datacenters[dcName]
 		subnet := dc.Subnet
@@ -88,13 +135,7 @@ func expandConsul(c *spec.Consul, out *spec.File) error {
 			return fmt.Errorf("consul.datacenters.%s.subnet: %w", dcName, err)
 		}
 		base := pfx.Masked().Addr()
-		ipAt := func(off int) string {
-			a := base
-			for range off {
-				a = a.Next()
-			}
-			return a.String()
-		}
+		ipAt := func(off int) string { return addrAt(base, off) }
 
 		lan := dcName + "-lan"
 		out.Networks[lan] = &spec.Network{Subnet: subnet}
@@ -126,6 +167,20 @@ func expandConsul(c *spec.Consul, out *spec.File) error {
 				"disable_update_check": true,
 				"ui_config":            map[string]any{"enabled": ui && s == 0},
 			}
+			ready := &spec.Ready{Consul: &spec.ConsulCheck{Leader: true}, Timeout: "90s"}
+			attach := map[string]*spec.Attachment{lan: {IP: ip}}
+			if c.Federated() {
+				// Serf LAN on the dc network, serf WAN on the wan network;
+				// RPC (8300) listens on both.
+				wan := wanIPs[dcName][s]
+				cfg["bind_addr"] = "0.0.0.0"
+				cfg["serf_lan"] = ip
+				cfg["serf_wan"] = wan
+				cfg["advertise_addr_wan"] = wan
+				cfg["retry_join_wan"] = others(allWAN, wan)
+				attach[WANNetwork] = &spec.Attachment{IP: wan}
+				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
+			}
 			deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Server.Cfg(), dc.Server.Cfg())
 			ov := dc.Servers.Overrides[name]
 			version := ""
@@ -135,16 +190,13 @@ func expandConsul(c *spec.Consul, out *spec.File) error {
 			}
 			key := dcName + "-" + name
 			out.Nodes[key] = &spec.RawNode{
-				Networks: map[string]*spec.Attachment{lan: {IP: ip}},
+				Networks: attach,
 				Files:    map[string]string{"consul.json": mustJSON(cfg)},
 				Processes: map[string]*spec.Process{
 					"consul": {
-						Run:     spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
-						Version: version,
-						ReadyWhen: &spec.Ready{
-							Consul:  &spec.ConsulCheck{Leader: true},
-							Timeout: "90s",
-						},
+						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
+						Version:   version,
+						ReadyWhen: ready,
 					},
 				},
 			}

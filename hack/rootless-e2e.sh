@@ -32,6 +32,14 @@ $P status "$F"
 first=$($P status "$F" | awk 'NR==3 {print $1}')
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
+if grep "federation:" "$F" >/dev/null; then
+  echo "--- WAN federation"
+  srv=$($P status "$F" | awk '$1 ~ /-server-/ {print $1; exit}')
+  $P exec "$F" "$srv" -- consul members -wan </dev/null
+  for dc in $(awk '/^    dc[0-9]+:/ {sub(":","",$1); print $1}' "$F"); do
+    $P exec "$F" "$first" -- consul catalog nodes -datacenter "$dc" </dev/null >/dev/null && echo "reached $dc"
+  done
+fi
 echo "--- describe"
 $P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"

@@ -217,10 +217,17 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   `service:` / `services:` (`port`, `run`, `env`, `check: http|tcp|none`,
   `register` passthrough), `processes:`
 - `run: fake-service`: built-in echo HTTP server (`parker fake-service`)
+- Several datacenters, each on its own LAN (`10.<n>.0.0/24` by default);
+  `primary: true` picks the primary (default: first by name)
+- `consul.federation: { mode: wan }`: servers also join a generated `wan`
+  network (`10.255.0.0/24`, dc1 at `.10+`, dc2 at `.30+`, ...; declare
+  `networks: { wan: { subnet: ... } }` to move it) with serf WAN, and
+  `up` waits until every server sees all servers over the WAN
+  (see `examples/federation.yaml`)
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
-Not yet: partitions, multiple dcs/federation, peering, gateways, Envoy,
+Not yet: partitions, mesh-gateway federation, peering, gateways, Envoy,
 ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`.
 
 ## Development

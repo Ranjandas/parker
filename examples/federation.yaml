@@ -1,0 +1,19 @@
+# Two WAN-federated datacenters: dc1 (primary, 3 servers) and dc2
+# (1 server plus a node running an echo service). Servers join a generated
+# `wan` network; clients stay on their own dc LAN.
+parker: v1alpha1
+name: federation
+versions: { consul: 1.22.7 }
+consul:
+  federation: { mode: wan }
+  datacenters:
+    dc1:
+      primary: true
+      servers: 3
+      nodes:
+        client: {}
+    dc2:
+      servers: 1
+      nodes:
+        api:
+          service: { port: 9090, run: fake-service }
