@@ -397,3 +397,22 @@ func TestHealthyOn(t *testing.T) {
 		}
 	}
 }
+
+func TestExecEnvAddsCachedPins(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("PARKER_CACHE", cache)
+	t.Setenv("PATH", "/usr/bin")
+	low := topo()
+	low.Versions = map[string]string{"envoy": "1.35.9", "nomad": "1.9.0"} // nothing runs either
+	dir := filepath.Join(cache, "envoy", "1.35.9")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "envoy"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := ExecEnv(low, "box", nil, nil)
+	if path != dir+":/usr/bin" {
+		t.Errorf("path %q: want the cached envoy only (nomad isn't cached, nothing fetched)", path)
+	}
+}

@@ -41,11 +41,16 @@ func ResolveNodes(low *spec.File, sel string) ([]string, error) {
 // environment for a command run inside a node.
 func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path string, env []string) {
 	path = os.Getenv("PATH")
-	for k, v := range low.Versions {
+	for _, k := range slices.Sorted(maps.Keys(low.Versions)) {
+		v := low.Versions[k]
+		// What the lab runs is fetched if need be; other pins (envoy before
+		// any sidecar runs it) join PATH once cached.
 		if Needs(low, k) {
 			if b, err := fetch.Binary(k, v, log); err == nil {
 				path = filepath.Dir(b) + ":" + path
 			}
+		} else if b, ok := fetch.Cached(k, v); ok {
+			path = filepath.Dir(b) + ":" + path
 		}
 	}
 	env = append(slices.Clone(base), "PATH="+path, "PARKER_LAB="+low.Name, "PARKER_NODE="+node)

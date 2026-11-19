@@ -41,6 +41,19 @@ func releasesURL() string {
 	return "https://releases.hashicorp.com"
 }
 
+// Cached returns the path of product@version if it is already there (or a
+// path: build that exists), without downloading.
+func Cached(product, version string) (string, bool) {
+	p, ok := strings.CutPrefix(version, "path:")
+	if !ok {
+		p = filepath.Join(CacheDir(), product, version, product)
+	}
+	if _, err := os.Stat(p); err != nil {
+		return "", false
+	}
+	return p, true
+}
+
 // Binary returns the path of product@version, downloading it if needed.
 // version may be "path:/abs/binary" to use a local build.
 func Binary(product, version string, log io.Writer) (string, error) {

@@ -13,6 +13,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 
+	"github.com/Ranjandas/parker/internal/compat"
 	"github.com/Ranjandas/parker/internal/echo"
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
@@ -118,6 +119,9 @@ func validateCmd() *cobra.Command {
 			if err := netsetup.CheckSubnets(low.Name, low); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
+			for _, w := range compat.Warnings(low) {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+			}
 			say("ok: %d networks, %d nodes", len(low.Networks), len(low.Nodes))
 			return nil
 		},
@@ -182,14 +186,22 @@ func wantedBinaries(low *spec.File) [][2]string {
 			}
 		}
 	}
-	scs := []*spec.Scenario{low.Scenario}
-	for _, k := range slices.Sorted(maps.Keys(low.Scenarios)) {
-		scs = append(scs, low.Scenarios[k])
-	}
-	for _, sc := range scs {
+	for _, sc := range allScenarios(low) {
 		for _, u := range scenario.Upgrades(sc) {
 			add(u.Product(), u.To)
 		}
+	}
+	return out
+}
+
+// allScenarios is scenario: (if any) and scenarios:, by name.
+func allScenarios(low *spec.File) []*spec.Scenario {
+	var out []*spec.Scenario
+	if low.Scenario != nil {
+		out = append(out, low.Scenario)
+	}
+	for _, k := range slices.Sorted(maps.Keys(low.Scenarios)) {
+		out = append(out, low.Scenarios[k])
 	}
 	return out
 }
