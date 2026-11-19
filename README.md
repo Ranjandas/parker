@@ -323,13 +323,18 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   (and ACLs) are ready, inline in Consul's own casing or
   `file: entries/x.hcl` (HCL or JSON); a failure names the entry and its
   YAML line (see `examples/config-entries.yaml`)
+- `connect: sidecar` on a service (or `service_defaults`): Parker turns
+  Connect on, registers a sidecar and runs `consul connect envoy` for it
+  (needs `versions.envoy`). `upstreams: { api: 9091 }` binds an upstream
+  on `127.0.0.1:9091`; the long form takes `{port, dc, peer, partition,
+  namespace}` (see `examples/mesh.yaml`). Transparent proxy is not yet.
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
 - `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
   upgrades (see [Scenarios](#scenarios))
 
-Not yet: partitions, Connect sidecars, mesh-gateway federation, peering,
+Not yet: partitions, transparent proxy, mesh-gateway federation, peering,
 gateways, impairments, modules/overlays/`--set`.
 
 ## Development

@@ -149,7 +149,14 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 	bins := map[string]string{}
 	for _, n := range f.Nodes {
 		for _, p := range n.Processes {
-			if key, ok := binaryKey(f, p); ok && bins[key] == "" {
+			keys := usedKeys(f, p)
+			if key, ok := binaryKey(f, p); ok {
+				keys = append(keys, key)
+			}
+			for _, key := range keys {
+				if bins[key] != "" {
+					continue
+				}
 				product, version, _ := strings.Cut(key, "@")
 				path, err := fetch.Binary(product, version, o.Log)
 				if err != nil {
@@ -546,6 +553,17 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 
 // binaryKey returns "product@version" when the process's first word names
 // a binary pinned in versions:.
+// usedKeys are the product@version keys of the binaries a process Uses.
+func usedKeys(f *spec.File, p *spec.Process) []string {
+	var out []string
+	for _, u := range p.Uses {
+		if v := f.Versions[u]; v != "" {
+			out = append(out, u+"@"+v)
+		}
+	}
+	return out
+}
+
 func binaryKey(f *spec.File, p *spec.Process) (string, bool) {
 	if len(p.Run) == 0 {
 		return "", false

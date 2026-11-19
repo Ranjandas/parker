@@ -72,6 +72,26 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 				{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
 			},
 		}
+	case reflect.TypeOf(spec.Upstream{}):
+		obj := &jsonschema.Schema{
+			Type:                 "object",
+			AdditionalProperties: jsonschema.FalseSchema,
+			Properties:           jsonschema.NewProperties(),
+			Required:             []string{"port"},
+		}
+		obj.Properties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535", Description: "Port to bind on 127.0.0.1."})
+		for _, f := range [][2]string{
+			{"dc", "DC of the destination, when not the caller's."},
+			{"peer", "Peer the destination is imported from (cluster peering)."},
+			{"partition", "Partition of the destination (Enterprise)."},
+			{"namespace", "Namespace of the destination (Enterprise)."},
+		} {
+			obj.Properties.Set(f[0], &jsonschema.Schema{Type: "string", Description: f[1]})
+		}
+		return &jsonschema.Schema{
+			Description: "A local port, or {port, dc, peer, partition, namespace}.",
+			OneOf:       []*jsonschema.Schema{{Type: "integer", Minimum: "1", Maximum: "65535"}, obj},
+		}
 	case reflect.TypeOf(spec.NodeGroup{}):
 		return &jsonschema.Schema{
 			Description: "A selector, or a list of selectors.",

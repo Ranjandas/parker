@@ -61,6 +61,14 @@ func TestNodeIPsAndNeeds(t *testing.T) {
 	if !Needs(low, "consul") || Needs(low, "envoy") {
 		t.Error("Needs: consul is run, envoy is not")
 	}
+	for _, n := range low.Nodes {
+		for _, p := range n.Processes {
+			p.Uses = []string{"envoy"}
+		}
+	}
+	if !Needs(low, "envoy") {
+		t.Error("Needs: a process that uses envoy needs it")
+	}
 }
 
 func TestLookPath(t *testing.T) {
