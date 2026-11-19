@@ -52,6 +52,9 @@ func Expand(in *spec.File) (*spec.File, error) {
 			n.Gateway = p.Masked().Addr().Next().String()
 		}
 	}
+	if err := checkOverlaps(out.Networks); err != nil {
+		return nil, err
+	}
 	if err := out.Validate(); err != nil {
 		return nil, fmt.Errorf("expanded topology: %w", err)
 	}
@@ -361,4 +364,26 @@ func mustJSON(v any) string {
 		panic(err)
 	}
 	return string(b) + "\n"
+}
+
+// checkOverlaps rejects lab networks whose subnets overlap each other: they
+// would become two bridges routing the same addresses.
+func checkOverlaps(nets map[string]*spec.Network) error {
+	names := slices.Sorted(maps.Keys(nets))
+	pfx := map[string]netip.Prefix{}
+	for _, n := range names {
+		p, err := netip.ParsePrefix(nets[n].Subnet)
+		if err != nil {
+			return fmt.Errorf("networks.%s.subnet: %w", n, err)
+		}
+		pfx[n] = p.Masked()
+	}
+	for i, a := range names {
+		for _, b := range names[i+1:] {
+			if pfx[a].Overlaps(pfx[b]) {
+				return fmt.Errorf("networks %s (%s) and %s (%s) overlap; give one of them another subnet", a, pfx[a], b, pfx[b])
+			}
+		}
+	}
+	return nil
 }

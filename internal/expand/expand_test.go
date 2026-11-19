@@ -99,3 +99,19 @@ func TestRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestOverlappingNetworksRejected(t *testing.T) {
+	err := checkOverlaps(map[string]*spec.Network{
+		"dc1-lan": {Subnet: "10.1.0.0/24"},
+		"wan":     {Subnet: "10.1.0.128/25"},
+	})
+	if err == nil {
+		t.Fatal("want overlap error")
+	}
+	if err := checkOverlaps(map[string]*spec.Network{
+		"dc1-lan": {Subnet: "10.1.0.0/24"},
+		"dc2-lan": {Subnet: "10.2.0.0/24"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
