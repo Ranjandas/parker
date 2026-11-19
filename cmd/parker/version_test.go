@@ -33,3 +33,25 @@ func TestPseudoVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildMismatch(t *testing.T) {
+	defer func(v, c string) { version, commit = v, c }(version, commit)
+	version, commit = "dev", "abc123def456"
+	if buildID() != "dev+abc123def456" {
+		t.Errorf("buildID = %q", buildID())
+	}
+	if err := buildMismatch("dev+abc123def456", 7, ""); err != nil {
+		t.Errorf("same build: %v", err)
+	}
+	err := buildMismatch("dev+0123456789ab", 7, "")
+	if err == nil || !strings.Contains(err.Error(), "pid 7") || !strings.Contains(err.Error(), "parker daemon stop") {
+		t.Errorf("local mismatch: %v", err)
+	}
+	if err := buildMismatch("v0.3.0", 7, "https://lab:7443"); err != nil {
+		t.Errorf("a remote daemon only warns: %v", err)
+	}
+	commit = ""
+	if buildID() != "dev" {
+		t.Errorf("no commit: %q", buildID())
+	}
+}

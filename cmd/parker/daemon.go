@@ -115,7 +115,7 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 		return nil, err
 	}
 	if ok {
-		return c, nil
+		return c, checkBuild(ctx, c)
 	}
 	if runtime.GOOS != "linux" {
 		return nil, errNotLinux
@@ -169,6 +169,30 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 		}
 	}
 	return nil, fmt.Errorf("parker daemon did not come up within 5s; see %s", logPath)
+}
+
+// checkBuild refuses a local daemon from another build: the client
+// expands the topology, so an older daemon rejects what a newer client
+// sends (unknown keys). A remote daemon only gets a warning, since
+// restarting it is its host's call.
+func checkBuild(ctx context.Context, c parkerv1connect.ParkerServiceClient) error {
+	r, err := c.Version(ctx, connect.NewRequest(&parkerv1.VersionRequest{}))
+	if err != nil {
+		return rpcErr(err)
+	}
+	return buildMismatch(r.Msg.Version, int(r.Msg.Pid), target().Host)
+}
+
+func buildMismatch(daemonBuild string, pid int, host string) error {
+	if daemonBuild == buildID() {
+		return nil
+	}
+	if host != "" {
+		fmt.Fprintf(os.Stderr, "warning: parker daemon at %s is %s, this client is %s\n", host, daemonBuild, buildID())
+		return nil
+	}
+	return fmt.Errorf("the running parker daemon (pid %d) is %s, but this client is %s;\n"+
+		"stop it with `parker daemon stop` and run the command again to start this build's daemon\n(labs keep running, except rootless ones, which go down with their daemon)", pid, daemonBuild, buildID())
 }
 
 // rpcErr strips connect's "code: " prefix so errors read like local ones.
