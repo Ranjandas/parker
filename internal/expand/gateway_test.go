@@ -1,6 +1,7 @@
 package expand
 
 import (
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
@@ -141,5 +142,71 @@ func TestGatewayYAML(t *testing.T) {
 	}
 	if err := unmarshalStrict("servers: 1\ngateways: { mesh: false }", &dc); err == nil || !strings.Contains(err.Error(), "leave the gateway out") {
 		t.Errorf("mesh: false: %v", err)
+	}
+}
+
+func TestIngressTerminatingAPIGateways(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/gateways.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for node, want := range map[string]string{
+		"dc1-ingress":     "consul connect envoy -gateway=ingress -register -service ingress-gateway -address ",
+		"dc1-terminating": "consul connect envoy -gateway=terminating -register -service terminating-gateway -address ",
+		"dc1-edge":        "consul connect envoy -gateway=api -register -service edge -address ",
+	} {
+		n := low.Nodes[node]
+		if n == nil || n.Labels.Role != "gateway" {
+			t.Fatalf("%s: %+v", node, n)
+		}
+		var run string
+		for pn, p := range n.Processes {
+			if strings.HasSuffix(pn, "-gateway") {
+				run = strings.Join(p.Run, " ")
+			}
+		}
+		if !strings.HasPrefix(run, want) || strings.Contains(run, "-bind-address") || strings.Contains(run, "-wan-address") {
+			t.Errorf("%s runs %q", node, run)
+		}
+	}
+
+	srv := low.Nodes["dc1-server-1"]
+	var refs []EntryRef
+	if err := json.Unmarshal([]byte(srv.Files[ConfigEntriesManifest]), &refs); err != nil {
+		t.Fatal(err)
+	}
+	var labels []string
+	for _, r := range refs {
+		labels = append(labels, r.Label)
+	}
+	if len(labels) != 5 || !strings.HasPrefix(labels[0], "consul.datacenters.dc1.config_entries[0]") ||
+		labels[2] != "consul.datacenters.dc1.gateways.edge.entry" || labels[4] != "consul.datacenters.dc1.gateways.terminating.entry" {
+		t.Errorf("entries in order: %v", labels)
+	}
+	var edge map[string]any
+	if err := json.Unmarshal([]byte(srv.Files["gateway-entry-0.json"]), &edge); err != nil {
+		t.Fatal(err)
+	}
+	if edge["Kind"] != "api-gateway" || edge["Name"] != "edge" || edge["Listeners"] == nil {
+		t.Errorf("api gateway entry: %v", edge)
+	}
+}
+
+func TestOtherGatewayErrors(t *testing.T) {
+	on := true
+	for _, c := range []struct {
+		name string
+		gw   *spec.Gateway
+		want string
+	}{
+		{"ingress on the wan", &spec.Gateway{Kind: "ingress", WAN: &on}, "only mesh gateways join the wan"},
+		{"mesh with an entry", &spec.Gateway{Kind: "mesh", Entry: map[string]any{"Listeners": nil}}, "mesh gateways have no config entry"},
+		{"unknown kind", &spec.Gateway{Kind: "egress"}, "want mesh, ingress, terminating or api"},
+	} {
+		f := load(t, "../../examples/gateways.yaml")
+		f.Consul.Datacenters["dc1"].Gateways["x"] = c.gw
+		if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
 	}
 }

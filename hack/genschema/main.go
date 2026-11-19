@@ -98,11 +98,12 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 			AdditionalProperties: jsonschema.FalseSchema,
 			Properties:           jsonschema.NewProperties(),
 		}
-		obj.Properties.Set("kind", &jsonschema.Schema{Type: "string", Enum: []any{"mesh"}, Description: "Gateway kind; default: the gateway's name."})
+		obj.Properties.Set("kind", &jsonschema.Schema{Type: "string", Enum: []any{"mesh", "ingress", "terminating", "api"}, Description: "Gateway kind; default: the gateway's name."})
+		obj.Properties.Set("entry", &jsonschema.Schema{Type: "object", Description: "The gateway's config entry in Consul casing, without Kind and Name (Listeners, Services, ...)."})
 		obj.Properties.Set("count", &jsonschema.Schema{Type: "integer", Minimum: "1", Description: "Number of gateway nodes (default 1)."})
-		obj.Properties.Set("wan", &jsonschema.Schema{Type: "boolean", Description: "Attach to the wan network (default: on when federated)."})
+		obj.Properties.Set("wan", &jsonschema.Schema{Type: "boolean", Description: "Mesh gateways: attach to the wan network (default: on when federated)."})
 		return &jsonschema.Schema{
-			Description: "true for a gateway with defaults, or {kind, count, wan}.",
+			Description: "true for a gateway with defaults, or {kind, count, wan, entry}.",
 			OneOf:       []*jsonschema.Schema{{Type: "boolean", Const: true}, obj},
 		}
 	case reflect.TypeOf(spec.NodeGroup{}):

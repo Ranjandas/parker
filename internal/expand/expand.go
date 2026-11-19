@@ -253,7 +253,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	if err != nil {
 		return err
 	}
-	gws, err := gatewayNodes(c, dcNames, primary)
+	gws, gwEntries, err := gatewayNodes(c, dcNames, primary)
 	if err != nil {
 		return err
 	}
@@ -472,8 +472,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 		}
 
-		if len(dc.ConfigEntries) > 0 {
-			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, serverRefs, aclDeps, apiEnv(token, tls)); err != nil {
+		if len(dc.ConfigEntries) > 0 || len(gwEntries[dcName]) > 0 {
+			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, gwEntries[dcName], serverRefs, aclDeps, apiEnv(token, tls)); err != nil {
 				return err
 			}
 		}
@@ -874,7 +874,7 @@ type EntryRef struct {
 	Label string `json:"label"`
 }
 
-func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, serverRefs []string, aclDeps map[string]*spec.Dep, env map[string]string) error {
+func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, gen []gatewayEntry, serverRefs []string, aclDeps map[string]*spec.Dep, env map[string]string) error {
 	var refs []EntryRef
 	for i, e := range dc.ConfigEntries {
 		var name, body string
@@ -889,6 +889,13 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 		}
 		srv.Files[name] = body
 		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: dc.EntryLabel(dcName, i)})
+	}
+	// Gateways' own entries last: their listeners need the protocols that
+	// service-defaults in config_entries set.
+	for i, g := range gen {
+		name := fmt.Sprintf("gateway-entry-%d.json", i)
+		srv.Files[name] = mustJSON(g.entry)
+		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: g.label})
 	}
 	srv.Files[ConfigEntriesManifest] = mustJSON(refs)
 	deps := map[string]*spec.Dep{}

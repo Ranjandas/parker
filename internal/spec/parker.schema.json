@@ -226,9 +226,16 @@
                   "kind": {
                     "type": "string",
                     "enum": [
-                      "mesh"
+                      "mesh",
+                      "ingress",
+                      "terminating",
+                      "api"
                     ],
                     "description": "Gateway kind; default: the gateway's name."
+                  },
+                  "entry": {
+                    "type": "object",
+                    "description": "The gateway's config entry in Consul casing, without Kind and Name (Listeners, Services, ...)."
                   },
                   "count": {
                     "type": "integer",
@@ -237,14 +244,14 @@
                   },
                   "wan": {
                     "type": "boolean",
-                    "description": "Attach to the wan network (default: on when federated)."
+                    "description": "Mesh gateways: attach to the wan network (default: on when federated)."
                   }
                 },
                 "additionalProperties": false,
                 "type": "object"
               }
             ],
-            "description": "true for a gateway with defaults, or {kind, count, wan}."
+            "description": "true for a gateway with defaults, or {kind, count, wan, entry}."
           },
           "type": "object",
           "description": "Gateways are nodes that run a Consul agent and a gateway Envoy,\nkeyed by node name: mesh: true, or {kind, count, wan}."

@@ -314,6 +314,11 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   `consul connect envoy -gateway=mesh -register` on 8443. They join the
   `wan` network (at `.200+`, `.210+`, ...) when the datacenters are
   federated; selector `dc1/gateways`
+- `kind: ingress | terminating | api` gateways, with `entry:` holding the
+  gateway's config entry in Consul casing (`Listeners`, `Services`);
+  Parker sets its Kind and Name and applies it after `config_entries`.
+  `parker exec` sets `PARKER_IP` to the node's LAN address, handy for
+  `curl http://$PARKER_IP:8080/` on a gateway (see `examples/gateways.yaml`)
 - `consul.federation: { mode: mesh-gateways }` (needs `tls: true` and a
   mesh gateway per datacenter): servers keep serf on their LAN address,
   which other datacenters can't route to, and reach each other only
@@ -353,8 +358,7 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 - `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
   upgrades (see [Scenarios](#scenarios))
 
-Not yet: partitions, peering,
-gateways, impairments, modules/overlays/`--set`.
+Not yet: partitions, peering, impairments, modules/overlays/`--set`.
 
 ## Development
 
