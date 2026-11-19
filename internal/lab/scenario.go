@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
@@ -260,4 +261,118 @@ func (l *ScenarioLab) Proc(ctx context.Context, action, node string) error {
 		return h.ResumeNode(node)
 	}
 	return fmt.Errorf("unknown action %q", action)
+}
+
+// UpgradeWait bounds how long an upgrade waits for a dc's servers to be
+// healthy again after each server.
+var UpgradeWait = 2 * time.Minute
+
+// UpgradeOrder puts servers first, dc by dc with the raft leader last, then
+// every other node.
+func (l *ScenarioLab) UpgradeOrder(nodes []string) ([]string, error) {
+	return upgradeOrder(l.Low, nodes, func(dc string) (string, error) { return RaftLeader(l.Low, dc) })
+}
+
+func upgradeOrder(low *spec.File, nodes []string, leader func(dc string) (string, error)) ([]string, error) {
+	label := func(n string) *spec.NodeLabels {
+		if rn := low.Nodes[n]; rn != nil && rn.Labels != nil {
+			return rn.Labels
+		}
+		return &spec.NodeLabels{}
+	}
+	servers := map[string][]string{}
+	var rest []string
+	for _, n := range slices.Sorted(slices.Values(nodes)) {
+		if l := label(n); l.Role == "server" {
+			servers[l.DC] = append(servers[l.DC], n)
+		} else {
+			rest = append(rest, n)
+		}
+	}
+	var out []string
+	for _, dc := range slices.Sorted(maps.Keys(servers)) {
+		ss := servers[dc]
+		if len(ss) > 1 {
+			ld, err := leader(dc)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w (the leader goes last)", dc, err)
+			}
+			if i := slices.Index(ss, ld); i >= 0 {
+				ss = append(slices.Delete(slices.Clone(ss), i, i+1), ld)
+			}
+		}
+		out = append(out, ss...)
+	}
+	return append(out, rest...), nil
+}
+
+// Upgrade swaps node's product binary for version and waits for it; after
+// a server, also for every server of its dc to be healthy (autopilot).
+func (l *ScenarioLab) Upgrade(ctx context.Context, node, product, version string) error {
+	if l.Handle == nil {
+		return errors.New("upgrade needs the lab supervised by this daemon (bring it up with parker up or run)")
+	}
+	bin, err := fetch.Binary(product, version, io.Discard)
+	if err != nil {
+		return err
+	}
+	if err := l.Handle.UpgradeNode(ctx, node, product, version, bin); err != nil {
+		return err
+	}
+	lb := l.Low.Nodes[node].Labels
+	if product != "consul" || lb == nil || lb.Role != "server" {
+		return nil
+	}
+	deadline := time.Now().Add(UpgradeWait)
+	for {
+		err := l.serversHealthy(lb.DC, lb.Name, version)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s servers not healthy %s after the upgrade: %w", lb.DC, UpgradeWait, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// serversHealthy is nil once autopilot calls every server of dc healthy
+// and sees server (its Consul node name) on version.
+func (l *ScenarioLab) serversHealthy(dc, server, version string) error {
+	c, err := l.answering(dc)
+	if err != nil {
+		return err
+	}
+	h, err := c.Operator().AutopilotServerHealth(nil)
+	if err != nil {
+		return err
+	}
+	return healthyOn(h, server, version)
+}
+
+func healthyOn(h *api.OperatorHealthReply, server, version string) error {
+	var bad []string
+	seen := false
+	for _, s := range h.Servers {
+		if !s.Healthy {
+			bad = append(bad, s.Name)
+		}
+		if s.Name == server {
+			seen = true
+			if s.Version != version {
+				return fmt.Errorf("%s still reports %s", server, s.Version)
+			}
+		}
+	}
+	if !seen {
+		return fmt.Errorf("autopilot doesn't list %s yet", server)
+	}
+	if len(bad) > 0 || !h.Healthy {
+		return fmt.Errorf("unhealthy: %s", strings.Join(bad, ", "))
+	}
+	return nil
 }

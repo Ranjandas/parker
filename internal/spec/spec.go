@@ -99,6 +99,27 @@ type Step struct {
 	Pause string `yaml:"pause,omitempty"`
 	// Resume continues paused processes (SIGCONT).
 	Resume string `yaml:"resume,omitempty"`
+	// Upgrade moves the nodes to another version of a pinned binary, one
+	// node at a time: servers before clients, the leader last, each one
+	// healthy again before the next.
+	Upgrade *UpgradeStep `yaml:"upgrade,omitempty"`
+}
+
+type UpgradeStep struct {
+	// On is a selector: dc1/servers, dc1, ...
+	On string `yaml:"on"`
+	// To is the version to run, e.g. 1.22.8.
+	To string `yaml:"to"`
+	// Binary is the pinned binary to swap; default consul.
+	Binary string `yaml:"binary,omitempty"`
+}
+
+// Product is the binary an upgrade swaps.
+func (u *UpgradeStep) Product() string {
+	if u.Binary == "" {
+		return "consul"
+	}
+	return u.Binary
 }
 
 // NodeGroup is one side of a partition: a selector or a list of them.

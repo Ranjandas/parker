@@ -1,0 +1,25 @@
+# A rolling upgrade: servers one at a time (the leader last, each waiting
+# for autopilot to call every server healthy), then the client.
+parker: v1alpha1
+name: upgrade
+versions: { consul: 1.22.6 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          service: { port: 8080, run: fake-service }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { leader: true, peers: ">=3" }, within: 30s }
+    - upgrade: { on: dc1/servers, to: 1.22.7 }
+    - name: every server runs 1.22.7
+      assert:
+        exec: { on: dc1/web, run: "consul members | awk '$4 == \"server\" && $5 == \"1.22.7\"' | wc -l", output: "3" }
+        within: 30s
+    - upgrade: { on: dc1/web, to: 1.22.7 }
+    - assert: { consul: { leader: true, members: ">=4", service_healthy: web }, within: 30s }
+    - assert: { exec: { on: dc1/server-1, run: "consul members | grep -w web | grep -w 1.22.7" }, within: 30s }

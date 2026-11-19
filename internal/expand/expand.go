@@ -158,6 +158,11 @@ func checkScenarios(low *spec.File) error {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
+		for _, u := range scenario.Upgrades(sc) {
+			if low.Versions[u.Product()] == "" {
+				errs = append(errs, fmt.Errorf("%s: upgrade: %s is not pinned under versions:", name, u.Product()))
+			}
+		}
 		for _, sel := range scenario.Selectors(sc) {
 			if _, err := selector.Resolve(low, sel, nil); err != nil && !errors.Is(err, selector.ErrNoRaft) {
 				errs = append(errs, fmt.Errorf("%s: %w", name, err))

@@ -154,6 +154,19 @@ running lab: `parker fault FILE kill dc1/leader`, `parker fault FILE partition
 dc1/server-1,dc1/server-2 dc1/server-3`, `parker fault FILE heal`. See
 `examples/faults.yaml`.
 
+### Rolling upgrades
+
+```yaml
+    - upgrade: { on: dc1/servers, to: 1.22.7 }     # binary: consul (default)
+```
+
+One node at a time: servers first, dc by dc with the raft leader last, then
+clients and gateways. Each node's Consul is stopped, switched to the new
+binary and started again; after a server, the step waits (up to 2 minutes)
+for autopilot to report every server healthy and the upgraded one on the new
+version. Processes that depend on the agent keep running. `parker fetch`
+also downloads upgrade targets. See `examples/upgrade.yaml`.
+
 ## Selectors
 
 `exec`, `port-forward`, `fault` and scenarios (and later `--set`) pick nodes

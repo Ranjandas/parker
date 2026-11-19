@@ -514,3 +514,14 @@ func TestFaultScenarioCarriedAndChecked(t *testing.T) {
 		t.Errorf("err %v", err)
 	}
 }
+
+func TestUpgradeNeedsPinnedBinary(t *testing.T) {
+	if _, err := Expand(load(t, "../../examples/upgrade.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	f := load(t, "../../examples/upgrade.yaml")
+	f.Scenario.Steps[2].Upgrade.Binary = "nomad"
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "upgrade: nomad is not pinned under versions:") {
+		t.Errorf("err = %v", err)
+	}
+}

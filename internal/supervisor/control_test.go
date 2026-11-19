@@ -2,7 +2,9 @@ package supervisor
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,13 +18,17 @@ import (
 // does but without a network namespace.
 func sleeper(t *testing.T, h *Handle, name, policy string, deps ...string) *proc {
 	t.Helper()
-	p := &proc{id: "n/" + name, node: "n", name: name, spec: &spec.Process{Restart: policy},
-		deps: map[string]string{}, kick: make(chan struct{}, 1), exited: make(chan struct{}), logPath: "/dev/null"}
+	p := &proc{id: "n/" + name, node: "n", name: name, spec: &spec.Process{Restart: policy, Run: []string{"sleep", "60"}},
+		deps: map[string]string{}, kick: make(chan struct{}, 1), exited: make(chan struct{}), logPath: "/dev/null",
+		argv: []string{"sleep", "60"}, version: "1"}
 	for _, d := range deps {
 		p.deps[d] = "ready"
 	}
 	start := func() (<-chan error, error) {
-		cmd := exec.Command("sleep", "60")
+		p.mu.Lock()
+		argv := slices.Clone(p.argv)
+		p.mu.Unlock()
+		cmd := exec.Command(argv[0], argv[1:]...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := cmd.Start(); err != nil {
 			return nil, err
@@ -198,5 +204,41 @@ func TestNodeProcsOrderAndMissing(t *testing.T) {
 	}
 	if _, err := h.nodeProcs("zz"); err == nil {
 		t.Error("missing node: no error")
+	}
+}
+
+func TestUpgradeNodeSwapsBinary(t *testing.T) {
+	h := testHandle(t)
+	p := sleeper(t, h, "agent", "no")
+	other := sleeper(t, h, "app", "no")
+	other.spec.Run = []string{"other"}
+	otherPid, _, _ := other.state()
+	old, _, _ := p.state()
+	bin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.UpgradeNode(context.Background(), "n", "sleep", "2", bin); err != nil {
+		t.Fatal(err)
+	}
+	pid, alive, _ := p.state()
+	if !alive || pid == old {
+		t.Fatalf("not restarted: pid %d (was %d) alive %v", pid, old, alive)
+	}
+	cmdline, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if argv0, _, _ := strings.Cut(string(cmdline), "\x00"); argv0 != bin {
+		t.Errorf("argv0 = %q, want %q", argv0, bin)
+	}
+	if v := h.Snapshot()["n/agent"].Version; v != "2" {
+		t.Errorf("version = %q", v)
+	}
+	if p.held {
+		t.Error("left held")
+	}
+	if pid, _, _ := other.state(); pid != otherPid {
+		t.Error("a process running another binary was restarted")
+	}
+	if err := h.UpgradeNode(context.Background(), "n", "consul", "2", bin); err == nil || !strings.Contains(err.Error(), "runs no consul") {
+		t.Errorf("err = %v", err)
 	}
 }
