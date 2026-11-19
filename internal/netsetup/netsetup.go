@@ -254,6 +254,15 @@ func Down(lab string, log func(string, ...any)) error {
 	if deleted > 0 {
 		log("deleted %d links", deleted)
 	}
+	if fw := SystemFirewall(); fw != nil {
+		n, err := fw.Revoke(lab)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if n > 0 {
+			log("deleted %d firewall rules", n)
+		}
+	}
 	return errors.Join(errs...)
 }
 

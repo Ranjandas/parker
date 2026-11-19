@@ -76,7 +76,7 @@ func runDir(lab string) string {
 func say(format string, a ...any) { fmt.Printf(format+"\n", a...) }
 
 func upCmd() *cobra.Command {
-	var keepOnFail bool
+	var keepOnFail, noFirewall bool
 	c := &cobra.Command{
 		Use:   "up FILE",
 		Short: "Create the lab's network and start its processes; returns when everything is ready",
@@ -114,10 +114,17 @@ func upCmd() *cobra.Command {
 				_ = netsetup.Down(lab, func(string, ...any) {})
 				return privHint(err)
 			}
+			if err := allowForwarding(lab, low, noFirewall); err != nil {
+				_ = netsetup.Down(lab, func(string, ...any) {})
+				return err
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			_, err = supervisor.Run(ctx, low, supervisor.Options{Lab: lab, RunDir: dir, Log: os.Stdout})
 			if err != nil {
+				for _, h := range netsetup.FirewallHints() {
+					err = fmt.Errorf("%w\nhint: %s", err, h)
+				}
 				if !keepOnFail {
 					_ = netsetup.Down(lab, func(string, ...any) {})
 					return fmt.Errorf("%w\n(lab torn down; rerun with --keep-on-failure to inspect it)", err)
@@ -133,7 +140,36 @@ func upCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&keepOnFail, "keep-on-failure", false, "leave the lab running if a readiness check fails")
+	c.Flags().BoolVar(&noFirewall, "no-firewall", false, "don't add iptables ACCEPT rules for the lab bridges; print them instead")
 	return c
+}
+
+// allowForwarding lets lab traffic through a FORWARD chain that drops by
+// default (Docker does this), or prints the rules with --no-firewall.
+func allowForwarding(lab string, low *spec.File, dryRun bool) error {
+	fw := netsetup.SystemFirewall()
+	if fw == nil {
+		return nil
+	}
+	if dryRun {
+		st, err := fw.State()
+		if err != nil || !st.NeedsRules() {
+			return nil
+		}
+		say("firewall: FORWARD would drop lab traffic; not changing it (--no-firewall). Run:")
+		for _, a := range netsetup.RuleArgs(lab, st.Chain(), low) {
+			say("  sudo iptables %s", strings.Join(a, " "))
+		}
+		return nil
+	}
+	chain, err := fw.Allow(lab, low)
+	if err != nil {
+		return fmt.Errorf("firewall: %w\n(rerun with --no-firewall to skip and print the rules instead)", err)
+	}
+	if chain != "" {
+		say("firewall: allowed lab bridges in %s", chain)
+	}
+	return nil
 }
 
 func needs(f *spec.File, product string) bool {

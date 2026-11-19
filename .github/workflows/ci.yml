@@ -44,6 +44,10 @@ jobs:
         with:
           path: ~/.cache/parker
           key: parker-bin-${{ runner.os }}-${{ hashFiles('examples/*.yaml') }}
+      - name: iptables rules round trip (private netns)
+        run: |
+          go test -c -o /tmp/netsetup.test ./internal/netsetup/
+          PARKER_LIVE_IPTABLES=1 unshare -Urn /tmp/netsetup.test -test.run Live -test.v
       - run: make e2e
         env:
           PARKER_E2E_LOGS: /tmp/parker-e2e-logs
