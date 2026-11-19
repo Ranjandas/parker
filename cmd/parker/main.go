@@ -88,6 +88,9 @@ func upCmd() *cobra.Command {
 			}
 			lab := low.Name
 			t0 := time.Now()
+			if err := netsetup.CheckSubnets(lab, low); err != nil {
+				return err
+			}
 			// Fetch before touching the network so a bad version fails fast.
 			for k, v := range low.Versions {
 				if needs(low, k) {
@@ -230,6 +233,11 @@ func validateCmd() *cobra.Command {
 			_, low, err := load(args[0])
 			if err != nil {
 				return err
+			}
+			// A host clash is only a warning here: the file may be meant
+			// for another machine. `up` refuses it.
+			if err := netsetup.CheckSubnets(low.Name, low); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
 			say("ok: %d networks, %d nodes", len(low.Networks), len(low.Nodes))
 			return nil
