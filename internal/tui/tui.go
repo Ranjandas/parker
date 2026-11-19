@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
@@ -43,6 +45,8 @@ type Options struct {
 	// Shell returns the command that opens a shell in a node (run with the
 	// terminal handed over, e.g. `parker exec LAB NODE`).
 	Shell func(lab, node string) *exec.Cmd
+	// Static turns the logo animation off (NO_COLOR, slow links).
+	Static bool
 	// Refresh is the status poll interval; default 2s.
 	Refresh time.Duration
 	// Run plays a scenario on the daemon (a named one, or inline YAML),
@@ -82,6 +86,7 @@ const (
 // row is one line of the nodes table: a process on a node.
 type row struct {
 	node, ip, proc, pid, state, restarts, role string
+	section                                    string // a datacenter heading, not a process
 }
 
 func (r row) fields() []string {
@@ -95,16 +100,16 @@ func (r row) matches(f string) bool {
 // cells styles r for the grid. cont marks a further process of the node
 // above, whose NODE and IP stay blank so the node reads as one group.
 func (r row) cells(cont bool) []cell {
-	node, ip := cell{r.node, titleStyle}, cell{r.ip, plain}
+	node, ip := cell{text: r.node, style: titleStyle}, cell{text: r.ip, style: plain}
 	if cont {
 		node, ip = cell{}, cell{}
 	}
-	pid := cell{r.pid, mutedStyle}
-	restarts := cell{r.restarts, mutedStyle}
+	pid := cell{text: r.pid, style: mutedStyle}
+	restarts := cell{text: r.restarts, style: mutedStyle}
 	if r.restarts != "0" {
-		restarts = cell{r.restarts, warnStyle}
+		restarts = cell{text: r.restarts, style: warnStyle}
 	}
-	return []cell{node, ip, {r.proc, plain}, pid, stateCell(r.state), restarts, roleCell(r.role)}
+	return []cell{node, ip, {text: r.proc, style: plain}, pid, stateCell(r.state), restarts, roleCell(r.role)}
 }
 
 // Model is the Bubble Tea model.
@@ -146,11 +151,13 @@ type Model struct {
 	err     error
 	flash   string
 	updated time.Time
+	frame   int // logo animation
 }
 
 // Messages.
 type (
 	tickMsg   struct{}
+	animMsg   struct{}
 	labsMsg   struct{ labs []*parkerv1.LabSummary }
 	statusMsg struct {
 		lab string
@@ -210,7 +217,10 @@ var nodeColumns = []column{{title: "NODE", flex: true}, {title: "IP", flex: true
 	{title: "PID"}, {title: "STATE"}, {title: "RESTARTS"}, {title: "ROLE"}}
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refresh(), tick(m.o.Refresh))
+	if m.o.Static {
+		return tea.Batch(m.refresh(), tick(m.o.Refresh))
+	}
+	return tea.Batch(m.refresh(), tick(m.o.Refresh), animate())
 }
 
 func tick(d time.Duration) tea.Cmd {
@@ -261,17 +271,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.refresh(), tick(m.o.Refresh))
+	case animMsg:
+		m.frame++
+		return m, animate()
 	case labsMsg:
 		m.err = nil
 		m.labs = msg.labs
 		m.updated = time.Now()
 		rows := make([][]cell, len(msg.labs))
 		for i, l := range msg.labs {
-			sup := cell{"no", mutedStyle}
+			sup := cell{text: "no", style: mutedStyle}
 			if l.Supervised {
-				sup = cell{"yes", okStyle}
+				sup = cell{text: "yes", style: okStyle}
 			}
-			rows[i] = []cell{{l.Name, titleStyle}, {strconv.Itoa(int(l.Namespaces)), plain}, sup}
+			rows[i] = []cell{{text: l.Name, style: titleStyle}, {text: strconv.Itoa(int(l.Namespaces)), style: plain}, sup}
 		}
 		m.labTable.SetRows(rows)
 		// One lab and nothing chosen yet: open it.
@@ -335,7 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) resize() {
-	h := max(m.height-4, 3) // header, info line, footer
+	h := max(m.height-8, 3) // header and footer boxes (3 lines each), table header and rule
 	m.labTable.SetSize(m.width, h)
 	m.nodeTable.SetSize(m.width, h)
 	m.vp.Width, m.vp.Height = m.width, h
@@ -351,38 +364,169 @@ func (m Model) openLab(name string) (tea.Model, tea.Cmd) {
 }
 
 // applyRows flattens the status into table rows and applies the filters.
+// Nodes are grouped by datacenter (a heading row each), servers first,
+// then clients, then nodes without an agent.
 func (m *Model) applyRows() {
 	m.rows = m.rows[:0]
 	if m.status == nil {
 		m.nodeTable.SetRows(nil)
 		return
 	}
-	for _, n := range m.status.Nodes {
-		if m.dc != "" && !strings.HasPrefix(n.Name, m.dc+"-") {
+	var groups []nodeGroup
+	for _, g := range groupNodes(m.status.Nodes) {
+		if m.dc != "" && g.dc != m.dc {
 			continue
 		}
-		ip := strings.Join(n.Ips, ",")
-		if !n.Namespace {
-			ip += " (no netns)"
+		var rows []row
+		for _, n := range g.nodes {
+			rows = append(rows, m.nodeRows(n)...)
 		}
-		for _, p := range n.Processes {
-			r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: "-"}
-			if p.Pid > 0 {
-				r.pid = strconv.Itoa(int(p.Pid))
-			}
-			if p.Name == "consul" && n.Role != "" {
-				r.role = n.Role
-			}
-			if m.filter == "" || r.matches(m.filter) {
-				m.rows = append(m.rows, r)
-			}
+		if len(rows) > 0 {
+			groups = append(groups, g)
+			g.rows = rows
+			groups[len(groups)-1] = g
 		}
+	}
+	for _, g := range groups {
+		if m.dc == "" && (g.dc != "" || len(groups) > 1) {
+			m.rows = append(m.rows, row{section: g.title()})
+		}
+		m.rows = append(m.rows, g.rows...)
 	}
 	cells := make([][]cell, len(m.rows))
 	for i, r := range m.rows {
+		if r.section != "" {
+			cells[i] = sectionRow(r.section)
+			continue
+		}
 		cells[i] = r.cells(i > 0 && m.rows[i-1].node == r.node)
 	}
 	m.nodeTable.SetRows(cells)
+}
+
+// nodeRows is a node's processes as rows, after the filter.
+func (m *Model) nodeRows(n *parkerv1.NodeStatus) []row {
+	ip := strings.Join(n.Ips, ",")
+	if !n.Namespace {
+		ip += " (no netns)"
+	}
+	var out []row
+	for _, p := range n.Processes {
+		r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: "-"}
+		if p.Pid > 0 {
+			r.pid = strconv.Itoa(int(p.Pid))
+		}
+		if p.Name == "consul" && n.Role != "" {
+			r.role = n.Role
+		}
+		if m.filter == "" || r.matches(m.filter) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// nodeGroup is a datacenter's nodes in display order.
+type nodeGroup struct {
+	dc               string // "" for nodes outside any datacenter
+	nodes            []*parkerv1.NodeStatus
+	servers, clients int
+	rows             []row
+}
+
+func (g nodeGroup) title() string {
+	if g.dc == "" {
+		return "other"
+	}
+	parts := []string{plural(g.servers, "server")}
+	if g.clients > 0 {
+		parts = append(parts, plural(g.clients, "client"))
+	}
+	if other := len(g.nodes) - g.servers - g.clients; other > 0 {
+		parts = append(parts, plural(other, "other node"))
+	}
+	return g.dc + "\t" + strings.Join(parts, " · ")
+}
+
+func plural(n int, s string) string {
+	if n == 1 {
+		return "1 " + s
+	}
+	return strconv.Itoa(n) + " " + s + "s"
+}
+
+func isServer(role string) bool {
+	return role == "leader" || role == "follower" || role == "no-leader"
+}
+
+// serverName matches Parker's server node names, <dc>-server-<n>.
+var serverName = regexp.MustCompile(`^([^-]+)-server-\d+$`)
+
+// kind ranks a node: 0 server, 1 client agent, 2 no agent. A server whose
+// agent is down still ranks (and groups) as a server by its name.
+func kind(n *parkerv1.NodeStatus) int {
+	switch {
+	case isServer(n.Role) || serverName.MatchString(n.Name):
+		return 0
+	case n.Role == "client" || slices.ContainsFunc(n.Processes, func(p *parkerv1.ProcessStatus) bool { return p.Name == "consul" }):
+		return 1
+	}
+	return 2
+}
+
+// groupNodes sorts nodes into datacenters: a node's dc is its name's
+// prefix up to "-" when some server shares that prefix (Parker names
+// nodes <dc>-<name>, servers <dc>-server-<n>). Within a dc servers come first, then clients, then
+// nodes without an agent, each by name; dcs go by name, "other" last.
+func groupNodes(nodes []*parkerv1.NodeStatus) []nodeGroup {
+	dcs := map[string]bool{}
+	for _, n := range nodes {
+		if dc, _, ok := strings.Cut(n.Name, "-"); ok && kind(n) == 0 {
+			dcs[dc] = true
+		}
+	}
+	byDC := map[string]*nodeGroup{}
+	var order []string
+	for _, n := range nodes {
+		dc, _, _ := strings.Cut(n.Name, "-")
+		if !dcs[dc] {
+			dc = ""
+		}
+		g := byDC[dc]
+		if g == nil {
+			g = &nodeGroup{dc: dc}
+			byDC[dc] = g
+			order = append(order, dc)
+		}
+		g.nodes = append(g.nodes, n)
+		switch kind(n) {
+		case 0:
+			g.servers++
+		case 1:
+			g.clients++
+		}
+	}
+	slices.SortFunc(order, func(a, b string) int {
+		if (a == "") != (b == "") {
+			if a == "" {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a, b)
+	})
+	out := make([]nodeGroup, len(order))
+	for i, dc := range order {
+		g := byDC[dc]
+		slices.SortStableFunc(g.nodes, func(a, b *parkerv1.NodeStatus) int {
+			if ra, rb := kind(a), kind(b); ra != rb {
+				return ra - rb
+			}
+			return strings.Compare(a.Name, b.Name)
+		})
+		out[i] = *g
+	}
+	return out
 }
 
 // ProcState is a process's STATE column: stopped, dead, paused, running, ready
@@ -407,7 +551,7 @@ func ProcState(p *parkerv1.ProcessStatus) string {
 
 func (m Model) selected() (row, bool) {
 	c := m.nodeTable.Cursor()
-	if c < 0 || c >= len(m.rows) {
+	if c < 0 || c >= len(m.rows) || m.rows[c].section != "" {
 		return row{}, false
 	}
 	return m.rows[c], true
@@ -913,7 +1057,7 @@ func (m *Model) renderLog() {
 
 func (m Model) View() string {
 	var b strings.Builder
-	b.WriteString(m.header())
+	b.WriteString(box(m.logo(), m.header(), m.width, ruleStyle))
 	b.WriteByte('\n')
 	switch m.view {
 	case viewLabs:
@@ -928,7 +1072,8 @@ func (m Model) View() string {
 		b.WriteString(m.vp.View())
 	}
 	b.WriteByte('\n')
-	b.WriteString(m.footer())
+	foot, border := m.footer()
+	b.WriteString(box("", foot, m.width, border))
 	return b.String()
 }
 
@@ -949,15 +1094,18 @@ func (m Model) header() string {
 	case viewDescribe:
 		crumbs = append(crumbs, m.lab, m.describeTitle)
 	}
-	sep := mutedStyle.Render(" › ")
-	h := " " + brandStyle.Render("▲ parker")
+	if len(crumbs) == 0 {
+		crumbs = []string{"labs"}
+	}
+	var hs []string
 	for i, c := range crumbs {
 		st := mutedStyle
 		if i == len(crumbs)-1 {
 			st = titleStyle
 		}
-		h += sep + st.Render(c)
+		hs = append(hs, st.Render(c))
 	}
+	h := strings.Join(hs, mutedStyle.Render(" › "))
 	var info []string
 	switch m.view {
 	case viewNodes:
@@ -992,11 +1140,11 @@ func (m Model) header() string {
 		h += "   " + strings.Join(info, mutedStyle.Render(" · "))
 	}
 	if where := m.o.Where; where != "" {
-		if gap := m.width - ansi.StringWidth(h) - ansi.StringWidth(where) - 1; gap >= 3 {
+		if gap := innerWidth(m.width) - ansi.StringWidth(h) - ansi.StringWidth(where); gap >= 3 {
 			h += strings.Repeat(" ", gap) + mutedStyle.Render(where)
 		}
 	}
-	return ansi.Truncate(h, max(m.width, 10), "…")
+	return h
 }
 
 // summary counts nodes and ready processes and names the leader, colored:
@@ -1036,24 +1184,26 @@ func summary(st *parkerv1.StatusResponse) []string {
 	return out
 }
 
-func (m Model) footer() string {
+// footer is the key hints, or the input, error, question or progress in
+// their place, with the border color that goes with it.
+func (m Model) footer() (string, lipgloss.Style) {
 	switch m.inputMode {
 	case inputFilter:
-		return keyStyle.Render("/") + m.input.View()
+		return keyStyle.Render("/") + m.input.View(), keyBorder
 	case inputCommand:
-		return keyStyle.Render(":") + m.input.View()
+		return keyStyle.Render(":") + m.input.View(), keyBorder
 	}
 	if m.err != nil {
-		return errStyle.Render("error: " + m.err.Error())
+		return errStyle.Render("error: " + m.err.Error()), errBorder
 	}
 	if p := m.confirm; p != nil {
-		return errStyle.Render(p.label+"?") + " " + keyStyle.Render("y") + mutedStyle.Render(" yes  any other key: no")
+		return errStyle.Render(p.label+"?") + " " + keyStyle.Render("y") + mutedStyle.Render(" yes  any other key: no"), errBorder
 	}
 	if m.flash != "" {
-		return warnStyle.Render(m.flash)
+		return warnStyle.Render(m.flash), warnBorder
 	}
 	if m.busy != "" {
-		return mutedStyle.Render("running " + m.busy + "…")
+		return mutedStyle.Render("running " + m.busy + "…"), warnBorder
 	}
 	var keys [][2]string
 	switch m.view {
@@ -1073,5 +1223,5 @@ func (m Model) footer() string {
 	for i, k := range keys {
 		parts[i] = keyStyle.Render(k[0]) + " " + mutedStyle.Render(k[1])
 	}
-	return ansi.Truncate(" "+strings.Join(parts, "  "), max(m.width, 10), "…")
+	return strings.Join(parts, "  "), ruleStyle
 }

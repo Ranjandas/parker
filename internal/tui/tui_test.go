@@ -128,7 +128,7 @@ func TestLabsThenNodes(t *testing.T) {
 	}
 	m = drive(t, m, key("enter"))
 	v = m.View()
-	for _, want := range []string{"parker › a", "dc1-server-1", "leader", "dc2-web-1", "running", "3 nodes", "leader dc1-server-1"} {
+	for _, want := range []string{"━● parker", "│ a   2 nodes", "dc1-server-1", "leader", "dc2-web-1", "running", "3 nodes", "leader dc1-server-1"} {
 		if want == "3 nodes" {
 			want = "2 nodes"
 		}
@@ -150,8 +150,8 @@ func TestFilterAndDC(t *testing.T) {
 	if len(mm.rows) != 2 || mm.rows[0].node != "dc2-web-1" {
 		t.Fatalf("filter web: %+v", mm.rows)
 	}
-	m = drive(t, m, key("esc")) // clears the filter
-	if n := len(m.(Model).rows); n != 3 {
+	m = drive(t, m, key("esc"))           // clears the filter
+	if n := len(m.(Model).rows); n != 5 { // 3 processes under 2 headings
 		t.Fatalf("after esc: %d rows", n)
 	}
 	m = drive(t, m, append([]tea.Msg{key(":")}, append(typed("dc dc1"), key("enter"))...)...)
