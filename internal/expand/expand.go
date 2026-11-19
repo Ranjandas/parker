@@ -598,7 +598,9 @@ func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidec
 	}
 	p := &spec.Process{Run: run, Env: svc.Env}
 	if svc.Port > 0 {
-		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "30s"}
+		// 60s: after a leader change the agent retries its catalog sync
+		// only every ~15s, so a restart can take a few rounds to show.
+		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "60s"}
 		if check != "none" {
 			agent.ServiceHealthy = name
 			p.ReadyWhen.Consul = &agent
