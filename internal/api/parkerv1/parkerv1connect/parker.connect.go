@@ -47,6 +47,8 @@ const (
 	ParkerServiceLogsProcedure = "/parker.v1.ParkerService/Logs"
 	// ParkerServiceExecProcedure is the fully-qualified name of the ParkerService's Exec RPC.
 	ParkerServiceExecProcedure = "/parker.v1.ParkerService/Exec"
+	// ParkerServiceDialProcedure is the fully-qualified name of the ParkerService's Dial RPC.
+	ParkerServiceDialProcedure = "/parker.v1.ParkerService/Dial"
 	// ParkerServiceShutdownProcedure is the fully-qualified name of the ParkerService's Shutdown RPC.
 	ParkerServiceShutdownProcedure = "/parker.v1.ParkerService/Shutdown"
 )
@@ -71,6 +73,10 @@ type ParkerServiceClient interface {
 	// TTY, stdout carries the terminal output and stderr is unused. Needs
 	// HTTP/2 (bidi stream).
 	Exec(context.Context) *connect.BidiStreamForClient[parkerv1.ExecRequest, parkerv1.ExecResponse]
+	// Dial opens a TCP connection from the daemon to an address inside a
+	// running lab and relays bytes both ways. The first request must carry
+	// `open`. Used by `parker proxy` and `parker port-forward`.
+	Dial(context.Context) *connect.BidiStreamForClient[parkerv1.DialRequest, parkerv1.DialResponse]
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
 }
@@ -128,6 +134,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Exec")),
 			connect.WithClientOptions(opts...),
 		),
+		dial: connect.NewClient[parkerv1.DialRequest, parkerv1.DialResponse](
+			httpClient,
+			baseURL+ParkerServiceDialProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Dial")),
+			connect.WithClientOptions(opts...),
+		),
 		shutdown: connect.NewClient[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse](
 			httpClient,
 			baseURL+ParkerServiceShutdownProcedure,
@@ -146,6 +158,7 @@ type parkerServiceClient struct {
 	status   *connect.Client[parkerv1.StatusRequest, parkerv1.StatusResponse]
 	logs     *connect.Client[parkerv1.LogsRequest, parkerv1.LogChunk]
 	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
+	dial     *connect.Client[parkerv1.DialRequest, parkerv1.DialResponse]
 	shutdown *connect.Client[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse]
 }
 
@@ -184,6 +197,11 @@ func (c *parkerServiceClient) Exec(ctx context.Context) *connect.BidiStreamForCl
 	return c.exec.CallBidiStream(ctx)
 }
 
+// Dial calls parker.v1.ParkerService.Dial.
+func (c *parkerServiceClient) Dial(ctx context.Context) *connect.BidiStreamForClient[parkerv1.DialRequest, parkerv1.DialResponse] {
+	return c.dial.CallBidiStream(ctx)
+}
+
 // Shutdown calls parker.v1.ParkerService.Shutdown.
 func (c *parkerServiceClient) Shutdown(ctx context.Context, req *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error) {
 	return c.shutdown.CallUnary(ctx, req)
@@ -209,6 +227,10 @@ type ParkerServiceHandler interface {
 	// TTY, stdout carries the terminal output and stderr is unused. Needs
 	// HTTP/2 (bidi stream).
 	Exec(context.Context, *connect.BidiStream[parkerv1.ExecRequest, parkerv1.ExecResponse]) error
+	// Dial opens a TCP connection from the daemon to an address inside a
+	// running lab and relays bytes both ways. The first request must carry
+	// `open`. Used by `parker proxy` and `parker port-forward`.
+	Dial(context.Context, *connect.BidiStream[parkerv1.DialRequest, parkerv1.DialResponse]) error
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
 }
@@ -262,6 +284,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Exec")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceDialHandler := connect.NewBidiStreamHandler(
+		ParkerServiceDialProcedure,
+		svc.Dial,
+		connect.WithSchema(parkerServiceMethods.ByName("Dial")),
+		connect.WithHandlerOptions(opts...),
+	)
 	parkerServiceShutdownHandler := connect.NewUnaryHandler(
 		ParkerServiceShutdownProcedure,
 		svc.Shutdown,
@@ -284,6 +312,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceLogsHandler.ServeHTTP(w, r)
 		case ParkerServiceExecProcedure:
 			parkerServiceExecHandler.ServeHTTP(w, r)
+		case ParkerServiceDialProcedure:
+			parkerServiceDialHandler.ServeHTTP(w, r)
 		case ParkerServiceShutdownProcedure:
 			parkerServiceShutdownHandler.ServeHTTP(w, r)
 		default:
@@ -321,6 +351,10 @@ func (UnimplementedParkerServiceHandler) Logs(context.Context, *connect.Request[
 
 func (UnimplementedParkerServiceHandler) Exec(context.Context, *connect.BidiStream[parkerv1.ExecRequest, parkerv1.ExecResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Exec is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Dial(context.Context, *connect.BidiStream[parkerv1.DialRequest, parkerv1.DialResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Dial is not implemented"))
 }
 
 func (UnimplementedParkerServiceHandler) Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error) {
