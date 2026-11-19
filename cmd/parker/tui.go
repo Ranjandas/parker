@@ -38,6 +38,7 @@ func tuiCmd() *cobra.Command {
 				return err
 			}
 			o := tui.Options{Client: c, Where: daemonWhere(), Shell: shellCommand,
+				Static: os.Getenv("NO_COLOR") != "" || os.Getenv("PARKER_TUI_STATIC") != "",
 				Run: func(ctx context.Context, lab, sc, inline string, line func(string)) error {
 					s, err := c.Run(ctx, connect.NewRequest(&parkerv1.RunRequest{Lab: lab, Scenario: sc, Inline: inline}))
 					if err != nil {

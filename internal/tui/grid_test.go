@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 )
 
 func textRows(rows ...[]string) [][]cell {
@@ -82,20 +84,66 @@ func TestGridCursorAndScroll(t *testing.T) {
 func TestRowGroupsProcesses(t *testing.T) {
 	m := New(Options{Client: sample(), Lab: "a"})
 	mm := drive(t, m, key("r")).(Model)
-	var cont []bool
-	for i, r := range mm.rows {
-		cont = append(cont, i > 0 && mm.rows[i-1].node == r.node)
+	var got []string
+	for _, r := range mm.rows {
+		got = append(got, r.section+"|"+r.node+"/"+r.proc)
 	}
-	if len(mm.rows) != 3 || cont[1] || !cont[2] {
-		t.Fatalf("rows %+v", mm.rows)
+	want := []string{"dc1\t1 server|/", "|dc1-server-1/consul", "other|/", "|dc2-web-1/consul", "|dc2-web-1/web"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("rows %q", got)
 	}
-	c := mm.rows[2].cells(true)
+	c := mm.rows[4].cells(true)
 	if c[0].text != "" || c[1].text != "" || c[2].text != "web" {
 		t.Errorf("continuation row: %+v", c)
 	}
 	v := mm.View()
-	if strings.Count(v, "dc2-web-1") != 1 {
-		t.Errorf("dc2-web-1 listed once for its two processes:\n%s", v)
+	if strings.Count(v, "dc2-web-1") != 1 || !strings.Contains(v, "─ dc1 1 server ─") {
+		t.Errorf("dc2-web-1 listed once, dc1 heading:\n%s", v)
+	}
+	// The cursor starts on the first node, not the heading, and skips
+	// headings both ways.
+	if r, ok := mm.selected(); !ok || r.node != "dc1-server-1" {
+		t.Fatalf("selected %+v %v", r, ok)
+	}
+	mm = drive(t, mm, key("j")).(Model)
+	if r, _ := mm.selected(); r.node != "dc2-web-1" || r.proc != "consul" {
+		t.Errorf("j: %+v", r)
+	}
+	mm = drive(t, mm, key("k")).(Model)
+	if r, _ := mm.selected(); r.node != "dc1-server-1" {
+		t.Errorf("k: %+v", r)
+	}
+	mm = drive(t, mm, key("k")).(Model)
+	if r, _ := mm.selected(); r.node != "dc1-server-1" {
+		t.Errorf("k at the top stays: %+v", r)
+	}
+}
+
+func TestGroupNodes(t *testing.T) {
+	nodes := []*parkerv1.NodeStatus{
+		{Name: "dc2-web", Role: "client"},
+		{Name: "dc1-client", Role: "client"},
+		{Name: "dc1-server-2", Role: ""}, // agent down: still a server by name
+		{Name: "dc1-server-1", Role: "leader"},
+		{Name: "dc2-server-1", Role: "leader"},
+		{Name: "dc1-mesh", Processes: []*parkerv1.ProcessStatus{{Name: "consul"}}},
+		{Name: "sleeper"},
+	}
+	var got []string
+	for _, g := range groupNodes(nodes) {
+		var names []string
+		for _, n := range g.nodes {
+			names = append(names, n.Name)
+		}
+		got = append(got, g.title()+": "+strings.Join(names, " "))
+	}
+	want := []string{
+		"dc1\t2 servers · 2 clients: dc1-server-1 dc1-server-2 dc1-client dc1-mesh",
+		"dc2\t1 server · 1 client: dc2-server-1 dc2-web",
+		"other: sleeper",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("groups:\n%s", strings.Join(got, "\n"))
 	}
 }
 
@@ -110,5 +158,43 @@ func TestStateAndRoleCells(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(summary(sample().status["a"]), " "), "leader dc1-server-1") {
 		t.Error("summary names the leader")
+	}
+}
+
+func TestBox(t *testing.T) {
+	b := box("T", "hello", 20, plain)
+	lines := strings.Split(b, "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "╭─ T ──") || !strings.HasPrefix(lines[1], "│ hello ") ||
+		!strings.HasSuffix(lines[1], " │") || !strings.HasPrefix(lines[2], "╰──") || ansi.StringWidth(lines[0]) != 20 || ansi.StringWidth(lines[1]) != 20 {
+		t.Errorf("box:\n%s", b)
+	}
+	for _, l := range strings.Split(box("title", strings.Repeat("x", 50), 30, plain), "\n") {
+		if ansi.StringWidth(l) != 30 {
+			t.Errorf("line not 30 wide: %q", l)
+		}
+	}
+}
+
+func TestLogoAnimates(t *testing.T) {
+	m := New(Options{})
+	first := m.logo()
+	m.frame++
+	if ansi.Strip(m.logo()) != "━━━━━━● parker" {
+		t.Errorf("logo text: %q", ansi.Strip(m.logo()))
+	}
+	// Under the test renderer there's no color to compare, so check the
+	// frame drives the trail: the static logo never reads m.frame.
+	if New(Options{Static: true}).Init() == nil || first == "" {
+		t.Error("Init")
+	}
+	mm, cmd := m.Update(animMsg{})
+	if mm.(Model).frame != 2 || cmd == nil {
+		t.Errorf("animMsg: frame %d, next tick %v", mm.(Model).frame, cmd != nil)
+	}
+}
+
+func TestStaticLogo(t *testing.T) {
+	if got := ansi.Strip(New(Options{Static: true}).logo()); got != "━━━━━━● parker" {
+		t.Errorf("static logo: %q", got)
 	}
 }
