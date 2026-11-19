@@ -309,6 +309,17 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   `networks: { wan: { subnet: ... } }` to move it) with serf WAN, and
   `up` waits until every server sees all servers over the WAN
   (see `examples/federation.yaml`)
+- `gateways: { mesh: true }` on a datacenter (or `{kind: mesh, count,
+  wan}` under any name): mesh gateway nodes, each a client agent plus
+  `consul connect envoy -gateway=mesh -register` on 8443. They join the
+  `wan` network (at `.200+`, `.210+`, ...) when the datacenters are
+  federated; selector `dc1/gateways`
+- `consul.federation: { mode: mesh-gateways }` (needs `tls: true` and a
+  mesh gateway per datacenter): servers keep serf on their LAN address,
+  which other datacenters can't route to, and reach each other only
+  through the gateways; secondaries start once the primary's gateway is
+  ready and `up` waits until the primary reaches every secondary (see
+  `examples/mesh-federation.yaml`)
 - `acl: true` (under `consul.defaults` or a dc): ACLs with default deny
   plus gossip encryption. Parker generates the management token, an agent
   token and the gossip key; `parker exec` (and the TUI shell) sets
@@ -342,7 +353,7 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 - `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
   upgrades (see [Scenarios](#scenarios))
 
-Not yet: partitions, mesh-gateway federation, peering,
+Not yet: partitions, peering,
 gateways, impairments, modules/overlays/`--set`.
 
 ## Development

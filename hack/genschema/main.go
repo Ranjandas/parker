@@ -92,6 +92,19 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 			Description: "A local port, or {port, dc, peer, partition, namespace}.",
 			OneOf:       []*jsonschema.Schema{{Type: "integer", Minimum: "1", Maximum: "65535"}, obj},
 		}
+	case reflect.TypeOf(spec.Gateway{}):
+		obj := &jsonschema.Schema{
+			Type:                 "object",
+			AdditionalProperties: jsonschema.FalseSchema,
+			Properties:           jsonschema.NewProperties(),
+		}
+		obj.Properties.Set("kind", &jsonschema.Schema{Type: "string", Enum: []any{"mesh"}, Description: "Gateway kind; default: the gateway's name."})
+		obj.Properties.Set("count", &jsonschema.Schema{Type: "integer", Minimum: "1", Description: "Number of gateway nodes (default 1)."})
+		obj.Properties.Set("wan", &jsonschema.Schema{Type: "boolean", Description: "Attach to the wan network (default: on when federated)."})
+		return &jsonschema.Schema{
+			Description: "true for a gateway with defaults, or {kind, count, wan}.",
+			OneOf:       []*jsonschema.Schema{{Type: "boolean", Const: true}, obj},
+		}
 	case reflect.TypeOf(spec.NodeGroup{}):
 		return &jsonschema.Schema{
 			Description: "A selector, or a list of selectors.",

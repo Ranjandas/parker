@@ -53,8 +53,9 @@ if grep "acl: true" "$F" >/dev/null; then
 fi
 if grep "config_entries:" "$F" >/dev/null; then
   echo "--- config entries"
-  $P logs "$F" "$first/config-entries" -n 20 | grep applied
-  $P exec "$F" "$first" -- consul config list -kind service-defaults </dev/null
+  s1=${first%%-*}-server-1   # config entries run on the dc's first server
+  $P logs "$F" "$s1/config-entries" -n 20 | grep applied
+  $P exec "$F" "$s1" -- consul config list -kind service-defaults </dev/null
 fi
 if grep "tls: true" "$F" >/dev/null; then
   echo "--- TLS"

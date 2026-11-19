@@ -192,13 +192,22 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	// at .10+ for the first dc, .30+ for the second, and so on.
 	wanIPs := map[string][]string{}
 	var allWAN []string
-	if c.Federated() {
+	var wanBase netip.Addr
+	wanHosts := 0
+	if c.UsesWAN() {
 		wp, err := netip.ParsePrefix(wanSubnet)
 		if err != nil {
 			return fmt.Errorf("networks.%s.subnet: %w", WANNetwork, err)
 		}
-		wanBase := wp.Masked().Addr()
+		wanBase = wp.Masked().Addr()
+		wanHosts = 1<<(32-wp.Bits()) - 2
 		out.Networks[WANNetwork] = &spec.Network{Subnet: wanSubnet}
+	}
+	if c.FederationMode() != "" {
+		// Under mesh-gateways federation servers only need the wan to
+		// reach the gateways' public addresses: they keep serf WAN on
+		// their LAN address, which other datacenters can't route to.
+		wp, _ := netip.ParsePrefix(wanSubnet)
 		for i, dcName := range dcNames {
 			n := c.Datacenters[dcName].Servers.Count
 			if n > wanStride {
@@ -215,14 +224,15 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		}
 	}
 
-	if c.Federated() {
+	federated := c.FederationMode() != ""
+	if federated {
 		for _, dcName := range dcNames {
 			if aclOn(defaults, c.Datacenters[dcName]) != aclOn(defaults, c.Datacenters[primary]) {
 				return fmt.Errorf("consul.datacenters.%s.acl: federated datacenters must all have acl on or all off (set it under consul.defaults)", dcName)
 			}
 		}
 	}
-	if c.Federated() {
+	if federated {
 		for _, dcName := range dcNames {
 			if tlsOn(defaults, c.Datacenters[dcName]) != tlsOn(defaults, c.Datacenters[primary]) {
 				return fmt.Errorf("consul.datacenters.%s.tls: federated datacenters must all have tls on or all off (set it under consul.defaults)", dcName)
@@ -243,8 +253,42 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	if err != nil {
 		return err
 	}
+	gws, err := gatewayNodes(c, dcNames, primary)
+	if err != nil {
+		return err
+	}
+	if len(gws) > 0 {
+		mesh = true
+	}
 	if mesh && out.Versions["envoy"] == "" {
 		return errors.New("connect: sidecar needs versions.envoy (see `parker validate` for the Envoy versions your Consul supports)")
+	}
+	meshFed := c.FederationMode() == spec.FederationMeshGateways
+	// primaryGWs are the primary's mesh gateways on the wan network
+	// (wan address and their gateway process), for secondaries to dial.
+	var primaryGWs, primaryGWRefs []string
+	gwWAN := map[string]string{} // node key -> wan ip
+	for i, dcName := range dcNames {
+		k := 0
+		for _, g := range gws[dcName] {
+			if !g.wan {
+				continue
+			}
+			if k >= 10 {
+				return fmt.Errorf("consul.datacenters.%s.gateways: at most 10 gateways per datacenter on the wan network", dcName)
+			}
+			off := 200 + i*10 + k
+			if off > wanHosts {
+				return fmt.Errorf("consul.datacenters.%s.gateways: no room on the %s wan network", dcName, wanSubnet)
+			}
+			ip := addrAt(wanBase, off)
+			gwWAN[dcName+"-"+g.name] = ip
+			if dcName == primary && g.kind == "mesh" {
+				primaryGWs = append(primaryGWs, fmt.Sprintf("%s:%d", ip, MeshGatewayPort))
+				primaryGWRefs = append(primaryGWRefs, dcName+"-"+g.name+"/"+g.process())
+			}
+			k++
+		}
 	}
 	var sec secrets
 	for _, dcName := range dcNames {
@@ -262,7 +306,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		acl := aclOn(defaults, dc)
 		// Without federation every dc is its own primary.
 		dcPrimary := dcName
-		if c.Federated() {
+		if federated {
 			dcPrimary = primary
 		}
 		token := ""
@@ -353,13 +397,42 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				attach[WANNetwork] = &spec.Attachment{IP: wan}
 				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
 			}
+			if c.FederationMode() == spec.FederationMeshGateways {
+				// RPC listens everywhere so that dials to a gateway's
+				// wan address leave from (and come back to) the wan
+				// interface; serf stays on the LAN address.
+				attach[WANNetwork] = &spec.Attachment{IP: wanIPs[dcName][s]}
+				cfg["bind_addr"] = "0.0.0.0"
+				cfg["serf_lan"] = ip
+				cfg["serf_wan"] = ip
+			}
 			if tls {
 				ips := []string{ip}
-				if c.Federated() {
+				if federated {
 					ips = append(ips, wanIPs[dcName][s])
 				}
 				if err := labCA.serverTLS(cfg, files, name, dcName, ips); err != nil {
 					return err
+				}
+			}
+			var serverDeps map[string]*spec.Dep
+			if meshFed {
+				// Servers reach other datacenters through the mesh
+				// gateways; secondaries find the primary through its own.
+				conn, _ := cfg["connect"].(map[string]any)
+				if conn == nil {
+					conn = map[string]any{"enabled": true}
+				}
+				conn["enable_mesh_gateway_wan_federation"] = true
+				cfg["connect"] = conn
+				if dcName != primary {
+					cfg["primary_gateways"] = primaryGWs
+					cfg["primary_gateways_interval"] = "5s"
+					ready.Consul.WANMembers = ">=" + strconv.Itoa(totalServers(c))
+					serverDeps = map[string]*spec.Dep{}
+					for _, r := range primaryGWRefs {
+						serverDeps[r] = &spec.Dep{Condition: "ready"}
+					}
 				}
 			}
 			deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Server.Cfg(), dc.Server.Cfg())
@@ -379,6 +452,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					"consul": {
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
 						Version:   version,
+						DependsOn: serverDeps,
 						ReadyWhen: ready,
 					},
 				},
@@ -405,8 +479,18 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		}
 
 		clientOff := 100
-		for _, nodeName := range slices.Sorted(maps.Keys(dc.Nodes)) {
-			node := dc.Nodes[nodeName]
+		nodes := maps.Clone(dc.Nodes)
+		if nodes == nil {
+			nodes = map[string]*spec.Node{}
+		}
+		gwOf := map[string]gatewayNode{}
+		for _, g := range gws[dcName] {
+			nodes[g.group] = &spec.Node{Count: g.count}
+			gwOf[g.group] = g
+		}
+		for _, nodeName := range slices.Sorted(maps.Keys(nodes)) {
+			node := nodes[nodeName]
+			gw, isGW := gwOf[nodeName]
 			if node == nil {
 				node = &spec.Node{}
 			}
@@ -423,6 +507,13 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					Networks:  map[string]*spec.Attachment{lan: {IP: ip}},
 					Files:     map[string]string{},
 					Processes: map[string]*spec.Process{},
+				}
+				gwWANIP := ""
+				if isGW {
+					gwWANIP = gwWAN[key]
+					if gwWANIP != "" {
+						rn.Networks[WANNetwork] = &spec.Attachment{IP: gwWANIP}
+					}
 				}
 				for pn, p := range node.Processes {
 					rn.Processes[pn] = p
@@ -456,6 +547,22 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						rn.Processes[svcName+SidecarSuffix] = sc.process(apiEnv(token, tls))
 						sidecars++
 					}
+				}
+				if isGW {
+					g := gw
+					g.name = name
+					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, apiEnv(token, tls), tls)
+					if meshFed && dcName != primary && gwWANIP != "" {
+						// Ready once the primary reaches this datacenter,
+						// which goes through this gateway: ask a primary
+						// server on its wan address.
+						reach := check
+						reach.Addr = fmt.Sprintf("%s:%d", wanIPs[primary][0], HTTPSPort)
+						reach.Reaches = dcName
+						gp.ReadyWhen.Consul = &reach
+					}
+					rn.Processes[g.process()] = gp
+					sidecars++ // the agent opens its gRPC port for it
 				}
 
 				if node.Agent != "none" {
@@ -508,8 +615,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Client.Cfg(), dc.Client.Cfg(), node.Config)
 					rn.Files["consul.json"] = mustJSON(cfg)
 					deps := map[string]*spec.Dep{}
+					serverCond := "ready"
+					if isGW && meshFed && dcName != primary {
+						// A secondary's servers are ready once federated,
+						// which can take its own gateway.
+						serverCond = "started"
+					}
 					for _, r := range serverRefs {
-						deps[r] = &spec.Dep{Condition: "ready"}
+						deps[r] = &spec.Dep{Condition: serverCond}
 					}
 					maps.Copy(deps, aclDeps)
 					rn.Processes["consul"] = &spec.Process{
@@ -535,6 +648,9 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				role := "client"
 				if node.Agent == "none" {
 					role = "none"
+				}
+				if isGW {
+					role = "gateway"
 				}
 				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services))}
 				out.Nodes[key] = rn

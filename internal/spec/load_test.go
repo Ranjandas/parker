@@ -204,9 +204,9 @@ func TestValidateFederation(t *testing.T) {
 		f    *File
 		want string
 	}{
-		"one dc":        {base("wan", "dc1"), "needs at least two datacenters"},
-		"mesh gateways": {base("mesh-gateways", "dc1", "dc2"), "not implemented yet"},
-		"bad mode":      {base("carrier-pigeon", "dc1", "dc2"), "must be wan"},
+		"one dc":                {base("wan", "dc1"), "needs at least two datacenters"},
+		"mesh gateways, one dc": {base("mesh-gateways", "dc1"), "needs at least two datacenters"},
+		"bad mode":              {base("carrier-pigeon", "dc1", "dc2"), "must be wan"},
 	} {
 		if err := c.f.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v", name, err)

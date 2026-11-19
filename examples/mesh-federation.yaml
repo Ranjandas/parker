@@ -1,0 +1,45 @@
+# WAN federation through mesh gateways: each datacenter's servers reach the
+# other only through the mesh gateways (which alone join the wan network).
+# web in dc1 calls api in dc2 through its sidecar, its local mesh gateway
+# and dc2's (proxy-defaults MeshGateway mode local).
+parker: v1alpha1
+name: meshfed
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults:
+    tls: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  federation: { mode: mesh-gateways }
+  datacenters:
+    dc1:
+      servers: 1
+      gateways: { mesh: true }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: { port: 9091, dc: dc2 } }
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+    dc2:
+      servers: 1
+      gateways: { mesh: true }
+      nodes:
+        api:
+          service: { port: 9090 }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the servers are federated through the gateways
+      assert:
+        exec: { on: dc1/server-1, run: "test $(consul members -wan | grep -c alive) -eq 2" }
+        within: 60s
+    - assert: { consul: { service_healthy: api-sidecar-proxy, dc: dc2 }, within: 60s }
+    - name: web in dc1 reaches api in dc2 through both gateways
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 90s

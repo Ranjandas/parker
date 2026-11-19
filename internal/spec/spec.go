@@ -8,6 +8,7 @@
 package spec
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -198,14 +199,86 @@ type Consul struct {
 }
 
 type Federation struct {
-	// Mode is wan (serf WAN gossip between servers). mesh-gateways is
-	// reserved.
+	// Mode is wan (serf WAN gossip between servers on the wan network) or
+	// mesh-gateways (servers reach each other through the datacenters'
+	// mesh gateways; needs tls and a mesh gateway per datacenter).
 	Mode string `yaml:"mode" jsonschema:"enum=wan,enum=mesh-gateways"`
 }
 
-// Federated reports whether the datacenters are WAN-federated.
-func (c *Consul) Federated() bool {
-	return c != nil && c.Federation != nil && c.Federation.Mode == "wan"
+// Federation modes.
+const (
+	FederationWAN          = "wan"
+	FederationMeshGateways = "mesh-gateways"
+)
+
+// FederationMode is the federation mode, or "" for independent
+// datacenters.
+func (c *Consul) FederationMode() string {
+	if c == nil || c.Federation == nil {
+		return ""
+	}
+	return c.Federation.Mode
+}
+
+// Federated reports whether the datacenters are WAN-federated over serf
+// WAN on the wan network.
+func (c *Consul) Federated() bool { return c.FederationMode() == FederationWAN }
+
+// UsesWAN reports whether anything joins the generated wan network: servers
+// under wan federation, or mesh gateways with wan on.
+func (c *Consul) UsesWAN() bool {
+	if c == nil {
+		return false
+	}
+	if c.FederationMode() != "" {
+		return true
+	}
+	for _, dc := range c.Datacenters {
+		for _, g := range dc.Gateways {
+			if g != nil && g.OnWAN(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Gateway is a gateway node (or count of them).
+type Gateway struct {
+	// Kind is mesh. Default: the gateway's name when that is a kind.
+	Kind string `yaml:"kind,omitempty" jsonschema:"enum=mesh"`
+	// Count of gateway nodes (default 1); several are named <name>-1, ...
+	Count int `yaml:"count,omitempty"`
+	// WAN attaches a mesh gateway to the wan network too. Default: on when
+	// the datacenters are federated.
+	WAN *bool `yaml:"wan,omitempty"`
+}
+
+// OnWAN reports whether the gateway joins the wan network.
+func (g *Gateway) OnWAN(c *Consul) bool {
+	if g.WAN != nil {
+		return *g.WAN
+	}
+	return c.FederationMode() != ""
+}
+
+// UnmarshalYAML takes true (a gateway with defaults) or an object.
+func (g *Gateway) UnmarshalYAML(unmarshal func(any) error) error {
+	var on bool
+	if err := unmarshal(&on); err == nil {
+		if !on {
+			return errors.New("gateway: false is not allowed; leave the gateway out")
+		}
+		*g = Gateway{}
+		return nil
+	}
+	type plain Gateway
+	var p plain
+	if err := unmarshal(&p); err != nil {
+		return err
+	}
+	*g = Gateway(p)
+	return nil
 }
 
 // Inheritable holds the settings that flow down the tree.
@@ -252,6 +325,9 @@ type Datacenter struct {
 	// Nodes besides the servers, keyed by name. A node runs a client agent
 	// by default, plus its services and processes.
 	Nodes map[string]*Node `yaml:"nodes,omitempty"`
+	// Gateways are nodes that run a Consul agent and a gateway Envoy,
+	// keyed by node name: mesh: true, or {kind, count, wan}.
+	Gateways map[string]*Gateway `yaml:"gateways,omitempty"`
 	// Partitions are reserved for Admin Partitions (Enterprise); not
 	// supported yet.
 	Partitions map[string]any `yaml:"partitions,omitempty"`
@@ -470,6 +546,9 @@ type ConsulCheck struct {
 	WANMembers string `yaml:"wan_members,omitempty"`
 	// ServiceHealthy: this node's instance of the service is passing in the catalog.
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`
+	// Reaches: the agent can read this datacenter's catalog (cross-dc RPC
+	// works from the agent's datacenter to it).
+	Reaches string `yaml:"reaches,omitempty"`
 	// Token for the agent API when ACLs are on.
 	Token string `yaml:"token,omitempty"`
 	// CAFile turns on HTTPS (default address 127.0.0.1:8501) and verifies

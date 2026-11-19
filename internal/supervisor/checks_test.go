@@ -130,6 +130,16 @@ func fakeConsul(t *testing.T, leader string, alive int, healthyOn []string) *htt
 		}
 		js(w, es)
 	})
+	mux.HandleFunc("/v1/catalog/nodes", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("dc") {
+		case "dc2":
+			js(w, []map[string]any{{"Node": "server-1"}})
+		case "empty":
+			js(w, []map[string]any{})
+		default:
+			http.Error(w, "No path to datacenter", http.StatusInternalServerError)
+		}
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -153,6 +163,9 @@ func TestCheckOnceConsul(t *testing.T) {
 		{"too few wan members", "", 2, nil, spec.ConsulCheck{WANMembers: ">=6"}, false},
 		{"service passing here", "", 1, []string{"web-1"}, spec.ConsulCheck{ServiceHealthy: "web"}, true},
 		{"service passing elsewhere", "", 1, []string{"web-2"}, spec.ConsulCheck{ServiceHealthy: "web"}, false},
+		{"reaches dc2", "", 1, nil, spec.ConsulCheck{Reaches: "dc2"}, true},
+		{"no path to dc3", "", 1, nil, spec.ConsulCheck{Reaches: "dc3"}, false},
+		{"dc without nodes", "", 1, nil, spec.ConsulCheck{Reaches: "empty"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			srv := fakeConsul(t, c.leader, c.alive, c.healthy)

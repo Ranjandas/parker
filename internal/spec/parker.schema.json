@@ -123,6 +123,10 @@
           "type": "string",
           "description": "ServiceHealthy: this node's instance of the service is passing in the catalog."
         },
+        "reaches": {
+          "type": "string",
+          "description": "Reaches: the agent can read this datacenter's catalog (cross-dc RPC\nworks from the agent's datacenter to it)."
+        },
         "token": {
           "type": "string",
           "description": "Token for the agent API when ACLs are on."
@@ -209,6 +213,41 @@
           },
           "type": "object",
           "description": "Nodes besides the servers, keyed by name. A node runs a client agent\nby default, plus its services and processes."
+        },
+        "gateways": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "boolean",
+                "const": true
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "mesh"
+                    ],
+                    "description": "Gateway kind; default: the gateway's name."
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of gateway nodes (default 1)."
+                  },
+                  "wan": {
+                    "type": "boolean",
+                    "description": "Attach to the wan network (default: on when federated)."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              }
+            ],
+            "description": "true for a gateway with defaults, or {kind, count, wan}."
+          },
+          "type": "object",
+          "description": "Gateways are nodes that run a Consul agent and a gateway Envoy,\nkeyed by node name: mesh: true, or {kind, count, wan}."
         },
         "partitions": {
           "type": "object",
@@ -311,7 +350,7 @@
             "wan",
             "mesh-gateways"
           ],
-          "description": "Mode is wan (serf WAN gossip between servers). mesh-gateways is\nreserved."
+          "description": "Mode is wan (serf WAN gossip between servers on the wan network) or\nmesh-gateways (servers reach each other through the datacenters'\nmesh gateways; needs tls and a mesh gateway per datacenter)."
         }
       },
       "additionalProperties": false,

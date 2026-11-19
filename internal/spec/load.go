@@ -103,14 +103,12 @@ func (f *File) Validate() error {
 		}
 		if fed := f.Consul.Federation; fed != nil {
 			switch fed.Mode {
-			case "wan":
+			case FederationWAN, FederationMeshGateways:
 				if len(f.Consul.Datacenters) < 2 {
 					add("consul.federation: needs at least two datacenters")
 				}
-			case "mesh-gateways":
-				add("consul.federation.mode: mesh-gateways is not implemented yet (#22); use wan")
 			default:
-				add("consul.federation.mode: must be wan")
+				add("consul.federation.mode: must be wan or mesh-gateways")
 			}
 		}
 		primaries := 0
@@ -181,7 +179,7 @@ func (f *File) Validate() error {
 			if dc, ok := strings.CutSuffix(net, "-lan"); ok && f.Consul != nil && f.Consul.Datacenters[dc] != nil {
 				continue
 			}
-			if net == "wan" && f.Consul.Federated() {
+			if net == "wan" && f.Consul.UsesWAN() {
 				continue
 			}
 			if _, ok := f.Networks[net]; !ok {
