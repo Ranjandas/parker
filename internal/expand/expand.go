@@ -326,6 +326,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			out.Nodes[key] = &spec.RawNode{
 				Networks: attach,
 				Files:    files,
+				Labels:   &spec.NodeLabels{DC: dcName, Name: name, Role: "server"},
 				Processes: map[string]*spec.Process{
 					"consul": {
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
@@ -451,6 +452,11 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						}
 					}
 				}
+				role := "client"
+				if node.Agent == "none" {
+					role = "none"
+				}
+				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services))}
 				out.Nodes[key] = rn
 			}
 		}

@@ -12,17 +12,29 @@ import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/Ranjandas/parker/internal/fetch"
+	"github.com/Ranjandas/parker/internal/selector"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
 
-// ResolveNode maps dc1/server-1 or dc1-server-1 to the expanded node name.
-func ResolveNode(low *spec.File, node string) (string, error) {
-	n := strings.ReplaceAll(node, "/", "-")
-	if _, ok := low.Nodes[n]; !ok {
-		return "", fmt.Errorf("no node %q (have: %s)", node, strings.Join(slices.Sorted(maps.Keys(low.Nodes)), ", "))
+// ResolveNode maps a selector that names one node (dc1/server-1,
+// dc1/leader, svc:api, dc1-server-1, ...) to the expanded node name.
+// Raft roles are asked of the running lab's servers.
+func ResolveNode(low *spec.File, sel string) (string, error) {
+	n, err := selector.One(low, sel, func(dc string) (string, error) { return RaftLeader(low, dc) })
+	if err == nil {
+		return n, nil
 	}
-	return n, nil
+	// Topologies saved before labels existed: dc1/server-1 -> dc1-server-1.
+	if alt := strings.ReplaceAll(sel, "/", "-"); low.Nodes[alt] != nil {
+		return alt, nil
+	}
+	return "", err
+}
+
+// ResolveNodes is ResolveNode for selectors that may match many nodes.
+func ResolveNodes(low *spec.File, sel string) ([]string, error) {
+	return selector.Resolve(low, sel, func(dc string) (string, error) { return RaftLeader(low, dc) })
 }
 
 // ExecEnv returns PATH (with the lab's pinned binaries first) and the

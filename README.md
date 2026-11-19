@@ -77,7 +77,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
 | `parker validate FILE` | Structural and semantic checks. Unknown keys come with line numbers, "did you mean" suggestions, and where a misplaced key belongs (e.g. `servers` under a node). |
 | `parker schema` | Print the JSON Schema for topology files. |
-| `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
+| `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is a [selector](#selectors) that names one node, e.g. `dc1/server-1` or `dc1/leader`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs. |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table with state and raft role, `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:dc NAME`, `:q`. |
 | `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
@@ -103,6 +103,24 @@ get autocomplete, hover docs and inline errors in any editor using
 (VS Code's YAML extension, Neovim, Helix, ...). `parker init` writes that
 line. Until releases publish the schema (and while the repository is private), save it locally:
 `parker schema > parker.schema.json` and `parker init --schema ./parker.schema.json`.
+
+## Selectors
+
+`exec` and `port-forward` (and later scenarios and `--set`) pick nodes
+with selectors that follow the YAML tree:
+
+| Selector | Means |
+|---|---|
+| `dc1` | every node of the datacenter |
+| `dc1/servers`, `dc1/clients`, `dc1/gateways` | a role group |
+| `dc1/server-2`, `dc1/web-1` | one node (`dc1/default/web-1` works too) |
+| `dc1/web` | a node group: every copy of `nodes.web` (`count: N`) |
+| `svc:api`, `svc:dc2/api` | the nodes that run service `api` |
+| `dc1/leader`, `dc1/followers` | raft roles, asked of the running servers |
+| `toxiproxy`, `dc1-server-1` | a node by its expanded name |
+
+A command that needs one node refuses a selector that matches several,
+and lists them.
 
 ## How it works
 

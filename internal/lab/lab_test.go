@@ -47,7 +47,7 @@ func TestResolveNode(t *testing.T) {
 		}
 	}
 	_, err := ResolveNode(low, "dc2/server-1")
-	if err == nil || !strings.Contains(err.Error(), "have: box, dc1-server-1") {
+	if err == nil || !strings.Contains(err.Error(), `no datacenter "dc2"`) {
 		t.Errorf("unknown node: %v", err)
 	}
 }
@@ -274,5 +274,22 @@ func TestExecEnvTLS(t *testing.T) {
 	_, env = ExecEnv(low, "dc1-server-1", nil, nil)
 	if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "CONSUL_CACERT=") }) {
 		t.Errorf("CA for a node without TLS: %v", env)
+	}
+}
+
+func TestResolveNodeSelectors(t *testing.T) {
+	low := topo()
+	low.Nodes["dc1-server-1"].Labels = &spec.NodeLabels{DC: "dc1", Name: "server-1", Role: "server"}
+	low.Nodes["box"].Labels = &spec.NodeLabels{DC: "dc1", Name: "box", Role: "client", Group: "box", Services: []string{"web"}}
+	for in, want := range map[string]string{"svc:web": "box", "dc1/servers": "dc1-server-1", "dc1/box": "box"} {
+		if got, err := ResolveNode(low, in); err != nil || got != want {
+			t.Errorf("ResolveNode(%q) = %q, %v", in, got, err)
+		}
+	}
+	if got, err := ResolveNodes(low, "dc1"); err != nil || len(got) != 2 {
+		t.Errorf("ResolveNodes(dc1) = %v, %v", got, err)
+	}
+	if _, err := ResolveNode(low, "dc1"); err == nil || !strings.Contains(err.Error(), "matches 2 nodes") {
+		t.Errorf("dc1 as one node: %v", err)
 	}
 }
