@@ -328,6 +328,41 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "NodeLabels": {
+      "properties": {
+        "dc": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the node within its dc, e.g. server-2 or web-1."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "server",
+            "client",
+            "gateway",
+            "none"
+          ],
+          "description": "Role is server, client, gateway or none (no agent)."
+        },
+        "group": {
+          "type": "string",
+          "description": "Group is the node's entry under nodes: (web for web-1, web-2, ...)."
+        },
+        "services": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Services the node runs."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "NodeLabels place a node in the consul: tree."
+    },
     "Process": {
       "properties": {
         "run": {
@@ -404,6 +439,10 @@
           },
           "type": "object",
           "description": "Processes run in the node's namespace, keyed by name."
+        },
+        "labels": {
+          "$ref": "#/$defs/NodeLabels",
+          "description": "Labels say where an expanded node came from; selectors such as\ndc1/servers and svc:api match on them."
         }
       },
       "additionalProperties": false,

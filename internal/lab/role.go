@@ -1,11 +1,18 @@
 package lab
 
 import (
+	"fmt"
+	"maps"
+	"slices"
+
 	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/Ranjandas/parker/internal/selector"
+	"github.com/hashicorp/consul/api"
 
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -61,4 +68,35 @@ func roleFrom(hc *http.Client, base string, ips []string, token string) string {
 		}
 	}
 	return "follower"
+}
+
+// RaftLeader asks the dc's servers, in turn, for the raft leader and
+// returns its node name.
+func RaftLeader(low *spec.File, dc string) (string, error) {
+	var last error = fmt.Errorf("%s has no servers", dc)
+	for _, n := range slices.Sorted(maps.Keys(low.Nodes)) {
+		if l := low.Nodes[n].Labels; l == nil || l.DC != dc || l.Role != "server" {
+			continue
+		}
+		dial := supervisor.DialerIn(netsetup.NetnsPath(low.Name, n))
+		hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
+		cc := AgentCheck(low, n)
+		cfg, err := supervisor.ConsulConfig(cc, hc, supervisor.NodeDir(RunDir(low.Name), n))
+		if err != nil {
+			last = err
+			continue
+		}
+		c, err := api.NewClient(cfg)
+		if err != nil {
+			last = err
+			continue
+		}
+		addr, err := c.Status().Leader()
+		if err != nil {
+			last = fmt.Errorf("%s: %w", n, err)
+			continue
+		}
+		return selector.LeaderByAddr(low, dc, addr)
+	}
+	return "", last
 }

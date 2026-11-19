@@ -206,6 +206,22 @@ type RawNode struct {
 	Files map[string]string `yaml:"files,omitempty"`
 	// Processes run in the node's namespace, keyed by name.
 	Processes map[string]*Process `yaml:"processes,omitempty"`
+	// Labels say where an expanded node came from; selectors such as
+	// dc1/servers and svc:api match on them.
+	Labels *NodeLabels `yaml:"labels,omitempty"`
+}
+
+// NodeLabels place a node in the consul: tree.
+type NodeLabels struct {
+	DC string `yaml:"dc,omitempty"`
+	// Name of the node within its dc, e.g. server-2 or web-1.
+	Name string `yaml:"name,omitempty"`
+	// Role is server, client, gateway or none (no agent).
+	Role string `yaml:"role,omitempty" jsonschema:"enum=server,enum=client,enum=gateway,enum=none"`
+	// Group is the node's entry under nodes: (web for web-1, web-2, ...).
+	Group string `yaml:"group,omitempty"`
+	// Services the node runs.
+	Services []string `yaml:"services,omitempty"`
 }
 
 type Attachment struct {

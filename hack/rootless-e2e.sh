@@ -32,6 +32,8 @@ $P status "$F"
 first=$($P status "$F" | awk 'NR==3 {print $1}')
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
+echo "--- selectors"
+$P exec "$F" "${first%%-*}/leader" -- sh -c 'echo "leader is $PARKER_NODE"' </dev/null
 if grep "federation:" "$F" >/dev/null; then
   echo "--- WAN federation"
   srv=$($P status "$F" | awk '$1 ~ /-server-/ {print $1; exit}')

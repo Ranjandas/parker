@@ -26,7 +26,8 @@ func execCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "exec FILE|LAB NODE [-- COMMAND...]",
 		Short: "Run a command (default: $SHELL) inside a node's network namespace",
-		Long: "NODE is the expanded node name (dc1-server-1) or a selector (dc1/server-1).\n\n" +
+		Long: "NODE is a selector that names one node: dc1/server-1, dc1/web-2, dc1/leader,\n" +
+			"svc:api (when one node runs it), a top-level node, or the expanded name dc1-server-1.\n\n" +
 			"Locally the command runs directly in the namespace. With --host / PARKER_HOST it runs\n" +
 			"on that daemon, streamed over the API with a terminal when stdin is one.",
 		Args: cobra.MinimumNArgs(2),

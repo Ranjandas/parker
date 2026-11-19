@@ -429,3 +429,19 @@ func TestConfigEntries(t *testing.T) {
 		t.Error("config entries run on the first server only")
 	}
 }
+
+func TestNodeLabels(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/clients.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for node, want := range map[string]spec.NodeLabels{
+		"dc1-server-2": {DC: "dc1", Name: "server-2", Role: "server"},
+		"dc1-web-2":    {DC: "dc1", Name: "web-2", Role: "client", Group: "web", Services: []string{"web"}},
+		"dc1-client":   {DC: "dc1", Name: "client", Role: "client", Group: "client"},
+	} {
+		if got := low.Nodes[node].Labels; got == nil || !reflect.DeepEqual(*got, want) {
+			t.Errorf("%s labels %+v, want %+v", node, got, want)
+		}
+	}
+}

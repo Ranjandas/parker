@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/proxy"
 )
 
@@ -55,7 +56,8 @@ func portForwardCmd() *cobra.Command {
 		Use:   "port-forward FILE|LAB NODE [LOCAL:]REMOTE",
 		Short: "Forward a local port to a port on a node",
 		Example: "  parker port-forward examples/minimal.yaml dc1/server-1 8500\n" +
-			"  parker port-forward minimal dc1-server-1 18500:8500",
+			"  parker port-forward minimal dc1-server-1 18500:8500\n" +
+			"  parker port-forward minimal dc1/leader 18500:8500",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := labName(args[0])
@@ -63,6 +65,16 @@ func portForwardCmd() *cobra.Command {
 				return err
 			}
 			node := strings.ReplaceAll(args[1], "/", "-")
+			if !hostSet() {
+				// Selectors (dc1/leader, svc:api, ...) need the topology.
+				low, err := topologyFor(args[0])
+				if err != nil {
+					return err
+				}
+				if node, err = lab.ResolveNode(low, args[1]); err != nil {
+					return err
+				}
+			}
 			local, remote, ok := strings.Cut(args[2], ":")
 			if !ok {
 				local, remote = args[2], args[2]
