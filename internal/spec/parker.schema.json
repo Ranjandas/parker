@@ -74,6 +74,10 @@
         "service_healthy": {
           "type": "string",
           "description": "ServiceHealthy: this node's instance of the service is passing in the catalog."
+        },
+        "token": {
+          "type": "string",
+          "description": "Token for the agent API when ACLs are on."
         }
       },
       "additionalProperties": false,
@@ -96,6 +100,10 @@
         "service_defaults": {
           "$ref": "#/$defs/Service",
           "description": "ServiceDefaults are merged into every service."
+        },
+        "acl": {
+          "type": "boolean",
+          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
         },
         "primary": {
           "type": "boolean",
@@ -222,6 +230,10 @@
         "service_defaults": {
           "$ref": "#/$defs/Service",
           "description": "ServiceDefaults are merged into every service."
+        },
+        "acl": {
+          "type": "boolean",
+          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
         }
       },
       "additionalProperties": false,

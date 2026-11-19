@@ -224,11 +224,16 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   `networks: { wan: { subnet: ... } }` to move it) with serf WAN, and
   `up` waits until every server sees all servers over the WAN
   (see `examples/federation.yaml`)
+- `acl: true` (under `consul.defaults` or a dc): ACLs with default deny
+  plus gossip encryption. Parker generates the management token, an agent
+  token and the gossip key; `parker exec` (and the TUI shell) sets
+  `CONSUL_HTTP_TOKEN` to the management token (see `examples/acl.yaml`).
+  Federated dcs replicate tokens from the primary.
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
 Not yet: partitions, mesh-gateway federation, peering, gateways, Envoy,
-ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`.
+TLS, impairments, `scenario:`, modules/overlays/`--set`.
 
 ## Development
 

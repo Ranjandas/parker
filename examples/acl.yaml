@@ -1,0 +1,13 @@
+# ACLs (default deny) and gossip encryption. Parker generates the tokens
+# and the key; `parker exec` sets CONSUL_HTTP_TOKEN to the management token.
+parker: v1alpha1
+name: acl
+versions: { consul: 1.22.7 }
+consul:
+  defaults: { acl: true }
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          service: { port: 8080, run: fake-service }

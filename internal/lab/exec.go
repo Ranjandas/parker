@@ -36,7 +36,23 @@ func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path st
 		}
 	}
 	env = append(slices.Clone(base), "PATH="+path, "PARKER_LAB="+low.Name, "PARKER_NODE="+node)
+	if tok := ManagementToken(low); tok != "" {
+		env = append(env, "CONSUL_HTTP_TOKEN="+tok)
+	}
 	return path, env
+}
+
+// ManagementToken is the lab's Consul management token when ACLs are on,
+// as expand put it in the readiness checks; "" otherwise.
+func ManagementToken(low *spec.File) string {
+	for _, n := range slices.Sorted(maps.Keys(low.Nodes)) {
+		for _, p := range low.Nodes[n].Processes {
+			if r := p.ReadyWhen; r != nil && r.Consul != nil && r.Consul.Token != "" {
+				return r.Consul.Token
+			}
+		}
+	}
+	return ""
 }
 
 // LookPath finds name in a PATH string.

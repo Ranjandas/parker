@@ -56,9 +56,18 @@ func execCmd() *cobra.Command {
 	return c
 }
 
-// topologyFor loads FILE, or a running lab's saved topology by name.
+// topologyFor returns the running lab's saved topology, for FILE or LAB.
+// A FILE is only expanded when its lab isn't running: expanding again would
+// generate new tokens, not the ones the lab runs with.
 func topologyFor(arg string) (*spec.File, error) {
 	if _, err := os.Stat(arg); err == nil {
+		name, err := labName(arg)
+		if err != nil {
+			return nil, err
+		}
+		if low, err := lab.LoadTopology(name); err == nil {
+			return low, nil
+		}
 		_, low, err := load(arg)
 		return low, err
 	}

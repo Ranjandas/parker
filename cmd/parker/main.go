@@ -36,7 +36,7 @@ func main() {
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringArrayVar(&varFlags, "var", nil, "set a variable (name=value); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
-	root.AddCommand(versionCmd(), tuiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd())
+	root.AddCommand(versionCmd(), tuiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

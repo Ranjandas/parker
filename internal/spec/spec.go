@@ -74,6 +74,10 @@ type Inheritable struct {
 	Client *AgentSettings `yaml:"client,omitempty"`
 	// ServiceDefaults are merged into every service.
 	ServiceDefaults *Service `yaml:"service_defaults,omitempty"`
+	// ACL turns on ACLs (default deny) and gossip encryption. Parker
+	// generates the management and agent tokens and the gossip key; `parker
+	// exec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree.
+	ACL *bool `yaml:"acl,omitempty"`
 }
 
 type AgentSettings struct {
@@ -241,6 +245,8 @@ type ConsulCheck struct {
 	WANMembers string `yaml:"wan_members,omitempty"`
 	// ServiceHealthy: this node's instance of the service is passing in the catalog.
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`
+	// Token for the agent API when ACLs are on.
+	Token string `yaml:"token,omitempty"`
 }
 
 // Command is a string (split on whitespace) or an argv list.
