@@ -859,6 +859,354 @@ func (*ShutdownResponse) Descriptor() ([]byte, []int) {
 	return file_parker_v1_parker_proto_rawDescGZIP(), []int{15}
 }
 
+type ExecRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*ExecRequest_Start
+	//	*ExecRequest_Stdin
+	//	*ExecRequest_Resize
+	//	*ExecRequest_StdinEof
+	Msg           isExecRequest_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecRequest) Reset() {
+	*x = ExecRequest{}
+	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecRequest) ProtoMessage() {}
+
+func (x *ExecRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
+func (*ExecRequest) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ExecRequest) GetMsg() isExecRequest_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetStart() *ExecStart {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecRequest_Start); ok {
+			return x.Start
+		}
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetStdin() []byte {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecRequest_Stdin); ok {
+			return x.Stdin
+		}
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetResize() *TermSize {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecRequest_Resize); ok {
+			return x.Resize
+		}
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetStdinEof() bool {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecRequest_StdinEof); ok {
+			return x.StdinEof
+		}
+	}
+	return false
+}
+
+type isExecRequest_Msg interface {
+	isExecRequest_Msg()
+}
+
+type ExecRequest_Start struct {
+	Start *ExecStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
+}
+
+type ExecRequest_Stdin struct {
+	Stdin []byte `protobuf:"bytes,2,opt,name=stdin,proto3,oneof"`
+}
+
+type ExecRequest_Resize struct {
+	Resize *TermSize `protobuf:"bytes,3,opt,name=resize,proto3,oneof"`
+}
+
+type ExecRequest_StdinEof struct {
+	StdinEof bool `protobuf:"varint,4,opt,name=stdin_eof,json=stdinEof,proto3,oneof"`
+}
+
+func (*ExecRequest_Start) isExecRequest_Msg() {}
+
+func (*ExecRequest_Stdin) isExecRequest_Msg() {}
+
+func (*ExecRequest_Resize) isExecRequest_Msg() {}
+
+func (*ExecRequest_StdinEof) isExecRequest_Msg() {}
+
+type ExecStart struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Lab           string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	Node          string                 `protobuf:"bytes,2,opt,name=node,proto3" json:"node,omitempty"` // dc1-server-1 or dc1/server-1
+	Argv          []string               `protobuf:"bytes,3,rep,name=argv,proto3" json:"argv,omitempty"` // default: $SHELL of the daemon, else /bin/sh
+	Tty           bool                   `protobuf:"varint,4,opt,name=tty,proto3" json:"tty,omitempty"`
+	Size          *TermSize              `protobuf:"bytes,5,opt,name=size,proto3" json:"size,omitempty"`
+	Env           []string               `protobuf:"bytes,6,rep,name=env,proto3" json:"env,omitempty"` // extra KEY=VALUE, e.g. TERM
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecStart) Reset() {
+	*x = ExecStart{}
+	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecStart) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecStart) ProtoMessage() {}
+
+func (x *ExecStart) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecStart.ProtoReflect.Descriptor instead.
+func (*ExecStart) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ExecStart) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+func (x *ExecStart) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *ExecStart) GetArgv() []string {
+	if x != nil {
+		return x.Argv
+	}
+	return nil
+}
+
+func (x *ExecStart) GetTty() bool {
+	if x != nil {
+		return x.Tty
+	}
+	return false
+}
+
+func (x *ExecStart) GetSize() *TermSize {
+	if x != nil {
+		return x.Size
+	}
+	return nil
+}
+
+func (x *ExecStart) GetEnv() []string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+type TermSize struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Rows          uint32                 `protobuf:"varint,1,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TermSize) Reset() {
+	*x = TermSize{}
+	mi := &file_parker_v1_parker_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TermSize) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TermSize) ProtoMessage() {}
+
+func (x *TermSize) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TermSize.ProtoReflect.Descriptor instead.
+func (*TermSize) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *TermSize) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *TermSize) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+type ExecResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*ExecResponse_Stdout
+	//	*ExecResponse_Stderr
+	//	*ExecResponse_ExitCode
+	Msg           isExecResponse_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecResponse) Reset() {
+	*x = ExecResponse{}
+	mi := &file_parker_v1_parker_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecResponse) ProtoMessage() {}
+
+func (x *ExecResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
+func (*ExecResponse) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ExecResponse) GetMsg() isExecResponse_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetStdout() []byte {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecResponse_Stdout); ok {
+			return x.Stdout
+		}
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetStderr() []byte {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecResponse_Stderr); ok {
+			return x.Stderr
+		}
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetExitCode() int32 {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecResponse_ExitCode); ok {
+			return x.ExitCode
+		}
+	}
+	return 0
+}
+
+type isExecResponse_Msg interface {
+	isExecResponse_Msg()
+}
+
+type ExecResponse_Stdout struct {
+	Stdout []byte `protobuf:"bytes,1,opt,name=stdout,proto3,oneof"`
+}
+
+type ExecResponse_Stderr struct {
+	Stderr []byte `protobuf:"bytes,2,opt,name=stderr,proto3,oneof"`
+}
+
+type ExecResponse_ExitCode struct {
+	ExitCode int32 `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3,oneof"` // last message
+}
+
+func (*ExecResponse_Stdout) isExecResponse_Msg() {}
+
+func (*ExecResponse_Stderr) isExecResponse_Msg() {}
+
+func (*ExecResponse_ExitCode) isExecResponse_Msg() {}
+
 var File_parker_v1_parker_proto protoreflect.FileDescriptor
 
 const file_parker_v1_parker_proto_rawDesc = "" +
@@ -922,14 +1270,36 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\bLogChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\"\x11\n" +
 	"\x0fShutdownRequest\"\x12\n" +
-	"\x10ShutdownResponse2\xb9\x03\n" +
+	"\x10ShutdownResponse\"\xa8\x01\n" +
+	"\vExecRequest\x12,\n" +
+	"\x05start\x18\x01 \x01(\v2\x14.parker.v1.ExecStartH\x00R\x05start\x12\x16\n" +
+	"\x05stdin\x18\x02 \x01(\fH\x00R\x05stdin\x12-\n" +
+	"\x06resize\x18\x03 \x01(\v2\x13.parker.v1.TermSizeH\x00R\x06resize\x12\x1d\n" +
+	"\tstdin_eof\x18\x04 \x01(\bH\x00R\bstdinEofB\x05\n" +
+	"\x03msg\"\x92\x01\n" +
+	"\tExecStart\x12\x10\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x12\n" +
+	"\x04node\x18\x02 \x01(\tR\x04node\x12\x12\n" +
+	"\x04argv\x18\x03 \x03(\tR\x04argv\x12\x10\n" +
+	"\x03tty\x18\x04 \x01(\bR\x03tty\x12'\n" +
+	"\x04size\x18\x05 \x01(\v2\x13.parker.v1.TermSizeR\x04size\x12\x10\n" +
+	"\x03env\x18\x06 \x03(\tR\x03env\"2\n" +
+	"\bTermSize\x12\x12\n" +
+	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols\"h\n" +
+	"\fExecResponse\x12\x18\n" +
+	"\x06stdout\x18\x01 \x01(\fH\x00R\x06stdout\x12\x18\n" +
+	"\x06stderr\x18\x02 \x01(\fH\x00R\x06stderr\x12\x1d\n" +
+	"\texit_code\x18\x03 \x01(\x05H\x00R\bexitCodeB\x05\n" +
+	"\x03msg2\xf6\x03\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +
 	"\x04Down\x12\x16.parker.v1.DownRequest\x1a\x12.parker.v1.LogLine0\x01\x12C\n" +
 	"\bListLabs\x12\x1a.parker.v1.ListLabsRequest\x1a\x1b.parker.v1.ListLabsResponse\x12=\n" +
 	"\x06Status\x12\x18.parker.v1.StatusRequest\x1a\x19.parker.v1.StatusResponse\x125\n" +
-	"\x04Logs\x12\x16.parker.v1.LogsRequest\x1a\x13.parker.v1.LogChunk0\x01\x12C\n" +
+	"\x04Logs\x12\x16.parker.v1.LogsRequest\x1a\x13.parker.v1.LogChunk0\x01\x12;\n" +
+	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12C\n" +
 	"\bShutdown\x12\x1a.parker.v1.ShutdownRequest\x1a\x1b.parker.v1.ShutdownResponseB<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
 
 var (
@@ -944,7 +1314,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -962,30 +1332,39 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*LogChunk)(nil),         // 13: parker.v1.LogChunk
 	(*ShutdownRequest)(nil),  // 14: parker.v1.ShutdownRequest
 	(*ShutdownResponse)(nil), // 15: parker.v1.ShutdownResponse
+	(*ExecRequest)(nil),      // 16: parker.v1.ExecRequest
+	(*ExecStart)(nil),        // 17: parker.v1.ExecStart
+	(*TermSize)(nil),         // 18: parker.v1.TermSize
+	(*ExecResponse)(nil),     // 19: parker.v1.ExecResponse
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
 	10, // 1: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
 	11, // 2: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
-	0,  // 3: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 4: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 5: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 6: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 7: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 8: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	14, // 9: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	1,  // 10: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 11: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 12: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 13: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 14: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 15: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	15, // 16: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	17, // 3: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
+	18, // 4: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
+	18, // 5: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
+	0,  // 6: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 7: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 8: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 9: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 10: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 11: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	16, // 12: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	14, // 13: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	1,  // 14: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 15: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 16: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 17: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 18: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 19: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	19, // 20: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	15, // 21: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	14, // [14:22] is the sub-list for method output_type
+	6,  // [6:14] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -994,13 +1373,24 @@ func file_parker_v1_parker_proto_init() {
 		return
 	}
 	file_parker_v1_parker_proto_msgTypes[11].OneofWrappers = []any{}
+	file_parker_v1_parker_proto_msgTypes[16].OneofWrappers = []any{
+		(*ExecRequest_Start)(nil),
+		(*ExecRequest_Stdin)(nil),
+		(*ExecRequest_Resize)(nil),
+		(*ExecRequest_StdinEof)(nil),
+	}
+	file_parker_v1_parker_proto_msgTypes[19].OneofWrappers = []any{
+		(*ExecResponse_Stdout)(nil),
+		(*ExecResponse_Stderr)(nil),
+		(*ExecResponse_ExitCode)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

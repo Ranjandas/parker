@@ -45,6 +45,8 @@ const (
 	ParkerServiceStatusProcedure = "/parker.v1.ParkerService/Status"
 	// ParkerServiceLogsProcedure is the fully-qualified name of the ParkerService's Logs RPC.
 	ParkerServiceLogsProcedure = "/parker.v1.ParkerService/Logs"
+	// ParkerServiceExecProcedure is the fully-qualified name of the ParkerService's Exec RPC.
+	ParkerServiceExecProcedure = "/parker.v1.ParkerService/Exec"
 	// ParkerServiceShutdownProcedure is the fully-qualified name of the ParkerService's Shutdown RPC.
 	ParkerServiceShutdownProcedure = "/parker.v1.ParkerService/Shutdown"
 )
@@ -64,6 +66,11 @@ type ParkerServiceClient interface {
 	Status(context.Context, *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest]) (*connect.ServerStreamForClient[parkerv1.LogChunk], error)
+	// Exec runs a command inside a node's network namespace. The first
+	// request must carry `start`; then stdin, resize and stdin_eof. With a
+	// TTY, stdout carries the terminal output and stderr is unused. Needs
+	// HTTP/2 (bidi stream).
+	Exec(context.Context) *connect.BidiStreamForClient[parkerv1.ExecRequest, parkerv1.ExecResponse]
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
 }
@@ -115,6 +122,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Logs")),
 			connect.WithClientOptions(opts...),
 		),
+		exec: connect.NewClient[parkerv1.ExecRequest, parkerv1.ExecResponse](
+			httpClient,
+			baseURL+ParkerServiceExecProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Exec")),
+			connect.WithClientOptions(opts...),
+		),
 		shutdown: connect.NewClient[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse](
 			httpClient,
 			baseURL+ParkerServiceShutdownProcedure,
@@ -132,6 +145,7 @@ type parkerServiceClient struct {
 	listLabs *connect.Client[parkerv1.ListLabsRequest, parkerv1.ListLabsResponse]
 	status   *connect.Client[parkerv1.StatusRequest, parkerv1.StatusResponse]
 	logs     *connect.Client[parkerv1.LogsRequest, parkerv1.LogChunk]
+	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
 	shutdown *connect.Client[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse]
 }
 
@@ -165,6 +179,11 @@ func (c *parkerServiceClient) Logs(ctx context.Context, req *connect.Request[par
 	return c.logs.CallServerStream(ctx, req)
 }
 
+// Exec calls parker.v1.ParkerService.Exec.
+func (c *parkerServiceClient) Exec(ctx context.Context) *connect.BidiStreamForClient[parkerv1.ExecRequest, parkerv1.ExecResponse] {
+	return c.exec.CallBidiStream(ctx)
+}
+
 // Shutdown calls parker.v1.ParkerService.Shutdown.
 func (c *parkerServiceClient) Shutdown(ctx context.Context, req *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error) {
 	return c.shutdown.CallUnary(ctx, req)
@@ -185,6 +204,11 @@ type ParkerServiceHandler interface {
 	Status(context.Context, *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error
+	// Exec runs a command inside a node's network namespace. The first
+	// request must carry `start`; then stdin, resize and stdin_eof. With a
+	// TTY, stdout carries the terminal output and stderr is unused. Needs
+	// HTTP/2 (bidi stream).
+	Exec(context.Context, *connect.BidiStream[parkerv1.ExecRequest, parkerv1.ExecResponse]) error
 	// Shutdown stops the daemon. Labs keep running.
 	Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error)
 }
@@ -232,6 +256,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Logs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceExecHandler := connect.NewBidiStreamHandler(
+		ParkerServiceExecProcedure,
+		svc.Exec,
+		connect.WithSchema(parkerServiceMethods.ByName("Exec")),
+		connect.WithHandlerOptions(opts...),
+	)
 	parkerServiceShutdownHandler := connect.NewUnaryHandler(
 		ParkerServiceShutdownProcedure,
 		svc.Shutdown,
@@ -252,6 +282,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceStatusHandler.ServeHTTP(w, r)
 		case ParkerServiceLogsProcedure:
 			parkerServiceLogsHandler.ServeHTTP(w, r)
+		case ParkerServiceExecProcedure:
+			parkerServiceExecHandler.ServeHTTP(w, r)
 		case ParkerServiceShutdownProcedure:
 			parkerServiceShutdownHandler.ServeHTTP(w, r)
 		default:
@@ -285,6 +317,10 @@ func (UnimplementedParkerServiceHandler) Status(context.Context, *connect.Reques
 
 func (UnimplementedParkerServiceHandler) Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Logs is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Exec(context.Context, *connect.BidiStream[parkerv1.ExecRequest, parkerv1.ExecResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Exec is not implemented"))
 }
 
 func (UnimplementedParkerServiceHandler) Shutdown(context.Context, *connect.Request[parkerv1.ShutdownRequest]) (*connect.Response[parkerv1.ShutdownResponse], error) {

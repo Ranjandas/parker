@@ -7,20 +7,15 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
-	"github.com/vishvananda/netns"
 
 	"github.com/Ranjandas/parker/internal/echo"
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
-	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -38,6 +33,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringArrayVar(&varFlags, "var", nil, "set a variable (name=value); repeatable")
+	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
 	root.AddCommand(upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -123,68 +119,6 @@ func validateCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func execCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "exec FILE NODE [-- COMMAND...]",
-		Short: "Run a command (default: $SHELL) inside a node's network namespace",
-		Long:  "NODE is the expanded node name (dc1-server-1) or a selector (dc1/server-1).",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, low, err := load(args[0])
-			if err != nil {
-				return err
-			}
-			node := strings.ReplaceAll(args[1], "/", "-")
-			if _, ok := low.Nodes[node]; !ok {
-				return fmt.Errorf("no node %q (have: %s)", node, strings.Join(slices.Sorted(maps.Keys(low.Nodes)), ", "))
-			}
-			argv := args[2:]
-			if len(argv) == 0 {
-				sh := os.Getenv("SHELL")
-				if sh == "" {
-					sh = "/bin/sh"
-				}
-				argv = []string{sh}
-			}
-			path := os.Getenv("PATH")
-			for k, v := range low.Versions {
-				if lab.Needs(low, k) {
-					if b, err := fetch.Binary(k, v, os.Stderr); err == nil {
-						path = filepath.Dir(b) + ":" + path
-					}
-				}
-			}
-			env := append(os.Environ(), "PATH="+path, "PARKER_LAB="+low.Name, "PARKER_NODE="+node)
-			bin, err := lookPath(argv[0], path)
-			if err != nil {
-				return err
-			}
-			runtime.LockOSThread()
-			ns, err := netns.GetFromPath(netsetup.NetnsPath(low.Name, node))
-			if err != nil {
-				return fmt.Errorf("lab not running? %w", err)
-			}
-			if err := netns.Set(ns); err != nil {
-				return lab.PrivHint(err)
-			}
-			return syscall.Exec(bin, argv, env)
-		},
-	}
-}
-
-func lookPath(name, path string) (string, error) {
-	if strings.Contains(name, "/") {
-		return name, nil
-	}
-	for _, d := range filepath.SplitList(path) {
-		p := filepath.Join(d, name)
-		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("%s: not found in PATH", name)
 }
 
 func fetchCmd() *cobra.Command {
