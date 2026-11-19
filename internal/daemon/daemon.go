@@ -213,6 +213,14 @@ func (s *Server) Status(_ context.Context, req *connect.Request[parkerv1.StatusR
 	return connect.NewResponse(StatusToProto(st)), nil
 }
 
+func (s *Server) Describe(_ context.Context, req *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error) {
+	name, text, err := lab.Describe(req.Msg.Lab, req.Msg.Node)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	return connect.NewResponse(&parkerv1.DescribeResponse{Node: name, Yaml: text}), nil
+}
+
 func StatusToProto(st *lab.Status) *parkerv1.StatusResponse {
 	out := &parkerv1.StatusResponse{Lab: st.Lab, RunDir: st.RunDir, Supervised: st.Supervised}
 	for _, n := range st.Nodes {
