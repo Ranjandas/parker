@@ -28,19 +28,59 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-// daemonClient returns a client if a daemon answers on the socket.
-func daemonClient(ctx context.Context) (parkerv1connect.ParkerServiceClient, bool) {
-	c := daemon.Client(daemon.SocketPath())
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
+var hostFlag string
+
+// target is where the CLI talks to a daemon: --host / PARKER_HOST, with
+// PARKER_TOKEN, PARKER_TLS_CA and PARKER_TLS_INSECURE=1 for https.
+func target() daemon.Target {
+	h := hostFlag
+	if h == "" {
+		h = os.Getenv("PARKER_HOST")
+	}
+	return daemon.Target{
+		Host:     h,
+		Token:    os.Getenv("PARKER_TOKEN"),
+		CAFile:   os.Getenv("PARKER_TLS_CA"),
+		Insecure: os.Getenv("PARKER_TLS_INSECURE") == "1",
+	}
+}
+
+// connectDaemon returns a client if a daemon answers. With no host set and
+// no local daemon it returns ok=false so callers can work locally; with a
+// host set, failing to reach it is an error.
+func connectDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, bool, error) {
+	t := target()
+	c, err := t.Dial()
+	if err != nil {
+		return nil, false, err
+	}
+	vctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	_, err := c.Version(ctx, connect.NewRequest(&parkerv1.VersionRequest{}))
-	return c, err == nil
+	if _, err := c.Version(vctx, connect.NewRequest(&parkerv1.VersionRequest{})); err != nil {
+		if t.Host != "" {
+			return nil, false, fmt.Errorf("parker daemon at %s: %w", t.Host, rpcErr(err))
+		}
+		return nil, false, nil
+	}
+	return c, true, nil
+}
+
+// localDaemon is connectDaemon for callers that only care about the local
+// socket answering (daemon stop/status with no host set).
+func localDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, bool) {
+	c, ok, _ := connectDaemon(ctx)
+	return c, ok
 }
 
 // ensureDaemon returns a client, starting `parker daemon` in the background
-// if none is running. Its output goes to <run base>/daemon.log.
+// if no host is set and none is running. Its output goes to
+// <run base>/daemon.log.
 func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, error) {
-	if c, ok := daemonClient(ctx); ok {
+	c, ok, err := connectDaemon(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		return c, nil
 	}
 	self, err := os.Executable()
@@ -66,7 +106,7 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 	go func() { _ = cmd.Wait(); close(exited) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if c, ok := daemonClient(ctx); ok {
+		if c, ok := localDaemon(ctx); ok {
 			fmt.Fprintf(os.Stderr, "started parker daemon (pid %d, log %s)\n", cmd.Process.Pid, logPath)
 			return c, nil
 		}
@@ -165,7 +205,11 @@ func downCmd() *cobra.Command {
 			defer stop()
 			// Down must work with no daemon (or a dead one): fall back to
 			// doing it here.
-			if c, ok := daemonClient(ctx); ok {
+			c, ok, err := connectDaemon(ctx)
+			if err != nil {
+				return err
+			}
+			if ok {
 				stream, err := c.Down(ctx, connect.NewRequest(&parkerv1.DownRequest{Lab: name}))
 				if err != nil {
 					return rpcErr(err)
@@ -190,7 +234,10 @@ func statusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
 			defer stop()
-			c, viaDaemon := daemonClient(ctx)
+			c, viaDaemon, err := connectDaemon(ctx)
+			if err != nil {
+				return err
+			}
 			if len(args) == 0 {
 				return listLabs(ctx, c, viaDaemon)
 			}
@@ -300,7 +347,11 @@ func logsCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
-			if c, ok := daemonClient(ctx); ok {
+			c, ok, err := connectDaemon(ctx)
+			if err != nil {
+				return err
+			}
+			if ok {
 				stream, err := c.Logs(ctx, connect.NewRequest(&parkerv1.LogsRequest{
 					Lab: name, Node: node, Process: proc, TailLines: int32(lines), Follow: follow,
 				}))
@@ -331,26 +382,55 @@ func logsCmd() *cobra.Command {
 }
 
 func daemonCmd() *cobra.Command {
+	var listen string
+	var sans []string
 	c := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the Parker daemon in the foreground (`parker up` starts one when needed)",
 		Long: "Run the Parker daemon in the foreground. It supervises labs started through it and\n" +
 			"serves the Parker API (gRPC and HTTP/JSON via ConnectRPC) on " + daemon.SocketPath() + ".\n" +
-			"Stopping it leaves labs running; `parker down` works without it.",
+			"Stopping it leaves labs running; `parker down` works without it.\n\n" +
+			"--listen also serves the API over TCP for remote clients (TLS with a self-signed\n" +
+			"certificate, and a bearer token), so another machine can run every parker command,\n" +
+			"exec included, against this one. See `parker daemon credentials`.",
+		Example: "  sudo parker daemon --listen :7443\n" +
+			"  # or keep it local and tunnel the socket:\n" +
+			"  ssh -N -L /tmp/parker.sock:/run/parker/parker.sock vm & PARKER_HOST=unix:///tmp/parker.sock parker status",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
 			defer stop()
-			return daemon.Serve(ctx, daemon.SocketPath(), os.Stdout)
+			return daemon.Serve(ctx, daemon.ServeOptions{Socket: daemon.SocketPath(), Listen: listen, SANs: sans}, os.Stdout)
 		},
 	}
+	c.Flags().StringVar(&listen, "listen", "", "also serve remote clients on this TCP address (e.g. :7443); TLS + token")
+	c.Flags().StringSliceVar(&sans, "tls-san", nil, "extra DNS names or IPs for the self-signed certificate (e.g. the VM's public IP)")
+	c.AddCommand(&cobra.Command{
+		Use:   "credentials",
+		Short: "Print what a remote client needs: token and certificate (creates them if missing)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tok, err := daemon.Token()
+			if err != nil {
+				return lab.PrivHint(err)
+			}
+			say("# on the client (copy %s to ./parker-ca.pem first):", daemon.CertPath())
+			say("export PARKER_HOST=https://<this-host>:7443")
+			say("export PARKER_TOKEN=%s", tok)
+			say("export PARKER_TLS_CA=$PWD/parker-ca.pem")
+			if _, err := os.Stat(daemon.CertPath()); err != nil {
+				say("# no certificate yet: it is created when `parker daemon --listen` first starts")
+			}
+			return nil
+		},
+	})
 	c.AddCommand(&cobra.Command{
 		Use:   "stop",
 		Short: "Stop the running daemon (labs keep running)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			cl, ok := daemonClient(ctx)
+			cl, ok := localDaemon(ctx)
 			if !ok {
 				say("no parker daemon on %s", daemon.SocketPath())
 				return nil
@@ -364,7 +444,7 @@ func daemonCmd() *cobra.Command {
 			}
 			// Wait for the socket to go away so a following start is clean.
 			for range 50 {
-				if _, ok := daemonClient(ctx); !ok {
+				if _, ok := localDaemon(ctx); !ok {
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
@@ -379,7 +459,7 @@ func daemonCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			cl, ok := daemonClient(ctx)
+			cl, ok := localDaemon(ctx)
 			if !ok {
 				say("no parker daemon on %s", daemon.SocketPath())
 				return nil

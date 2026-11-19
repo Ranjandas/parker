@@ -49,7 +49,7 @@ func TestServeOverSocket(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "p.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, sock, os.Stderr) }()
+	go func() { done <- Serve(ctx, ServeOptions{Socket: sock}, os.Stderr) }()
 	c := Client(sock)
 	var err error
 	for range 50 {
@@ -75,7 +75,7 @@ func TestServeOverSocket(t *testing.T) {
 	if _, err := c.Status(ctx, connect.NewRequest(&parkerv1.StatusRequest{Lab: "nope"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("want not found, got %v", err)
 	}
-	if err := Serve(ctx, sock, os.Stderr); err == nil || !strings.Contains(err.Error(), "already listening") {
+	if err := Serve(ctx, ServeOptions{Socket: sock}, os.Stderr); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("second daemon: %v", err)
 	}
 	if _, err := c.Shutdown(ctx, connect.NewRequest(&parkerv1.ShutdownRequest{})); err != nil {

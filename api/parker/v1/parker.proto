@@ -29,6 +29,12 @@ service ParkerService {
   // Logs of one process: the last lines, then (with follow) new ones.
   rpc Logs(LogsRequest) returns (stream LogChunk);
 
+  // Exec runs a command inside a node's network namespace. The first
+  // request must carry `start`; then stdin, resize and stdin_eof. With a
+  // TTY, stdout carries the terminal output and stderr is unused. Needs
+  // HTTP/2 (bidi stream).
+  rpc Exec(stream ExecRequest) returns (stream ExecResponse);
+
   // Shutdown stops the daemon. Labs keep running.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
@@ -111,3 +117,34 @@ message LogChunk {
 
 message ShutdownRequest {}
 message ShutdownResponse {}
+
+message ExecRequest {
+  oneof msg {
+    ExecStart start = 1;
+    bytes stdin = 2;
+    TermSize resize = 3;
+    bool stdin_eof = 4;
+  }
+}
+
+message ExecStart {
+  string lab = 1;
+  string node = 2; // dc1-server-1 or dc1/server-1
+  repeated string argv = 3; // default: $SHELL of the daemon, else /bin/sh
+  bool tty = 4;
+  TermSize size = 5;
+  repeated string env = 6; // extra KEY=VALUE, e.g. TERM
+}
+
+message TermSize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message ExecResponse {
+  oneof msg {
+    bytes stdout = 1;
+    bytes stderr = 2;
+    int32 exit_code = 3; // last message
+  }
+}
