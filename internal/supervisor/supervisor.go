@@ -467,6 +467,25 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 				return fmt.Errorf("consul: %d alive members, want >=%d", alive, want)
 			}
 		}
+		if r.Consul.WANMembers != "" {
+			want, err := spec.ParseMembers(r.Consul.WANMembers)
+			if err != nil {
+				return fmt.Errorf("consul.wan_members: %w", err)
+			}
+			ms, err := c.Agent().Members(true)
+			if err != nil {
+				return fmt.Errorf("consul wan members: %w", err)
+			}
+			alive := 0
+			for _, m := range ms {
+				if m.Status == 1 {
+					alive++
+				}
+			}
+			if alive < want {
+				return fmt.Errorf("consul: %d alive WAN members, want >=%d", alive, want)
+			}
+		}
 		if svc := r.Consul.ServiceHealthy; svc != "" {
 			// Ready means the catalog (not just the local agent) shows this
 			// node's instance as passing, so other nodes can discover it.

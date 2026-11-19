@@ -48,6 +48,20 @@ type Consul struct {
 	Defaults *Inheritable `yaml:"defaults,omitempty"`
 	// Datacenters keyed by name (e.g. dc1).
 	Datacenters map[string]*Datacenter `yaml:"datacenters"`
+	// Federation joins the datacenters' servers over a generated `wan`
+	// network. Without it, datacenters are independent clusters.
+	Federation *Federation `yaml:"federation,omitempty"`
+}
+
+type Federation struct {
+	// Mode is wan (serf WAN gossip between servers). mesh-gateways is
+	// reserved.
+	Mode string `yaml:"mode" jsonschema:"enum=wan,enum=mesh-gateways"`
+}
+
+// Federated reports whether the datacenters are WAN-federated.
+func (c *Consul) Federated() bool {
+	return c != nil && c.Federation != nil && c.Federation.Mode == "wan"
 }
 
 // Inheritable holds the settings that flow down the tree.
@@ -222,6 +236,9 @@ type ConsulCheck struct {
 	Leader bool `yaml:"leader,omitempty"`
 	// Members, e.g. ">=4": alive LAN members seen by this agent.
 	Members string `yaml:"members,omitempty"`
+	// WANMembers, e.g. ">=6": alive WAN members (servers of every
+	// federated datacenter) seen by this server.
+	WANMembers string `yaml:"wan_members,omitempty"`
 	// ServiceHealthy: this node's instance of the service is passing in the catalog.
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`
 }

@@ -41,6 +41,10 @@
           },
           "type": "object",
           "description": "Datacenters keyed by name (e.g. dc1)."
+        },
+        "federation": {
+          "$ref": "#/$defs/Federation",
+          "description": "Federation joins the datacenters' servers over a generated `wan`\nnetwork. Without it, datacenters are independent clusters."
         }
       },
       "additionalProperties": false,
@@ -62,6 +66,10 @@
         "members": {
           "type": "string",
           "description": "Members, e.g. \"\u003e=4\": alive LAN members seen by this agent."
+        },
+        "wan_members": {
+          "type": "string",
+          "description": "WANMembers, e.g. \"\u003e=6\": alive WAN members (servers of every\nfederated datacenter) seen by this server."
         },
         "service_healthy": {
           "type": "string",
@@ -162,6 +170,23 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "Federation": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "wan",
+            "mesh-gateways"
+          ],
+          "description": "Mode is wan (serf WAN gossip between servers). mesh-gateways is\nreserved."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "mode"
+      ]
     },
     "HTTPCheck": {
       "properties": {
