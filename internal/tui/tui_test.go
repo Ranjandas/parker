@@ -233,3 +233,19 @@ func TestOneLabOpensOnceThenEscStaysOnLabs(t *testing.T) {
 		t.Fatalf("esc reopened the lab: view %d", m.(Model).view)
 	}
 }
+
+func TestProcState(t *testing.T) {
+	yes, no := true, false
+	for want, p := range map[string]*parkerv1.ProcessStatus{
+		"stopped":  {Stopped: true},
+		"dead":     {},
+		"paused":   {Alive: true, Paused: true, Ready: &yes},
+		"running":  {Alive: true},
+		"ready":    {Alive: true, Ready: &yes},
+		"starting": {Alive: true, Ready: &no},
+	} {
+		if got := ProcState(p); got != want {
+			t.Errorf("%+v: %s, want %s", p, got, want)
+		}
+	}
+}

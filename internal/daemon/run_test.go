@@ -36,3 +36,19 @@ func TestPickScenario(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineScenario(t *testing.T) {
+	sc, err := inlineScenario("steps:\n  - kill: dc1/leader\n")
+	if err != nil || len(sc.Steps) != 1 || sc.Steps[0].Kill != "dc1/leader" {
+		t.Fatalf("%+v %v", sc, err)
+	}
+	for y, want := range map[string]string{
+		"steps:\n  - explode: dc1\n":          "explode",
+		"steps: []\n":                         "no steps",
+		"steps:\n  - kill: a\n    pause: b\n": "one action per step",
+	} {
+		if _, err := inlineScenario(y); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", y, err, want)
+		}
+	}
+}

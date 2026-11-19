@@ -1,0 +1,42 @@
+# Fault steps in a scenario: cut the leader off and heal, kill it, freeze
+# it, restart a client. Each step waits for Consul to settle before the
+# next fault. `parker fault` runs the same steps by hand.
+parker: v1alpha1
+name: faults
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          service: { port: 8080, run: fake-service }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { leader: true, peers: ">=3" }, within: 30s }
+
+    - name: cut the leader off
+      partition: [dc1/leader]
+    - name: the others see it fail
+      assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }
+    - assert: { consul: { leader: true }, within: 30s }
+    - heal: all
+    - assert: { consul: { members: ">=4", peers: ">=3" }, within: 30s }
+
+    - kill: dc1/leader
+    - assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }
+    - assert: { consul: { leader: true }, within: 30s }
+    - name: bring the killed server back
+      start: dc1/servers
+    - assert: { consul: { members: ">=4" }, within: 30s }
+
+    - pause: dc1/leader
+    - assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }
+    - resume: dc1/servers
+    - assert: { consul: { leader: true, members: ">=4" }, within: 30s }
+
+    - restart: dc1/web
+    - assert: { consul: { service_healthy: web, members: ">=4" }, within: 30s }
+    - snapshot: logs

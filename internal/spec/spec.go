@@ -75,6 +75,54 @@ type Step struct {
 	Assert *Assert `yaml:"assert,omitempty"`
 	// Snapshot copies state aside for later: logs.
 	Snapshot string `yaml:"snapshot,omitempty" jsonschema:"enum=logs"`
+
+	// Partition cuts the network between groups of nodes, each a selector
+	// or a list of them: [dc1, dc2], or [[dc1/server-1, dc1/server-2],
+	// [dc1/server-3]]. One group is cut off from the rest of the lab.
+	// Packets between the sides are dropped until heal.
+	Partition []NodeGroup `yaml:"partition,omitempty"`
+	// Heal removes partitions: all, or a selector (every cut to or from
+	// its nodes).
+	Heal string `yaml:"heal,omitempty"`
+	// Kill SIGKILLs the processes of the nodes a selector matches; the
+	// restart policy applies, as to a crash.
+	Kill string `yaml:"kill,omitempty"`
+	// Stop stops the nodes' processes (SIGTERM, then SIGKILL after 10s)
+	// and keeps them down until start.
+	Stop string `yaml:"stop,omitempty"`
+	// Start starts the nodes' processes that aren't running and waits for
+	// their readiness checks.
+	Start string `yaml:"start,omitempty"`
+	// Restart is stop then start.
+	Restart string `yaml:"restart,omitempty"`
+	// Pause freezes the nodes' processes (SIGSTOP) until resume.
+	Pause string `yaml:"pause,omitempty"`
+	// Resume continues paused processes (SIGCONT).
+	Resume string `yaml:"resume,omitempty"`
+}
+
+// NodeGroup is one side of a partition: a selector or a list of them.
+type NodeGroup []string
+
+func (g *NodeGroup) UnmarshalYAML(unmarshal func(any) error) error {
+	var s string
+	if err := unmarshal(&s); err == nil {
+		*g = []string{s}
+		return nil
+	}
+	var l []string
+	if err := unmarshal(&l); err != nil {
+		return fmt.Errorf("partition: each group is a selector or a list of selectors")
+	}
+	*g = l
+	return nil
+}
+
+func (g NodeGroup) MarshalYAML() (any, error) {
+	if len(g) == 1 {
+		return g[0], nil
+	}
+	return []string(g), nil
 }
 
 type ExecStep struct {

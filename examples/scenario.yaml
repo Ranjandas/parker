@@ -1,6 +1,6 @@
 # A scenario `parker run` plays against the lab: wait, exec, asserts with
 # retries, timing with at:, and a log snapshot. Fault steps (partition,
-# kill, ...) come in a later release.
+# kill, stop, pause, ...) are in examples/faults.yaml.
 parker: v1alpha1
 name: scenario
 versions: { consul: 1.22.7 }

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Ranjandas/parker/internal/spec"
@@ -25,6 +27,30 @@ type Lab interface {
 	Consul(ctx context.Context, a *spec.ConsulAssert) error
 	// Snapshot saves what (logs) and returns where it went.
 	Snapshot(what string) (string, error)
+	// Partition cuts the network between groups of nodes; one group is cut
+	// off from the rest.
+	Partition(groups [][]string) error
+	// Heal removes the cuts on and to nodes; nil heals everything.
+	Heal(nodes []string) error
+	// Proc runs a process action (kill, stop, start, restart, pause,
+	// resume) on one node's processes.
+	Proc(ctx context.Context, action, node string) error
+}
+
+// ProcActions are the step actions that act on nodes' processes.
+var ProcActions = []string{"kill", "stop", "start", "restart", "pause", "resume"}
+
+// procTarget is the step's process action and its selector, if it has one.
+func procTarget(st *spec.Step) (action, sel string) {
+	for _, a := range []struct{ name, sel string }{
+		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
+		{"restart", st.Restart}, {"pause", st.Pause}, {"resume", st.Resume},
+	} {
+		if a.sel != "" {
+			return a.name, a.sel
+		}
+	}
+	return "", ""
 }
 
 // Clock lets tests run scenarios without waiting.
@@ -93,7 +119,7 @@ func Validate(sc *spec.Scenario) error {
 func validateStep(st *spec.Step) error {
 	if n := len(actions(st)); n != 1 {
 		if n == 0 {
-			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot)")
+			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ")")
 		}
 		return fmt.Errorf("one action per step, got %s", strings.Join(actions(st), ", "))
 	}
@@ -129,6 +155,11 @@ func validateStep(st *spec.Step) error {
 	if st.Snapshot != "" && st.Snapshot != "logs" {
 		return fmt.Errorf("snapshot: want logs, got %q", st.Snapshot)
 	}
+	for i, g := range st.Partition {
+		if len(g) == 0 || slices.Contains(g, "") {
+			return fmt.Errorf("partition: group %d is empty", i+1)
+		}
+	}
 	return nil
 }
 
@@ -149,6 +180,20 @@ func actions(st *spec.Step) []string {
 	if st.Snapshot != "" {
 		a = append(a, "snapshot")
 	}
+	if len(st.Partition) > 0 {
+		a = append(a, "partition")
+	}
+	if st.Heal != "" {
+		a = append(a, "heal")
+	}
+	for _, x := range []struct{ name, sel string }{
+		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
+		{"restart", st.Restart}, {"pause", st.Pause}, {"resume", st.Resume},
+	} {
+		if x.sel != "" {
+			a = append(a, x.name)
+		}
+	}
 	return a
 }
 
@@ -168,6 +213,15 @@ func Selectors(sc *spec.Scenario) []string {
 		}
 		if st.Assert != nil && st.Assert.Exec != nil {
 			out = append(out, st.Assert.Exec.On)
+		}
+		for _, g := range st.Partition {
+			out = append(out, g...)
+		}
+		if st.Heal != "" && st.Heal != "all" {
+			out = append(out, st.Heal)
+		}
+		if _, sel := procTarget(st); sel != "" {
+			out = append(out, sel)
 		}
 	}
 	return out
@@ -212,6 +266,20 @@ func Label(st *spec.Step) string {
 		return "assert exec on " + st.Assert.Exec.On
 	case st.Snapshot != "":
 		return "snapshot " + st.Snapshot
+	case len(st.Partition) > 0:
+		var gs []string
+		for _, g := range st.Partition {
+			gs = append(gs, strings.Join(g, ","))
+		}
+		if len(gs) == 1 {
+			return "partition " + gs[0] + " from the rest"
+		}
+		return "partition " + strings.Join(gs, " | ")
+	case st.Heal != "":
+		return "heal " + st.Heal
+	}
+	if a, sel := procTarget(st); a != "" {
+		return a + " " + sel
 	}
 	return "step"
 }
@@ -312,6 +380,56 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		}
 		say("  %s saved to %s", st.Snapshot, where)
 		return nil
+
+	case len(st.Partition) > 0:
+		var groups [][]string
+		for _, g := range st.Partition {
+			var nodes []string
+			for _, sel := range g {
+				ns, err := l.Resolve(sel)
+				if err != nil {
+					return err
+				}
+				nodes = append(nodes, ns...)
+			}
+			slices.Sort(nodes)
+			nodes = slices.Compact(nodes)
+			say("  side %d: %s", len(groups)+1, strings.Join(nodes, ", "))
+			groups = append(groups, nodes)
+		}
+		return l.Partition(groups)
+
+	case st.Heal != "":
+		if st.Heal == "all" {
+			return l.Heal(nil)
+		}
+		nodes, err := l.Resolve(st.Heal)
+		if err != nil {
+			return err
+		}
+		return l.Heal(nodes)
+	}
+	if action, sel := procTarget(st); action != "" {
+		nodes, err := l.Resolve(sel)
+		if err != nil {
+			return err
+		}
+		say("  %s %s", action, strings.Join(nodes, ", "))
+		// Nodes go together: servers started one by one could each wait
+		// for a quorum that needs the others.
+		errs := make([]error, len(nodes))
+		var wg sync.WaitGroup
+		for i, n := range nodes {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := l.Proc(ctx, action, n); err != nil {
+					errs[i] = fmt.Errorf("%s: %w", n, err)
+				}
+			}()
+		}
+		wg.Wait()
+		return errors.Join(errs...)
 	}
 	return errors.New("no action")
 }

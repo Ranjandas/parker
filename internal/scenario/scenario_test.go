@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +32,9 @@ type fakeLab struct {
 	readyAt  time.Time         // Ready fails before this
 	leaderAt time.Time         // Consul leader fails before this
 	exec     map[string]string // node -> output; "FAIL" exits 1
+	mu       sync.Mutex
+	procs    []string // "action node", in any order
+	procFail string   // node whose Proc fails
 }
 
 func (f *fakeLab) Resolve(sel string) ([]string, error) {
@@ -72,6 +77,34 @@ func (f *fakeLab) Consul(_ context.Context, a *spec.ConsulAssert) error {
 func (f *fakeLab) Snapshot(what string) (string, error) {
 	f.log = append(f.log, "snapshot "+what)
 	return "/run/parker/x/snapshots/1", nil
+}
+
+func (f *fakeLab) Partition(groups [][]string) error {
+	var gs []string
+	for _, g := range groups {
+		gs = append(gs, strings.Join(g, ","))
+	}
+	f.log = append(f.log, "partition "+strings.Join(gs, " | "))
+	return nil
+}
+
+func (f *fakeLab) Heal(nodes []string) error {
+	if nodes == nil {
+		f.log = append(f.log, "heal all")
+	} else {
+		f.log = append(f.log, "heal "+strings.Join(nodes, ","))
+	}
+	return nil
+}
+
+func (f *fakeLab) Proc(_ context.Context, action, node string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.procs = append(f.procs, action+" "+node)
+	if node == f.procFail {
+		return errors.New("no such process")
+	}
+	return nil
 }
 
 func parse(t *testing.T, y string) *spec.Scenario {
@@ -209,5 +242,82 @@ func TestValidate(t *testing.T) {
 	sc := parse(t, `steps: [{wait: dc1 ready}, {exec: {on: dc1/web, run: x}}, {assert: {exec: {on: svc:api, run: x}}}, {sleep: 1s}]`)
 	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/web svc:api" {
 		t.Errorf("selectors %q", got)
+	}
+}
+
+func TestFaultSteps(t *testing.T) {
+	sc := parse(t, `
+steps:
+  - partition: [[dc1/leader, dc1/web], dc1]
+  - heal: dc1/web
+  - partition: [dc1/web]
+  - heal: all
+  - kill: dc1/leader
+  - stop: dc1/web
+  - start: dc1/web
+  - restart: dc1/leader
+  - pause: dc1/web
+  - resume: dc1/web
+`)
+	f := &fakeLab{clk: &fakeClock{}}
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	wantLog := []string{
+		// Groups are de-duplicated and sorted; overlap is the lab's to refuse.
+		"partition dc1-server-1,dc1-web-1,dc1-web-2 | dc1-server-1,dc1-web-1",
+		"heal dc1-web-1,dc1-web-2",
+		"partition dc1-web-1,dc1-web-2",
+		"heal all",
+	}
+	if !slices.Equal(f.log, wantLog) {
+		t.Errorf("log:\n%s\nwant:\n%s", strings.Join(f.log, "\n"), strings.Join(wantLog, "\n"))
+	}
+	slices.Sort(f.procs)
+	wantProcs := []string{
+		"kill dc1-server-1",
+		"pause dc1-web-1", "pause dc1-web-2",
+		"restart dc1-server-1",
+		"resume dc1-web-1", "resume dc1-web-2",
+		"start dc1-web-1", "start dc1-web-2",
+		"stop dc1-web-1", "stop dc1-web-2",
+	}
+	if !slices.Equal(f.procs, wantProcs) {
+		t.Errorf("procs: %v", f.procs)
+	}
+	for _, s := range []string{"step 1: partition dc1/leader,dc1/web | dc1", "side 1: dc1-server-1, dc1-web-1, dc1-web-2",
+		"step 3: partition dc1/web from the rest", "step 4: heal all", "step 5: kill dc1/leader", "  stop dc1-web-1, dc1-web-2"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("output lacks %q:\n%s", s, out)
+		}
+	}
+}
+
+func TestProcStepFailureNamesNode(t *testing.T) {
+	f := &fakeLab{clk: &fakeClock{}, procFail: "dc1-web-2"}
+	_, err := run(t, parse(t, "steps:\n  - stop: dc1/web\n"), f)
+	var se *StepError
+	if !errors.As(err, &se) || se.Index != 1 || !strings.Contains(err.Error(), "dc1-web-2: no such process") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.procs) != 2 {
+		t.Errorf("both nodes should be tried: %v", f.procs)
+	}
+}
+
+func TestFaultValidationAndSelectors(t *testing.T) {
+	for y, want := range map[string]string{
+		"steps:\n  - kill: dc1\n    stop: dc1\n": "one action per step, got kill, stop",
+		"steps:\n  - partition: [dc1, []]\n":     "partition: group 2 is empty",
+		"steps:\n  - {}\n":                       "partition, heal, kill",
+	} {
+		if err := Validate(parse(t, y)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", y, err, want)
+		}
+	}
+	sc := parse(t, "steps:\n  - partition: [[a, b], c]\n  - heal: all\n  - heal: d\n  - pause: e\n")
+	if got := strings.Join(Selectors(sc), " "); got != "a b c d e" {
+		t.Errorf("Selectors = %q", got)
 	}
 }

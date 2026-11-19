@@ -325,7 +325,7 @@ func (m *Model) applyRows() {
 			ip += " (no netns)"
 		}
 		for _, p := range n.Processes {
-			r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: procState(p), restarts: strconv.Itoa(int(p.Restarts)), role: "-"}
+			r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: "-"}
 			if p.Pid > 0 {
 				r.pid = strconv.Itoa(int(p.Pid))
 			}
@@ -347,9 +347,16 @@ func (m *Model) applyRows() {
 	}
 }
 
-func procState(p *parkerv1.ProcessStatus) string {
-	if !p.Alive {
+// ProcState is a process's STATE column: stopped, dead, paused, running, ready
+// or starting.
+func ProcState(p *parkerv1.ProcessStatus) string {
+	switch {
+	case p.Stopped:
+		return "stopped"
+	case !p.Alive:
 		return "dead"
+	case p.Paused:
+		return "paused"
 	}
 	if p.Ready == nil {
 		return "running"
@@ -754,7 +761,7 @@ func summary(st *parkerv1.StatusResponse) string {
 	for _, n := range st.Nodes {
 		for _, p := range n.Processes {
 			total++
-			if s := procState(p); s == "ready" || s == "running" {
+			if s := ProcState(p); s == "ready" || s == "running" {
 				ready++
 			}
 		}

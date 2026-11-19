@@ -3,6 +3,7 @@
 package netsetup
 
 import (
+	"net"
 	"os"
 	"slices"
 	"testing"
@@ -51,6 +52,8 @@ func TestNetsetupLive(t *testing.T) {
 		t.Errorf("HostNets doesn't attribute 10.61.0.0/24 to lab a: %+v", hn)
 	}
 
+	livePartition(t, liveLab("10.61.0.0/24", "10.61.0.1", "10.61.0.10", "10.61.0.11"))
+
 	if err := Down("a", quiet); err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +71,43 @@ func TestNetsetupLive(t *testing.T) {
 	}
 	if err := Down("a-b", quiet); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// livePartition cuts node a of lab "a" off from b and heals it: b's address
+// must stop routing from a (and a's from b), and route again after heal.
+func livePartition(t *testing.T, f *spec.File) {
+	t.Helper()
+	routes := func(from, ip string) bool {
+		h, err := nsHandle("a", from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		_, err = h.RouteGet(net.ParseIP(ip))
+		return err == nil
+	}
+	if !routes("a", "10.61.0.11") {
+		t.Fatal("a can't route to b before the partition")
+	}
+	if err := Partition("a", f, [][]string{{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if routes("a", "10.61.0.11") || routes("b", "10.61.0.10") {
+		t.Error("a and b still route to each other after the partition")
+	}
+	if ips, err := CutsOn("a", "a"); err != nil || !slices.Equal(ips, []string{"10.61.0.11"}) {
+		t.Errorf("CutsOn(a) = %v, %v", ips, err)
+	}
+	// Cutting again is idempotent.
+	if err := Partition("a", f, [][]string{{"a"}, {"b"}}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := Heal("a", f, nil)
+	if err != nil || n != 2 {
+		t.Errorf("Heal = %d, %v; want 2 routes", n, err)
+	}
+	if !routes("a", "10.61.0.11") || !routes("b", "10.61.0.10") {
+		t.Error("still cut after heal")
 	}
 }

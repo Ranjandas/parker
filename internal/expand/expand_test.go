@@ -481,3 +481,36 @@ func TestScenarioCarriedAndChecked(t *testing.T) {
 		t.Errorf("err %v", err)
 	}
 }
+
+func TestFaultScenarioCarriedAndChecked(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/faults.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "low.yaml")
+	b, err := yaml.Marshal(low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Expand(load(t, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Scenario, low.Scenario) {
+		t.Error("fault scenario changed in the round trip")
+	}
+
+	// Fault selectors are checked up front (raft roles wait for the lab).
+	f := load(t, "../../examples/faults.yaml")
+	f.Scenario.Steps[2].Partition = []spec.NodeGroup{{"dc1/server-1", "dc9"}}
+	f.Scenario.Steps[7].Kill = "dc1/followers"
+	f.Scenario.Steps[10].Start = "dc1/nope"
+	_, err = Expand(f)
+	if err == nil || !strings.Contains(err.Error(), `"dc9" matches no nodes`) || !strings.Contains(err.Error(), `"dc1/nope" matches no nodes`) ||
+		strings.Contains(err.Error(), "followers") {
+		t.Errorf("err %v", err)
+	}
+}
