@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ranjandas/parker/releases/latest/download/parker.schema.json",
+  "$defs": {
+    "AgentSettings": {
+      "properties": {
+        "config": {
+          "type": "object",
+          "description": "Config is passed through to the Consul agent configuration as is."
+        },
+        "log_level": {
+          "type": "string",
+          "description": "LogLevel of the agent: trace, debug, info, warn or error."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Attachment": {
+      "properties": {
+        "ip": {
+          "type": "string",
+          "description": "IP address of the node on this network."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ip"
+      ]
+    },
+    "Consul": {
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Inheritable",
+          "description": "Defaults apply to every datacenter unless it overrides them."
+        },
+        "datacenters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Datacenter"
+          },
+          "type": "object",
+          "description": "Datacenters keyed by name (e.g. dc1)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "datacenters"
+      ]
+    },
+    "ConsulCheck": {
+      "properties": {
+        "addr": {
+          "type": "string",
+          "description": "Addr of the agent's HTTP API; default \u003cnode ip\u003e:8500."
+        },
+        "leader": {
+          "type": "boolean",
+          "description": "Leader: a raft leader is known."
+        },
+        "members": {
+          "type": "string",
+          "description": "Members, e.g. \"\u003e=4\": alive LAN members seen by this agent."
+        },
+        "service_healthy": {
+          "type": "string",
+          "description": "ServiceHealthy: this node's instance of the service is passing in the catalog."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Datacenter": {
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Agents settings apply to servers and clients alike."
+        },
+        "server": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Server settings apply to Consul servers only."
+        },
+        "client": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Client settings apply to client agents only."
+        },
+        "service_defaults": {
+          "$ref": "#/$defs/Service",
+          "description": "ServiceDefaults are merged into every service."
+        },
+        "primary": {
+          "type": "boolean",
+          "description": "Primary marks the primary datacenter (for federation and ACLs)."
+        },
+        "subnet": {
+          "type": "string",
+          "description": "Subnet of the datacenter LAN, e.g. 10.1.0.0/24; picked automatically\nif empty."
+        },
+        "ui": {
+          "type": "boolean",
+          "description": "UI enables the Consul web UI on the servers."
+        },
+        "servers": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Number of servers."
+                },
+                "overrides": {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/ServerOverride"
+                  },
+                  "propertyNames": {
+                    "pattern": "^server-[0-9]+$"
+                  },
+                  "type": "object",
+                  "description": "Per-server settings, keyed by server name (server-1, server-2, ...)."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            }
+          ],
+          "description": "Servers is the number of Consul servers, or {count, overrides}."
+        },
+        "nodes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "object",
+          "description": "Nodes besides the servers, keyed by name. A node runs a client agent\nby default, plus its services and processes."
+        },
+        "partitions": {
+          "type": "object",
+          "description": "Partitions are reserved for Admin Partitions (Enterprise); not\nsupported yet."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "servers"
+      ]
+    },
+    "Dep": {
+      "properties": {
+        "condition": {
+          "type": "string",
+          "enum": [
+            "started",
+            "ready"
+          ],
+          "description": "Condition is started (default) or ready."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "HTTPCheck": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL to request from inside the node's namespace."
+        },
+        "status": {
+          "type": "integer",
+          "description": "Status expected; default 200."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url"
+      ]
+    },
+    "Inheritable": {
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Agents settings apply to servers and clients alike."
+        },
+        "server": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Server settings apply to Consul servers only."
+        },
+        "client": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Client settings apply to client agents only."
+        },
+        "service_defaults": {
+          "$ref": "#/$defs/Service",
+          "description": "ServiceDefaults are merged into every service."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Inheritable holds the settings that flow down the tree."
+    },
+    "Network": {
+      "properties": {
+        "subnet": {
+          "type": "string",
+          "description": "Subnet of the bridge, e.g. 10.9.0.0/24."
+        },
+        "gateway": {
+          "type": "string",
+          "description": "Gateway is the host-side bridge address; default the subnet's .1."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "subnet"
+      ]
+    },
+    "Node": {
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Count makes N copies of the node, named \u003cname\u003e-1 ... \u003cname\u003e-N."
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "client",
+            "none"
+          ],
+          "description": "Agent is client (default) or none."
+        },
+        "config": {
+          "type": "object",
+          "description": "Config is merged into this node's agent configuration."
+        },
+        "meta": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Meta is the node's Consul node metadata."
+        },
+        "service": {
+          "$ref": "#/$defs/Service",
+          "description": "Service is shorthand for one service named after the node."
+        },
+        "services": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Service"
+          },
+          "type": "object",
+          "description": "Services run on this node, keyed by service name."
+        },
+        "processes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Process"
+          },
+          "type": "object",
+          "description": "Processes are extra processes on this node, keyed by name."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Process": {
+      "properties": {
+        "run": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Run is the command. The first word may name a versioned binary\n(e.g. \"consul\"), which is resolved from `versions:` or Version."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version overrides versions.\u003cbinary\u003e for this process."
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Env for the process."
+        },
+        "depends_on": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Dep"
+          },
+          "type": "object",
+          "description": "DependsOn lists processes to wait for, keyed by \"\u003cnode\u003e/\u003cprocess\u003e\"\n(or \"\u003cprocess\u003e\" on the same node)."
+        },
+        "ready_when": {
+          "$ref": "#/$defs/Ready",
+          "description": "ReadyWhen says when the process counts as ready."
+        },
+        "restart": {
+          "type": "string",
+          "enum": [
+            "no",
+            "on-failure",
+            "always"
+          ],
+          "description": "Restart is no (default), on-failure or always. It applies once the lab\nis up, and only while `parker daemon` supervises the lab."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "run"
+      ]
+    },
+    "RawNode": {
+      "properties": {
+        "networks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "object",
+          "description": "Networks the node joins, keyed by network name."
+        },
+        "files": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Files to write before start: path (relative to the node dir) to\ncontent."
+        },
+        "processes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Process"
+          },
+          "type": "object",
+          "description": "Processes run in the node's namespace, keyed by name."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "networks"
+      ]
+    },
+    "Ready": {
+      "properties": {
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1,
+          "description": "Port: ready once this TCP port accepts connections."
+        },
+        "http": {
+          "$ref": "#/$defs/HTTPCheck",
+          "description": "HTTP: ready once this URL answers with the expected status."
+        },
+        "log": {
+          "type": "string",
+          "description": "Log: ready once the process log contains this text."
+        },
+        "consul": {
+          "$ref": "#/$defs/ConsulCheck",
+          "description": "Consul: ready once the agent reports this state."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Timeout for readiness, e.g. 30s."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ServerOverride": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Version of Consul for this server, e.g. for upgrade tests."
+        },
+        "config": {
+          "type": "object",
+          "description": "Config is merged into this server's agent configuration."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Service": {
+      "properties": {
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1,
+          "description": "Port the service listens on."
+        },
+        "run": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Run is fake-service (default) or a command."
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Env for the service process."
+        },
+        "check": {
+          "type": "string",
+          "enum": [
+            "http",
+            "tcp",
+            "none"
+          ],
+          "description": "Check is the health check: http, tcp or none."
+        },
+        "register": {
+          "type": "object",
+          "description": "Register is merged into the Consul service registration as is."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "properties": {
+    "parker": {
+      "type": "string",
+      "enum": [
+        "v1alpha1"
+      ],
+      "description": "Parker is the schema version of this file."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 24,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "Name of the lab; defaults to the file name. Lowercase letters, digits\nand '-', at most 24 characters."
+    },
+    "versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object",
+      "description": "Versions of the binaries to fetch, e.g. {consul: 1.22.7}. Add \"+ent\"\nfor Enterprise builds."
+    },
+    "vars": {
+      "type": "object",
+      "description": "Vars are substituted wherever ${vars.NAME} appears; override with\n--var NAME=VALUE. ${env.NAME} reads the environment."
+    },
+    "consul": {
+      "$ref": "#/$defs/Consul",
+      "description": "Consul is the high-level description: datacenters, nodes, services."
+    },
+    "networks": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Network"
+      },
+      "type": "object",
+      "description": "Networks are extra low-level bridges, keyed by name."
+    },
+    "nodes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RawNode"
+      },
+      "type": "object",
+      "description": "Nodes are low-level network namespaces running arbitrary processes,\nkeyed by name. They may join generated \u003cdc\u003e-lan networks."
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "parker"
+  ],
+  "title": "Parker topology file (v1alpha1)",
+  "description": "File is a whole Parker topology file."
+}

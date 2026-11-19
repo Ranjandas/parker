@@ -7,6 +7,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/goccy/go-yaml v1.19.2
 	github.com/hashicorp/consul/api v1.35.0
+	github.com/invopop/jsonschema v0.14.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -17,6 +18,8 @@ require (
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -32,6 +35,8 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
+	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 )
