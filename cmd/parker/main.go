@@ -31,10 +31,12 @@ func main() {
 			"fastest human-made object, because speed is the point.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Version:       versionString(),
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringArrayVar(&varFlags, "var", nil, "set a variable (name=value); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
-	root.AddCommand(initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd())
+	root.AddCommand(versionCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

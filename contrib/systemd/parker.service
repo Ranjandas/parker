@@ -1,0 +1,28 @@
+# Parker daemon. Install:
+#   sudo install -m 0755 parker /usr/local/bin/parker
+#   sudo install -m 0644 parker.service /etc/systemd/system/parker.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now parker
+# Remote clients: put PARKER_DAEMON_ARGS="--listen :7443" in /etc/default/parker,
+# restart, then run `sudo parker daemon credentials`.
+[Unit]
+Description=Parker lab daemon
+Documentation=https://github.com/Ranjandas/parker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/parker
+Environment=PARKER_CACHE=/var/cache/parker
+Environment=PARKER_STATE_DIR=/var/lib/parker
+ExecStart=/usr/local/bin/parker daemon $PARKER_DAEMON_ARGS
+# Labs outlive the daemon (`parker down` cleans up without it), so stop
+# only the daemon process, not the lab processes it started.
+KillMode=process
+Restart=on-failure
+RestartSec=2
+CacheDirectory=parker
+StateDirectory=parker
+
+[Install]
+WantedBy=multi-user.target
