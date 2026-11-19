@@ -25,7 +25,16 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "needs gofmt:"; echo "$out"; exit 1; fi
       - run: go vet ./...
-      - run: go test -race ./...
+      - name: go test (with coverage summary)
+        shell: bash # -o pipefail, so a failing test fails the step through tee
+        run: |
+          go test -race -cover ./... | tee /tmp/test.out
+          {
+            echo '### Unit test coverage'
+            echo '```'
+            grep -o 'github.com/Ranjandas/parker/[^ 	]*.*coverage: [0-9.]*%' /tmp/test.out | sed -E 's|github.com/Ranjandas/parker/||; s|\t.*coverage: | |' | grep -v 'internal/api'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: client builds for macOS and arm64
         run: |
           GOOS=darwin GOARCH=arm64 go vet ./...
@@ -52,7 +61,10 @@ jobs:
       - name: iptables rules round trip (private netns)
         run: |
           go test -c -o /tmp/netsetup.test ./internal/netsetup/
-          PARKER_LIVE_IPTABLES=1 unshare -Urn /tmp/netsetup.test -test.run Live -test.v
+          PARKER_LIVE_IPTABLES=1 unshare -Urn /tmp/netsetup.test -test.run FirewallLive -test.v
+      - name: bridges and namespaces round trip (private netns)
+        run: |
+          PARKER_LIVE_NETNS=1 unshare -Urnm sh -c 'mount -t tmpfs tmpfs /run && mkdir -p /run/netns && /tmp/netsetup.test -test.run NetsetupLive -test.v'
       - run: make e2e
         env:
           PARKER_E2E_LOGS: /tmp/parker-e2e-logs
