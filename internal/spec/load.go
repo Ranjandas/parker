@@ -98,6 +98,27 @@ func (f *File) Validate() error {
 		if len(f.Consul.Datacenters) == 0 {
 			add("consul.datacenters: at least one datacenter is required")
 		}
+		if fed := f.Consul.Federation; fed != nil {
+			switch fed.Mode {
+			case "wan":
+				if len(f.Consul.Datacenters) < 2 {
+					add("consul.federation: needs at least two datacenters")
+				}
+			case "mesh-gateways":
+				add("consul.federation.mode: mesh-gateways is not implemented yet (#22); use wan")
+			default:
+				add("consul.federation.mode: must be wan")
+			}
+		}
+		primaries := 0
+		for _, dc := range f.Consul.Datacenters {
+			if dc != nil && dc.Primary != nil && *dc.Primary {
+				primaries++
+			}
+		}
+		if primaries > 1 {
+			add("consul.datacenters: only one datacenter can be primary: true")
+		}
 		for name, dc := range f.Consul.Datacenters {
 			p := "consul.datacenters." + name
 			if !nameRe.MatchString(name) {
@@ -150,6 +171,9 @@ func (f *File) Validate() error {
 		for net := range n.Networks {
 			// <dc>-lan networks are generated from consul.datacenters.
 			if dc, ok := strings.CutSuffix(net, "-lan"); ok && f.Consul != nil && f.Consul.Datacenters[dc] != nil {
+				continue
+			}
+			if net == "wan" && f.Consul.Federated() {
 				continue
 			}
 			if _, ok := f.Networks[net]; !ok {

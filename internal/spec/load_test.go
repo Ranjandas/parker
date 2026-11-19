@@ -187,3 +187,35 @@ func TestParseMembers(t *testing.T) {
 		t.Error("bad count accepted")
 	}
 }
+
+func TestValidateFederation(t *testing.T) {
+	base := func(mode string, dcs ...string) *File {
+		f := &File{Parker: SchemaVersion, Name: "x", Versions: map[string]string{"consul": "1.22.7"},
+			Consul: &Consul{Federation: &Federation{Mode: mode}, Datacenters: map[string]*Datacenter{}}}
+		for _, d := range dcs {
+			f.Consul.Datacenters[d] = &Datacenter{Servers: Servers{Count: 1}}
+		}
+		return f
+	}
+	if err := base("wan", "dc1", "dc2").Validate(); err != nil {
+		t.Errorf("valid: %v", err)
+	}
+	for name, c := range map[string]struct {
+		f    *File
+		want string
+	}{
+		"one dc":        {base("wan", "dc1"), "needs at least two datacenters"},
+		"mesh gateways": {base("mesh-gateways", "dc1", "dc2"), "not implemented yet"},
+		"bad mode":      {base("carrier-pigeon", "dc1", "dc2"), "must be wan"},
+	} {
+		if err := c.f.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	two := base("wan", "dc1", "dc2")
+	yes := true
+	two.Consul.Datacenters["dc1"].Primary, two.Consul.Datacenters["dc2"].Primary = &yes, &yes
+	if err := two.Validate(); err == nil || !strings.Contains(err.Error(), "only one datacenter can be primary") {
+		t.Errorf("two primaries: %v", err)
+	}
+}
