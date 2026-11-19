@@ -1,5 +1,12 @@
 # Parker
 
+**Consul repros at probe speed.**
+
+Parker is named after the Parker Solar Probe, the fastest object humans have
+ever built. Speed is the point: a Consul topology should go from a few lines
+of YAML to a running cluster in seconds (a 3-server datacenter is up in
+about 6s), so reproducing an issue costs less than describing it.
+
 Parker reproduces Consul issues fast with Linux network namespaces: no
 containers, no images. A YAML file describes the architecture; Parker wires
 namespaces (one bridge per network, one veth per node), renders Consul agent
@@ -25,7 +32,7 @@ $ sudo parker exec examples/minimal.yaml dc1/server-2 -- consul members
 $ sudo parker down examples/minimal.yaml
 ```
 
-Status: **prototype**. Schema is `v1alpha1`, see the schema design doc (v0.2).
+Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/schema-design.md) (v0.2).
 
 ## Commands
 

@@ -1,5 +1,6 @@
 // Command parker reproduces Consul topologies fast with Linux network
-// namespaces: no containers, no images.
+// namespaces: no containers, no images. Named after the Parker Solar Probe,
+// the fastest human-made object, because speed is the project's main goal.
 package main
 
 import (
@@ -32,7 +33,10 @@ var varFlags []string
 func main() {
 	root := &cobra.Command{
 		Use:           "parker",
-		Short:         "Reproduce Consul topologies fast with Linux network namespaces",
+		Short:         "Consul repros at probe speed: Linux network namespaces, no containers",
+		Long: "Parker builds Consul topologies from a YAML file in seconds, using Linux network\n" +
+			"namespaces instead of containers. It is named after the Parker Solar Probe, the\n" +
+			"fastest human-made object, because speed is the point.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
