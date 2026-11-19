@@ -46,6 +46,10 @@ service ParkerService {
 
   // Shutdown stops the daemon. Labs keep running.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
+  // Run plays a scenario of a running lab, streaming its progress. A
+  // failed step ends the stream with FAILED_PRECONDITION.
+  rpc Run(RunRequest) returns (stream LogLine);
 }
 
 message VersionRequest {}
@@ -194,4 +198,10 @@ message DialResponse {
 
 message DialOpened {
   string remote = 1; // resolved ip:port
+}
+
+message RunRequest {
+  string lab = 1;
+  // Name under scenarios:, or empty for scenario:.
+  string scenario = 2;
 }

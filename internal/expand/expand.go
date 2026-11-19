@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -14,6 +15,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/Ranjandas/parker/internal/scenario"
+	"github.com/Ranjandas/parker/internal/selector"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -131,7 +134,37 @@ func Expand(in *spec.File) (*spec.File, error) {
 	if err := out.Validate(); err != nil {
 		return nil, fmt.Errorf("expanded topology: %w", err)
 	}
+	out.Scenario, out.Scenarios = in.Scenario, in.Scenarios
+	if err := checkScenarios(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// checkScenarios validates each scenario and its selectors against the
+// expanded nodes (raft roles are only known when it runs).
+func checkScenarios(low *spec.File) error {
+	all := map[string]*spec.Scenario{}
+	if low.Scenario != nil {
+		all["scenario"] = low.Scenario
+	}
+	for n, sc := range low.Scenarios {
+		all["scenarios."+n] = sc
+	}
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(all)) {
+		sc := all[name]
+		if err := scenario.Validate(sc); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+		for _, sel := range scenario.Selectors(sc) {
+			if _, err := selector.Resolve(low, sel, nil); err != nil && !errors.Is(err, selector.ErrNoRaft) {
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {

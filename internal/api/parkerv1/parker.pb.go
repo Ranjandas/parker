@@ -1583,6 +1583,59 @@ func (x *DialOpened) GetRemote() string {
 	return ""
 }
 
+type RunRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Lab   string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	// Name under scenarios:, or empty for scenario:.
+	Scenario      string `protobuf:"bytes,2,opt,name=scenario,proto3" json:"scenario,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunRequest) Reset() {
+	*x = RunRequest{}
+	mi := &file_parker_v1_parker_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunRequest) ProtoMessage() {}
+
+func (x *RunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunRequest.ProtoReflect.Descriptor instead.
+func (*RunRequest) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *RunRequest) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+func (x *RunRequest) GetScenario() string {
+	if x != nil {
+		return x.Scenario
+	}
+	return ""
+}
+
 var File_parker_v1_parker_proto protoreflect.FileDescriptor
 
 const file_parker_v1_parker_proto_rawDesc = "" +
@@ -1688,7 +1741,11 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x03msg\"$\n" +
 	"\n" +
 	"DialOpened\x12\x16\n" +
-	"\x06remote\x18\x01 \x01(\tR\x06remote2\xf8\x04\n" +
+	"\x06remote\x18\x01 \x01(\tR\x06remote\":\n" +
+	"\n" +
+	"RunRequest\x12\x10\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
+	"\bscenario\x18\x02 \x01(\tR\bscenario2\xac\x05\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +
@@ -1699,7 +1756,8 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x04Logs\x12\x16.parker.v1.LogsRequest\x1a\x13.parker.v1.LogChunk0\x01\x12;\n" +
 	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12;\n" +
 	"\x04Dial\x12\x16.parker.v1.DialRequest\x1a\x17.parker.v1.DialResponse(\x010\x01\x12C\n" +
-	"\bShutdown\x12\x1a.parker.v1.ShutdownRequest\x1a\x1b.parker.v1.ShutdownResponseB<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
+	"\bShutdown\x12\x1a.parker.v1.ShutdownRequest\x1a\x1b.parker.v1.ShutdownResponse\x122\n" +
+	"\x03Run\x12\x15.parker.v1.RunRequest\x1a\x12.parker.v1.LogLine0\x01B<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
 
 var (
 	file_parker_v1_parker_proto_rawDescOnce sync.Once
@@ -1713,7 +1771,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -1741,6 +1799,7 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*DialOpen)(nil),         // 23: parker.v1.DialOpen
 	(*DialResponse)(nil),     // 24: parker.v1.DialResponse
 	(*DialOpened)(nil),       // 25: parker.v1.DialOpened
+	(*RunRequest)(nil),       // 26: parker.v1.RunRequest
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
@@ -1761,18 +1820,20 @@ var file_parker_v1_parker_proto_depIdxs = []int32{
 	18, // 15: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
 	22, // 16: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
 	16, // 17: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	1,  // 18: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 19: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 20: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 21: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 22: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 23: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	15, // 24: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	21, // 25: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	24, // 26: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	17, // 27: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
+	26, // 18: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	1,  // 19: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 20: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 21: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 22: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 23: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 24: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	15, // 25: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	21, // 26: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	24, // 27: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	17, // 28: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 29: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	19, // [19:30] is the sub-list for method output_type
+	8,  // [8:19] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1809,7 +1870,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

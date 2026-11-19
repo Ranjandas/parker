@@ -445,3 +445,39 @@ func TestNodeLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestScenarioCarriedAndChecked(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/scenario.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if low.Scenario == nil || len(low.Scenario.Steps) != 6 || low.Scenarios["wrong-peers"] == nil {
+		t.Fatalf("scenarios not carried: %+v", low.Scenario)
+	}
+	if got := low.Scenario.Steps[1].Exec.Run; !reflect.DeepEqual(got, spec.Script{"sh", "-c", "consul operator raft list-peers"}) {
+		t.Errorf("exec run %q", got)
+	}
+	// The saved topology reads back the same (Script marshals as a string).
+	b, _ := yaml.Marshal(low)
+	if !strings.Contains(string(b), `run: consul operator raft list-peers`) {
+		t.Errorf("script not marshalled as a string:\n%s", b)
+	}
+	p := filepath.Join(t.TempDir(), "low.yaml")
+	os.WriteFile(p, b, 0o644)
+	again, err := Expand(load(t, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Scenario, low.Scenario) {
+		t.Error("scenario changed in the round trip")
+	}
+
+	f := load(t, "../../examples/scenario.yaml")
+	f.Scenario.Steps[1].Exec.On = "dc1/nope"
+	f.Scenarios["wrong-peers"].Steps[0].Assert.Within = "soon"
+	_, err = Expand(f)
+	if err == nil || !strings.Contains(err.Error(), `scenario: selector "dc1/nope" matches no nodes`) ||
+		!strings.Contains(err.Error(), "scenarios.wrong-peers: step 1: assert.within") {
+		t.Errorf("err %v", err)
+	}
+}

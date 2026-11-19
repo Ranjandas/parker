@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/rootless"
+	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
@@ -452,4 +455,63 @@ func Client(socket string) parkerv1connect.ParkerServiceClient {
 		},
 	}
 	return parkerv1connect.NewParkerServiceClient(&http.Client{Transport: tr}, "http://parker", connect.WithGRPC())
+}
+
+// Run plays a scenario from the lab's saved topology.
+func (s *Server) Run(ctx context.Context, req *connect.Request[parkerv1.RunRequest], stream *connect.ServerStream[parkerv1.LogLine]) error {
+	name := req.Msg.Lab
+	low, err := lab.LoadTopology(name)
+	if err != nil {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("lab %q is not running: %w", name, err))
+	}
+	sc, err := pickScenario(low, req.Msg.Scenario)
+	if err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	w := streamWriter(stream)
+	defer w.Flush()
+	runErr := scenario.Run(ctx, sc, &lab.ScenarioLab{Low: low, Handle: s.handle(name)}, nil, w)
+	if runErr == nil {
+		return nil
+	}
+	if sc.OnFailure == "teardown" {
+		fmt.Fprintf(w, "on_failure: teardown\n")
+		l := s.labLock(name)
+		l.Lock()
+		s.stopSupervising(name)
+		if err := lab.Down(name, w); err != nil {
+			fmt.Fprintf(w, "down: %v\n", err)
+		}
+		l.Unlock()
+	} else {
+		fmt.Fprintf(w, "lab %s kept for a look (on_failure: keep)\n", name)
+	}
+	return connect.NewError(connect.CodeFailedPrecondition, runErr)
+}
+
+// pickScenario is scenarios.<name>, or scenario: when name is empty.
+func pickScenario(low *spec.File, name string) (*spec.Scenario, error) {
+	if name == "" {
+		if low.Scenario != nil {
+			return low.Scenario, nil
+		}
+		if len(low.Scenarios) == 1 {
+			for _, sc := range low.Scenarios {
+				return sc, nil
+			}
+		}
+		if len(low.Scenarios) > 1 {
+			return nil, fmt.Errorf("lab %s has several scenarios; name one of: %s", low.Name, strings.Join(slices.Sorted(maps.Keys(low.Scenarios)), ", "))
+		}
+		return nil, fmt.Errorf("lab %s has no scenario", low.Name)
+	}
+	sc, ok := low.Scenarios[name]
+	if !ok {
+		have := slices.Sorted(maps.Keys(low.Scenarios))
+		if len(have) == 0 {
+			return nil, fmt.Errorf("lab %s has no scenarios: section", low.Name)
+		}
+		return nil, fmt.Errorf("no scenario %q (have: %s)", name, strings.Join(have, ", "))
+	}
+	return sc, nil
 }

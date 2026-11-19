@@ -39,6 +39,81 @@ type File struct {
 	// Nodes are low-level network namespaces running arbitrary processes,
 	// keyed by name. They may join generated <dc>-lan networks.
 	Nodes map[string]*RawNode `yaml:"nodes,omitempty"`
+
+	// Scenario is the steps `parker run FILE` plays against the lab.
+	Scenario *Scenario `yaml:"scenario,omitempty"`
+	// Scenarios are named ones: `parker run FILE NAME`.
+	Scenarios map[string]*Scenario `yaml:"scenarios,omitempty"`
+}
+
+// ---------------------------------------------------------------- scenario
+
+type Scenario struct {
+	// Steps run in order; a failing step ends the scenario.
+	Steps []*Step `yaml:"steps"`
+	// OnFailure: keep (default) leaves the lab running for a look, teardown
+	// takes it down.
+	OnFailure string `yaml:"on_failure,omitempty" jsonschema:"enum=keep,enum=teardown"`
+}
+
+// Step is one action, optionally delayed with at:.
+type Step struct {
+	// At delays the step: +30s after the previous step finished, or T+30s
+	// after the scenario started.
+	At string `yaml:"at,omitempty" jsonschema:"pattern=^T?\\+[0-9].*$"`
+	// Name labels the step in the output.
+	Name string `yaml:"name,omitempty"`
+
+	// Wait for nodes to be ready: "dc1 ready", or any selector.
+	Wait string `yaml:"wait,omitempty"`
+	// Sleep for a duration, e.g. 10s.
+	Sleep string `yaml:"sleep,omitempty"`
+	// Exec runs a command on one or more nodes; a non-zero exit fails the
+	// step unless allow_failure is set.
+	Exec *ExecStep `yaml:"exec,omitempty"`
+	// Assert checks a condition, retried until within: runs out.
+	Assert *Assert `yaml:"assert,omitempty"`
+	// Snapshot copies state aside for later: logs.
+	Snapshot string `yaml:"snapshot,omitempty" jsonschema:"enum=logs"`
+}
+
+type ExecStep struct {
+	// On is a selector; the command runs on every node it matches.
+	On string `yaml:"on"`
+	// Run is the command: a string runs with sh -c (pipes and quotes
+	// work), a list runs as is.
+	Run Script `yaml:"run"`
+	// AllowFailure keeps going when the command exits non-zero.
+	AllowFailure bool `yaml:"allow_failure,omitempty"`
+}
+
+type Assert struct {
+	// Consul checks the cluster through the dc's servers.
+	Consul *ConsulAssert `yaml:"consul,omitempty"`
+	// Exec passes when the command exits 0 (and its output contains
+	// output:, if set).
+	Exec *ExecAssert `yaml:"exec,omitempty"`
+	// Within is how long to keep retrying, e.g. 20s; default once.
+	Within string `yaml:"within,omitempty"`
+}
+
+type ConsulAssert struct {
+	// DC to check; default: the only datacenter.
+	DC string `yaml:"dc,omitempty"`
+	// Leader: the dc has a raft leader.
+	Leader bool `yaml:"leader,omitempty"`
+	// Members, e.g. ">=5": alive LAN members.
+	Members string `yaml:"members,omitempty"`
+	// Peers, e.g. ">=3": raft peers (voters and non-voters).
+	Peers string `yaml:"peers,omitempty"`
+	// ServiceHealthy: at least one instance of the service passes.
+	ServiceHealthy string `yaml:"service_healthy,omitempty"`
+}
+
+type ExecAssert struct {
+	On     string `yaml:"on"`
+	Run    Script `yaml:"run"`
+	Output string `yaml:"output,omitempty"`
 }
 
 // ---------------------------------------------------------------- consul
@@ -307,6 +382,30 @@ func (c *Command) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 	*c = l
 	return nil
+}
+
+// Script is a shell command line (run with sh -c) or an argv list.
+type Script []string
+
+func (c *Script) UnmarshalYAML(unmarshal func(any) error) error {
+	var s string
+	if err := unmarshal(&s); err == nil {
+		*c = []string{"sh", "-c", s}
+		return nil
+	}
+	var l []string
+	if err := unmarshal(&l); err != nil {
+		return fmt.Errorf("run: want a string or a list of strings")
+	}
+	*c = l
+	return nil
+}
+
+func (c Script) MarshalYAML() (any, error) {
+	if len(c) == 3 && c[0] == "sh" && c[1] == "-c" {
+		return c[2], nil
+	}
+	return []string(c), nil
 }
 
 // ParseMembers parses ">=N" / "N".

@@ -1,9 +1,12 @@
 package lab
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
+	"sync"
 
 	"context"
 	"encoding/json"
@@ -70,33 +73,77 @@ func roleFrom(hc *http.Client, base string, ips []string, token string) string {
 	return "follower"
 }
 
-// RaftLeader asks the dc's servers, in turn, for the raft leader and
-// returns its node name.
-func RaftLeader(low *spec.File, dc string) (string, error) {
-	var last error = fmt.Errorf("%s has no servers", dc)
+// ServerClients returns an API client for each server of dc, by node
+// name, reaching it inside its netns with the lab's token and CA.
+func ServerClients(low *spec.File, dc string) (map[string]*api.Client, error) {
+	out := map[string]*api.Client{}
 	for _, n := range slices.Sorted(maps.Keys(low.Nodes)) {
 		if l := low.Nodes[n].Labels; l == nil || l.DC != dc || l.Role != "server" {
 			continue
 		}
 		dial := supervisor.DialerIn(netsetup.NetnsPath(low.Name, n))
 		hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
-		cc := AgentCheck(low, n)
-		cfg, err := supervisor.ConsulConfig(cc, hc, supervisor.NodeDir(RunDir(low.Name), n))
+		cfg, err := supervisor.ConsulConfig(AgentCheck(low, n), hc, supervisor.NodeDir(RunDir(low.Name), n))
 		if err != nil {
-			last = err
-			continue
+			return nil, err
 		}
 		c, err := api.NewClient(cfg)
 		if err != nil {
-			last = err
-			continue
+			return nil, err
 		}
-		addr, err := c.Status().Leader()
-		if err != nil {
-			last = fmt.Errorf("%s: %w", n, err)
-			continue
-		}
-		return selector.LeaderByAddr(low, dc, addr)
+		out[n] = c
 	}
-	return "", last
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s has no servers", dc)
+	}
+	return out, nil
+}
+
+// RaftLeader asks every server of dc for the raft leader and returns the
+// node most of them name: during a partition a cut-off server may still
+// report the old leader.
+func RaftLeader(low *spec.File, dc string) (string, error) {
+	clients, err := ServerClients(low, dc)
+	if err != nil {
+		return "", err
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	votes := map[string]int{}
+	var errs []error
+	for n, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addr, err := c.Status().Leader()
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", n, err))
+				return
+			}
+			if addr != "" {
+				votes[addr]++
+			}
+		}()
+	}
+	wg.Wait()
+	return pickLeader(low, dc, votes, errs)
+}
+
+func pickLeader(low *spec.File, dc string, votes map[string]int, errs []error) (string, error) {
+	best := ""
+	for _, addr := range slices.Sorted(maps.Keys(votes)) {
+		if best == "" || votes[addr] > votes[best] {
+			best = addr
+		}
+	}
+	if best == "" {
+		if len(errs) > 0 {
+			slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+			return "", fmt.Errorf("%s has no raft leader (%v)", dc, errors.Join(errs...))
+		}
+		return "", fmt.Errorf("%s has no raft leader", dc)
+	}
+	return selector.LeaderByAddr(low, dc, best)
 }
