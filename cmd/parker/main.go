@@ -32,8 +32,8 @@ var varFlags []string
 
 func main() {
 	root := &cobra.Command{
-		Use:           "parker",
-		Short:         "Consul repros at probe speed: Linux network namespaces, no containers",
+		Use:   "parker",
+		Short: "Consul repros at probe speed: Linux network namespaces, no containers",
 		Long: "Parker builds Consul topologies from a YAML file in seconds, using Linux network\n" +
 			"namespaces instead of containers. It is named after the Parker Solar Probe, the\n" +
 			"fastest human-made object, because speed is the point.",
