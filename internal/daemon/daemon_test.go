@@ -75,6 +75,13 @@ func TestServeOverSocket(t *testing.T) {
 	if _, err := c.Status(ctx, connect.NewRequest(&parkerv1.StatusRequest{Lab: "nope"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("want not found, got %v", err)
 	}
+	d, err := c.Describe(ctx, connect.NewRequest(&parkerv1.DescribeRequest{Lab: "t", Node: "b"}))
+	if err != nil || d.Msg.Node != "b" || !strings.Contains(d.Msg.Yaml, "extra:") {
+		t.Fatalf("describe %v err %v", d, err)
+	}
+	if _, err := c.Describe(ctx, connect.NewRequest(&parkerv1.DescribeRequest{Lab: "t", Node: "zz"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("describe unknown node: %v", err)
+	}
 	if err := Serve(ctx, ServeOptions{Socket: sock}, os.Stderr); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("second daemon: %v", err)
 	}

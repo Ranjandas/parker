@@ -201,3 +201,23 @@ func TestPrivHint(t *testing.T) {
 		t.Errorf("unrelated error changed: %v", other)
 	}
 }
+
+func TestDescribe(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("PARKER_RUN_DIR", base)
+	low := topo()
+	low.Nodes["box"].Files = map[string]string{"consul.json": "{\n  \"server\": false\n}\n"}
+	writeLab(t, base, low)
+	name, text, err := Describe("demo", "box")
+	if err != nil || name != "box" {
+		t.Fatalf("Describe = %q, %v", name, err)
+	}
+	for _, want := range []string{"box:", "10.77.0.20", "sleeper:", "consul.json: |", `"server": false`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if _, _, err := Describe("demo", "nope"); err == nil {
+		t.Error("unknown node")
+	}
+}

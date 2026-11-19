@@ -32,6 +32,8 @@ $P status "$F"
 first=$($P status "$F" | awk 'NR==3 {print $1}')
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
+echo "--- describe"
+$P describe "$F" "$first" | grep "consul.json" >/dev/null && echo ok
 echo "--- logs"
 $P logs "$F" "$first" -n 3
 echo "--- re-up is idempotent"
