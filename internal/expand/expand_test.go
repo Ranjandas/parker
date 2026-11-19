@@ -2,11 +2,16 @@ package expand
 
 import (
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -286,5 +291,99 @@ func TestPrimaryPerDCWithoutFederation(t *testing.T) {
 	}
 	if p := agentConfig(t, low.Nodes["dc2-server-1"])["primary_datacenter"]; p != "dc2" {
 		t.Errorf("primary_datacenter %v", p)
+	}
+}
+
+func TestTLS(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/tls.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := low.Nodes["dc1-server-2"]
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(srv.Files[CAFile])) {
+		t.Fatal("no CA in server files")
+	}
+	block, _ := pem.Decode([]byte(srv.Files[CertFile]))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"server.dc1.consul", "localhost", "server-2.dc1.tls.parker", "dc1-server-2.tls.parker"} {
+		if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, DNSName: name}); err != nil {
+			t.Errorf("verify %s: %v", name, err)
+		}
+	}
+	for _, ip := range []string{"127.0.0.1", "10.1.0.11"} {
+		if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, DNSName: ip}); err != nil {
+			t.Errorf("verify %s: %v", ip, err)
+		}
+	}
+	if _, err := tlsKeyPair(srv); err != nil {
+		t.Errorf("server key pair: %v", err)
+	}
+	if low.Nodes["dc1-server-1"].Files[CAFile] != srv.Files[CAFile] {
+		t.Error("one CA per lab")
+	}
+
+	cfg := agentConfig(t, srv)
+	if p := cfg["ports"].(map[string]any); p["http"] != -1.0 || p["https"] != float64(HTTPSPort) {
+		t.Errorf("server ports: %v", p)
+	}
+	if cfg["auto_encrypt"].(map[string]any)["allow_tls"] != true {
+		t.Error("servers allow auto_encrypt")
+	}
+	if cfg["connect"].(map[string]any)["ca_config"].(map[string]any)["root_cert"] != srv.Files[CAFile] {
+		t.Error("lab CA is the Connect root")
+	}
+	if r := srv.Processes["consul"].ReadyWhen.Consul; r.CAFile != CAFile {
+		t.Errorf("server check: %+v", r)
+	}
+
+	web := low.Nodes["dc1-web"]
+	if _, ok := web.Files[CertKeyFile]; ok {
+		t.Error("clients get their certificate through auto_encrypt, not files")
+	}
+	ccfg := agentConfig(t, web)
+	if ccfg["auto_encrypt"].(map[string]any)["tls"] != true {
+		t.Error("client auto_encrypt")
+	}
+	for _, p := range []string{"consul", "web"} {
+		if r := web.Processes[p].ReadyWhen.Consul; r == nil || r.CAFile != CAFile || r.Token == "" {
+			t.Errorf("%s check: %+v", p, r)
+		}
+	}
+	env := low.Nodes["dc1-server-1"].Processes[ACLSetup].Env
+	if env["CONSUL_HTTP_ADDR"] != "https://127.0.0.1:8501" || env["CONSUL_CACERT"] != VarNodeDir+"/"+CAFile {
+		t.Errorf("acl-setup env: %v", env)
+	}
+}
+
+func tlsKeyPair(n *spec.RawNode) (tls.Certificate, error) {
+	return tls.X509KeyPair([]byte(n.Files[CertFile]), []byte(n.Files[CertKeyFile]))
+}
+
+func TestTLSFederated(t *testing.T) {
+	on, off := true, false
+	f := load(t, "../../examples/federation.yaml")
+	f.Consul.Defaults = &spec.Inheritable{TLS: &on}
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(low.Nodes["dc2-server-1"].Files[CertFile]))
+	cert, _ := x509.ParseCertificate(block.Bytes)
+	if !slices.ContainsFunc(cert.IPAddresses, func(ip net.IP) bool { return ip.String() == "10.255.0.30" }) {
+		t.Errorf("wan IP missing from SANs: %v", cert.IPAddresses)
+	}
+	if !slices.Contains(cert.DNSNames, "server.dc2.consul") {
+		t.Errorf("SANs: %v", cert.DNSNames)
+	}
+
+	f = load(t, "../../examples/federation.yaml")
+	f.Consul.Defaults = &spec.Inheritable{TLS: &on}
+	f.Consul.Datacenters["dc2"].TLS = &off
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "all have tls on or all off") {
+		t.Errorf("mixed tls: %v", err)
 	}
 }

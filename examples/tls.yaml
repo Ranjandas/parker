@@ -1,0 +1,15 @@
+# TLS everywhere plus ACLs: a per-lab CA signs the servers' certificates
+# and is Consul's Connect root, clients get theirs through auto_encrypt,
+# and agent APIs are HTTPS-only on 8501. `parker exec` sets
+# CONSUL_HTTP_ADDR, CONSUL_CACERT and CONSUL_HTTP_TOKEN.
+parker: v1alpha1
+name: tls
+versions: { consul: 1.22.7 }
+consul:
+  defaults: { acl: true, tls: true }
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          service: { port: 8080, run: fake-service }

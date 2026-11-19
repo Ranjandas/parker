@@ -8,15 +8,21 @@ import (
 	"time"
 
 	"github.com/Ranjandas/parker/internal/netsetup"
+	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
 
 // consulRole asks the Consul agent inside the node's netns whether it is
 // the raft leader, a follower or a client. "" when there's no answer.
-func consulRole(labName, node string, ips []string, token string) string {
+// cc says how to reach it (token, TLS).
+func consulRole(labName, node string, ips []string, cc *spec.ConsulCheck) string {
 	dial := supervisor.DialerIn(netsetup.NetnsPath(labName, node))
 	hc := &http.Client{Timeout: 700 * time.Millisecond, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
-	return roleFrom(hc, "http://127.0.0.1:8500", ips, token)
+	cfg, err := supervisor.ConsulConfig(cc, hc, supervisor.NodeDir(RunDir(labName), node))
+	if err != nil {
+		return ""
+	}
+	return roleFrom(cfg.HttpClient, cfg.Scheme+"://"+cfg.Address, ips, cc.Token)
 }
 
 // roleFrom asks the agent API at base; ips are the node's own addresses.
