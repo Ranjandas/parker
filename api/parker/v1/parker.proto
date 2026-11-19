@@ -35,6 +35,11 @@ service ParkerService {
   // HTTP/2 (bidi stream).
   rpc Exec(stream ExecRequest) returns (stream ExecResponse);
 
+  // Dial opens a TCP connection from the daemon to an address inside a
+  // running lab and relays bytes both ways. The first request must carry
+  // `open`. Used by `parker proxy` and `parker port-forward`.
+  rpc Dial(stream DialRequest) returns (stream DialResponse);
+
   // Shutdown stops the daemon. Labs keep running.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
@@ -147,4 +152,29 @@ message ExecResponse {
     bytes stderr = 2;
     int32 exit_code = 3; // last message
   }
+}
+
+message DialRequest {
+  oneof msg {
+    DialOpen open = 1;
+    bytes data = 2;
+  }
+}
+
+message DialOpen {
+  // host:port. host is an IP inside a lab network, or a node name:
+  // <node>.<lab>.parker, <node>.parker (if unique), or just <node> with lab set.
+  string address = 1;
+  string lab = 2; // optional scope for bare node names
+}
+
+message DialResponse {
+  oneof msg {
+    DialOpened opened = 1; // first message on success
+    bytes data = 2;
+  }
+}
+
+message DialOpened {
+  string remote = 1; // resolved ip:port
 }

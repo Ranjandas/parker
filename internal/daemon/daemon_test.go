@@ -152,3 +152,27 @@ func TestLineWriter(t *testing.T) {
 		t.Fatalf("%q", lines)
 	}
 }
+
+func TestResolveAddress(t *testing.T) {
+	fakeLab(t)
+	for in, want := range map[string]string{
+		"10.77.0.10:22":   "10.77.0.10:22",
+		"a.t.parker:8500": "10.77.0.10:8500",
+		"a.t:8500":        "10.77.0.10:8500",
+		"b.parker:80":     "10.77.0.11:80",
+		"B.T.PARKER.:80":  "10.77.0.11:80",
+	} {
+		got, err := ResolveAddress(in, "")
+		if err != nil || got != want {
+			t.Errorf("%s: got %q %v, want %s", in, got, err, want)
+		}
+	}
+	if got, err := ResolveAddress("a:1", "t"); err != nil || got != "10.77.0.10:1" {
+		t.Errorf("bare node with lab: %q %v", got, err)
+	}
+	for _, bad := range []string{"192.168.1.1:22", "127.0.0.1:8500", "zzz.t.parker:1", "a.other.parker:1"} {
+		if _, err := ResolveAddress(bad, ""); err == nil {
+			t.Errorf("%s: want refusal", bad)
+		}
+	}
+}

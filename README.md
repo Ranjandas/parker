@@ -51,6 +51,8 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`) and restarts; with no argument, list labs. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
+| `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker` or `server-1.dc1.<lab>.parker`; only lab addresses are reachable. |
+| `parker port-forward FILE\|LAB NODE [LOCAL:]PORT` | Forward a local port to a node's port. |
 | `parker daemon [stop\|status\|credentials]` | Run the daemon in the foreground (`--listen :7443` for remote clients), stop it (labs keep running), check it, or print what a remote client needs. |
 | `parker fetch FILE` | Download pinned binaries into the cache. |
 
@@ -117,6 +119,9 @@ laptop$ export PARKER_HOST=https://203.0.113.7:7443 PARKER_TOKEN=... PARKER_TLS_
 laptop$ parker up examples/minimal.yaml   # the file is read and expanded on the laptop
 laptop$ parker exec minimal dc1/server-1 -- consul members
 laptop$ parker logs minimal dc1-server-1 -f
+laptop$ parker proxy &                     # then browse the Consul UI on the VM's lab:
+laptop$ curl --proxy socks5h://127.0.0.1:1080 http://server-1.dc1.minimal.parker:8500/v1/status/leader
+laptop$ parker port-forward minimal dc1/server-1 8500   # http://127.0.0.1:8500/ui
 ```
 
 The TCP listener is off unless `--listen` is given, uses TLS 1.3 with a
@@ -143,8 +148,7 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   `ready_when: port | http | log | consul`, `restart`)
 
 Not yet: partitions, multiple dcs/federation, peering, gateways, Envoy,
-ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`, proxy
-mode to reach node IPs from the client (#6).
+ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`.
 
 ## Development
 

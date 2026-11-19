@@ -1207,6 +1207,268 @@ func (*ExecResponse_Stderr) isExecResponse_Msg() {}
 
 func (*ExecResponse_ExitCode) isExecResponse_Msg() {}
 
+type DialRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*DialRequest_Open
+	//	*DialRequest_Data
+	Msg           isDialRequest_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DialRequest) Reset() {
+	*x = DialRequest{}
+	mi := &file_parker_v1_parker_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DialRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DialRequest) ProtoMessage() {}
+
+func (x *DialRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DialRequest.ProtoReflect.Descriptor instead.
+func (*DialRequest) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *DialRequest) GetMsg() isDialRequest_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *DialRequest) GetOpen() *DialOpen {
+	if x != nil {
+		if x, ok := x.Msg.(*DialRequest_Open); ok {
+			return x.Open
+		}
+	}
+	return nil
+}
+
+func (x *DialRequest) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Msg.(*DialRequest_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+type isDialRequest_Msg interface {
+	isDialRequest_Msg()
+}
+
+type DialRequest_Open struct {
+	Open *DialOpen `protobuf:"bytes,1,opt,name=open,proto3,oneof"`
+}
+
+type DialRequest_Data struct {
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+func (*DialRequest_Open) isDialRequest_Msg() {}
+
+func (*DialRequest_Data) isDialRequest_Msg() {}
+
+type DialOpen struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// host:port. host is an IP inside a lab network, or a node name:
+	// <node>.<lab>.parker, <node>.parker (if unique), or just <node> with lab set.
+	Address       string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Lab           string `protobuf:"bytes,2,opt,name=lab,proto3" json:"lab,omitempty"` // optional scope for bare node names
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DialOpen) Reset() {
+	*x = DialOpen{}
+	mi := &file_parker_v1_parker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DialOpen) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DialOpen) ProtoMessage() {}
+
+func (x *DialOpen) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DialOpen.ProtoReflect.Descriptor instead.
+func (*DialOpen) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *DialOpen) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *DialOpen) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+type DialResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*DialResponse_Opened
+	//	*DialResponse_Data
+	Msg           isDialResponse_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DialResponse) Reset() {
+	*x = DialResponse{}
+	mi := &file_parker_v1_parker_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DialResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DialResponse) ProtoMessage() {}
+
+func (x *DialResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DialResponse.ProtoReflect.Descriptor instead.
+func (*DialResponse) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DialResponse) GetMsg() isDialResponse_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *DialResponse) GetOpened() *DialOpened {
+	if x != nil {
+		if x, ok := x.Msg.(*DialResponse_Opened); ok {
+			return x.Opened
+		}
+	}
+	return nil
+}
+
+func (x *DialResponse) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Msg.(*DialResponse_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+type isDialResponse_Msg interface {
+	isDialResponse_Msg()
+}
+
+type DialResponse_Opened struct {
+	Opened *DialOpened `protobuf:"bytes,1,opt,name=opened,proto3,oneof"` // first message on success
+}
+
+type DialResponse_Data struct {
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+func (*DialResponse_Opened) isDialResponse_Msg() {}
+
+func (*DialResponse_Data) isDialResponse_Msg() {}
+
+type DialOpened struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Remote        string                 `protobuf:"bytes,1,opt,name=remote,proto3" json:"remote,omitempty"` // resolved ip:port
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DialOpened) Reset() {
+	*x = DialOpened{}
+	mi := &file_parker_v1_parker_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DialOpened) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DialOpened) ProtoMessage() {}
+
+func (x *DialOpened) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DialOpened.ProtoReflect.Descriptor instead.
+func (*DialOpened) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DialOpened) GetRemote() string {
+	if x != nil {
+		return x.Remote
+	}
+	return ""
+}
+
 var File_parker_v1_parker_proto protoreflect.FileDescriptor
 
 const file_parker_v1_parker_proto_rawDesc = "" +
@@ -1291,7 +1553,21 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x06stdout\x18\x01 \x01(\fH\x00R\x06stdout\x12\x18\n" +
 	"\x06stderr\x18\x02 \x01(\fH\x00R\x06stderr\x12\x1d\n" +
 	"\texit_code\x18\x03 \x01(\x05H\x00R\bexitCodeB\x05\n" +
-	"\x03msg2\xf6\x03\n" +
+	"\x03msg\"U\n" +
+	"\vDialRequest\x12)\n" +
+	"\x04open\x18\x01 \x01(\v2\x13.parker.v1.DialOpenH\x00R\x04open\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04dataB\x05\n" +
+	"\x03msg\"6\n" +
+	"\bDialOpen\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x10\n" +
+	"\x03lab\x18\x02 \x01(\tR\x03lab\"\\\n" +
+	"\fDialResponse\x12/\n" +
+	"\x06opened\x18\x01 \x01(\v2\x15.parker.v1.DialOpenedH\x00R\x06opened\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04dataB\x05\n" +
+	"\x03msg\"$\n" +
+	"\n" +
+	"DialOpened\x12\x16\n" +
+	"\x06remote\x18\x01 \x01(\tR\x06remote2\xb3\x04\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +
@@ -1299,7 +1575,8 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\bListLabs\x12\x1a.parker.v1.ListLabsRequest\x1a\x1b.parker.v1.ListLabsResponse\x12=\n" +
 	"\x06Status\x12\x18.parker.v1.StatusRequest\x1a\x19.parker.v1.StatusResponse\x125\n" +
 	"\x04Logs\x12\x16.parker.v1.LogsRequest\x1a\x13.parker.v1.LogChunk0\x01\x12;\n" +
-	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12C\n" +
+	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12;\n" +
+	"\x04Dial\x12\x16.parker.v1.DialRequest\x1a\x17.parker.v1.DialResponse(\x010\x01\x12C\n" +
 	"\bShutdown\x12\x1a.parker.v1.ShutdownRequest\x1a\x1b.parker.v1.ShutdownResponseB<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
 
 var (
@@ -1314,7 +1591,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -1336,6 +1613,10 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*ExecStart)(nil),        // 17: parker.v1.ExecStart
 	(*TermSize)(nil),         // 18: parker.v1.TermSize
 	(*ExecResponse)(nil),     // 19: parker.v1.ExecResponse
+	(*DialRequest)(nil),      // 20: parker.v1.DialRequest
+	(*DialOpen)(nil),         // 21: parker.v1.DialOpen
+	(*DialResponse)(nil),     // 22: parker.v1.DialResponse
+	(*DialOpened)(nil),       // 23: parker.v1.DialOpened
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
@@ -1344,27 +1625,31 @@ var file_parker_v1_parker_proto_depIdxs = []int32{
 	17, // 3: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
 	18, // 4: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
 	18, // 5: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
-	0,  // 6: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 7: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 8: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 9: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 10: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 11: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	16, // 12: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	14, // 13: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	1,  // 14: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 15: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 16: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 17: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 18: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 19: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	19, // 20: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	15, // 21: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	14, // [14:22] is the sub-list for method output_type
-	6,  // [6:14] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	21, // 6: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
+	23, // 7: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
+	0,  // 8: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 9: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 10: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 11: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 12: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 13: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	16, // 14: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	20, // 15: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	14, // 16: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	1,  // 17: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 18: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 19: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 20: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 21: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 22: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	19, // 23: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	22, // 24: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	15, // 25: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	17, // [17:26] is the sub-list for method output_type
+	8,  // [8:17] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -1384,13 +1669,21 @@ func file_parker_v1_parker_proto_init() {
 		(*ExecResponse_Stderr)(nil),
 		(*ExecResponse_ExitCode)(nil),
 	}
+	file_parker_v1_parker_proto_msgTypes[20].OneofWrappers = []any{
+		(*DialRequest_Open)(nil),
+		(*DialRequest_Data)(nil),
+	}
+	file_parker_v1_parker_proto_msgTypes[22].OneofWrappers = []any{
+		(*DialResponse_Opened)(nil),
+		(*DialResponse_Data)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
