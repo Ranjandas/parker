@@ -1,6 +1,10 @@
-# Parker
-
-**Consul repros at probe speed.**
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/parker-logo-dark.svg">
+    <img alt="Parker" src="docs/assets/logo/parker-logo-light.svg" width="320">
+  </picture>
+</p>
+<p align="center"><strong>Consul repros at probe speed.</strong></p>
 
 Parker is named after the Parker Solar Probe, the fastest object humans have
 ever built. Speed is the point: a Consul topology should go from a few lines
