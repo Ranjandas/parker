@@ -93,6 +93,23 @@ func TestExecEnv(t *testing.T) {
 	}
 }
 
+func TestExecEnvToken(t *testing.T) {
+	low := topo()
+	low.Versions = nil
+	if ManagementToken(low) != "" {
+		t.Fatal("token without ACLs")
+	}
+	for _, n := range low.Nodes {
+		for _, p := range n.Processes {
+			p.ReadyWhen = &spec.Ready{Consul: &spec.ConsulCheck{Leader: true, Token: "mgmt"}}
+		}
+	}
+	_, env := ExecEnv(low, "box", nil, nil)
+	if !slices.Contains(env, "CONSUL_HTTP_TOKEN=mgmt") {
+		t.Errorf("env %v", env)
+	}
+}
+
 func writeLab(t *testing.T, base string, low *spec.File) {
 	t.Helper()
 	dir := filepath.Join(base, low.Name)
@@ -179,12 +196,12 @@ func TestRoleFrom(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			if got := roleFrom(srv.Client(), srv.URL, c.ips); got != c.want {
+			if got := roleFrom(srv.Client(), srv.URL, c.ips, ""); got != c.want {
 				t.Errorf("role %q, want %q", got, c.want)
 			}
 		})
 	}
-	if got := roleFrom(http.DefaultClient, "http://127.0.0.1:1", nil); got != "" {
+	if got := roleFrom(http.DefaultClient, "http://127.0.0.1:1", nil, ""); got != "" {
 		t.Errorf("unreachable agent: %q", got)
 	}
 }
@@ -219,5 +236,22 @@ func TestDescribe(t *testing.T) {
 	}
 	if _, _, err := Describe("demo", "nope"); err == nil {
 		t.Error("unknown node")
+	}
+}
+
+func TestRoleFromSendsToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Consul-Token") != "mgmt" {
+			http.Error(w, "ACL not found", http.StatusForbidden)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Config": map[string]any{"Server": false}})
+	}))
+	defer srv.Close()
+	if got := roleFrom(srv.Client(), srv.URL, nil, "mgmt"); got != "client" {
+		t.Errorf("with token: %q", got)
+	}
+	if got := roleFrom(srv.Client(), srv.URL, nil, ""); got != "" {
+		t.Errorf("without token: %q", got)
 	}
 }
