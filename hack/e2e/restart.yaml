@@ -1,0 +1,13 @@
+# e2e: a raw node whose process has restart: always. The test kills it and
+# expects the daemon to start it again.
+parker: v1alpha1
+name: restart
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1: { servers: 1, subnet: 10.9.0.0/24 }
+nodes:
+  sleeper:
+    networks: { dc1-lan: { ip: 10.9.0.200 } }
+    processes:
+      sleep: { run: sleep 300, restart: always }

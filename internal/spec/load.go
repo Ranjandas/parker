@@ -141,6 +141,10 @@ func (f *File) Validate() error {
 			continue
 		}
 		for net := range n.Networks {
+			// <dc>-lan networks are generated from consul.datacenters.
+			if dc, ok := strings.CutSuffix(net, "-lan"); ok && f.Consul != nil && f.Consul.Datacenters[dc] != nil {
+				continue
+			}
 			if _, ok := f.Networks[net]; !ok {
 				add("nodes.%s.networks.%s: no such network", nn, net)
 			}
@@ -148,6 +152,11 @@ func (f *File) Validate() error {
 		for pn, p := range n.Processes {
 			if len(p.Run) == 0 {
 				add("nodes.%s.processes.%s.run: required", nn, pn)
+			}
+			switch p.Restart {
+			case "", "no", "on-failure", "always":
+			default:
+				add("nodes.%s.processes.%s.restart: must be no, on-failure or always", nn, pn)
 			}
 			for dep, d := range p.DependsOn {
 				dn, dp, ok := strings.Cut(dep, "/")

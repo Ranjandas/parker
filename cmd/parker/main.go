@@ -4,17 +4,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
@@ -23,9 +20,9 @@ import (
 	"github.com/Ranjandas/parker/internal/echo"
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
+	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
-	"github.com/Ranjandas/parker/internal/supervisor"
 )
 
 var varFlags []string
@@ -41,7 +38,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringArrayVar(&varFlags, "var", nil, "set a variable (name=value); repeatable")
-	root.AddCommand(upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), fetchCmd(), fakeServiceCmd())
+	root.AddCommand(upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -65,134 +62,7 @@ func load(path string) (*spec.File, *spec.File, error) {
 	return f, low, err
 }
 
-func runDir(lab string) string {
-	base := os.Getenv("PARKER_RUN_DIR")
-	if base == "" {
-		base = "/run/parker"
-	}
-	return filepath.Join(base, lab)
-}
-
 func say(format string, a ...any) { fmt.Printf(format+"\n", a...) }
-
-func upCmd() *cobra.Command {
-	var keepOnFail, noFirewall bool
-	c := &cobra.Command{
-		Use:   "up FILE",
-		Short: "Create the lab's network and start its processes; returns when everything is ready",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, low, err := load(args[0])
-			if err != nil {
-				return err
-			}
-			lab := low.Name
-			t0 := time.Now()
-			if err := netsetup.CheckSubnets(lab, low); err != nil {
-				return err
-			}
-			// Fetch before touching the network so a bad version fails fast.
-			for k, v := range low.Versions {
-				if needs(low, k) {
-					if _, err := fetch.Binary(k, v, os.Stdout); err != nil {
-						return err
-					}
-				}
-			}
-			if err := netsetup.Down(lab, func(f string, a ...any) { say("cleanup: "+f, a...) }); err != nil {
-				return privHint(err)
-			}
-			dir := runDir(lab)
-			if err := os.RemoveAll(dir); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return err
-			}
-			say("network: %d networks, %d nodes", len(low.Networks), len(low.Nodes))
-			if err := netsetup.Up(lab, low); err != nil {
-				_ = netsetup.Down(lab, func(string, ...any) {})
-				return privHint(err)
-			}
-			if err := allowForwarding(lab, low, noFirewall); err != nil {
-				_ = netsetup.Down(lab, func(string, ...any) {})
-				return err
-			}
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			_, err = supervisor.Run(ctx, low, supervisor.Options{Lab: lab, RunDir: dir, Log: os.Stdout})
-			if err != nil {
-				for _, h := range netsetup.FirewallHints() {
-					err = fmt.Errorf("%w\nhint: %s", err, h)
-				}
-				if !keepOnFail {
-					_ = netsetup.Down(lab, func(string, ...any) {})
-					return fmt.Errorf("%w\n(lab torn down; rerun with --keep-on-failure to inspect it)", err)
-				}
-				return fmt.Errorf("%w\n(lab left running; logs in %s; `parker down %s` to clean up)", err, dir, args[0])
-			}
-			say("\nlab %q is up in %s", lab, time.Since(t0).Round(100*time.Millisecond))
-			printNodes(low)
-			say("\nlogs:  %s/nodes/<node>/", dir)
-			say("shell: parker exec %s %s -- consul members", args[0], firstNode(low))
-			say("down:  parker down %s", args[0])
-			return nil
-		},
-	}
-	c.Flags().BoolVar(&keepOnFail, "keep-on-failure", false, "leave the lab running if a readiness check fails")
-	c.Flags().BoolVar(&noFirewall, "no-firewall", false, "don't add iptables ACCEPT rules for the lab bridges; print them instead")
-	return c
-}
-
-// allowForwarding lets lab traffic through a FORWARD chain that drops by
-// default (Docker does this), or prints the rules with --no-firewall.
-func allowForwarding(lab string, low *spec.File, dryRun bool) error {
-	fw := netsetup.SystemFirewall()
-	if fw == nil {
-		return nil
-	}
-	if dryRun {
-		st, err := fw.State()
-		if err != nil || !st.NeedsRules() {
-			return nil
-		}
-		say("firewall: FORWARD would drop lab traffic; not changing it (--no-firewall). Run:")
-		for _, a := range netsetup.RuleArgs(lab, st.Chain(), low) {
-			say("  sudo iptables %s", strings.Join(a, " "))
-		}
-		return nil
-	}
-	chain, err := fw.Allow(lab, low)
-	if err != nil {
-		return fmt.Errorf("firewall: %w\n(rerun with --no-firewall to skip and print the rules instead)", err)
-	}
-	if chain != "" {
-		say("firewall: allowed lab bridges in %s", chain)
-	}
-	return nil
-}
-
-func needs(f *spec.File, product string) bool {
-	for _, n := range f.Nodes {
-		for _, p := range n.Processes {
-			if len(p.Run) > 0 && p.Run[0] == product {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func printNodes(f *spec.File) {
-	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
-		n := f.Nodes[name]
-		var ips []string
-		for _, k := range slices.Sorted(maps.Keys(n.Networks)) {
-			ips = append(ips, n.Networks[k].IP)
-		}
-		say("  %-24s %-14s %s", name, strings.Join(ips, ","), strings.Join(slices.Sorted(maps.Keys(n.Processes)), ","))
-	}
-}
 
 func firstNode(f *spec.File) string {
 	ks := slices.Sorted(maps.Keys(f.Nodes))
@@ -200,13 +70,6 @@ func firstNode(f *spec.File) string {
 		return "NODE"
 	}
 	return ks[0]
-}
-
-func privHint(err error) error {
-	if os.Geteuid() != 0 && (os.IsPermission(err) || strings.Contains(err.Error(), "operation not permitted")) {
-		return fmt.Errorf("%w\nparker needs root (CAP_NET_ADMIN and CAP_SYS_ADMIN for named netns): try sudo", err)
-	}
-	return err
 }
 
 func labName(arg string) (string, error) {
@@ -218,25 +81,6 @@ func labName(arg string) (string, error) {
 		return f.Name, nil
 	}
 	return arg, nil
-}
-
-func downCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "down FILE|LAB",
-		Short: "Stop the lab's processes and delete its namespaces and links (idempotent)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			lab, err := labName(args[0])
-			if err != nil {
-				return err
-			}
-			if err := netsetup.Down(lab, func(f string, a ...any) { say(f, a...) }); err != nil {
-				return privHint(err)
-			}
-			say("lab %q is down (logs kept in %s)", lab, runDir(lab))
-			return nil
-		},
-	}
 }
 
 func expandCmd() *cobra.Command {
@@ -281,32 +125,6 @@ func validateCmd() *cobra.Command {
 	}
 }
 
-func statusCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "status FILE|LAB",
-		Short: "List the lab's namespaces",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			lab, err := labName(args[0])
-			if err != nil {
-				return err
-			}
-			ns, err := netsetup.Namespaces(lab)
-			if err != nil {
-				return err
-			}
-			if len(ns) == 0 {
-				say("lab %q is not running", lab)
-				return nil
-			}
-			for _, n := range ns {
-				say("%s", strings.TrimPrefix(n, netsetup.NetnsName(lab, "")))
-			}
-			return nil
-		},
-	}
-}
-
 func execCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "exec FILE NODE [-- COMMAND...]",
@@ -332,7 +150,7 @@ func execCmd() *cobra.Command {
 			}
 			path := os.Getenv("PATH")
 			for k, v := range low.Versions {
-				if needs(low, k) {
+				if lab.Needs(low, k) {
 					if b, err := fetch.Binary(k, v, os.Stderr); err == nil {
 						path = filepath.Dir(b) + ":" + path
 					}
@@ -349,7 +167,7 @@ func execCmd() *cobra.Command {
 				return fmt.Errorf("lab not running? %w", err)
 			}
 			if err := netns.Set(ns); err != nil {
-				return privHint(err)
+				return lab.PrivHint(err)
 			}
 			return syscall.Exec(bin, argv, env)
 		},

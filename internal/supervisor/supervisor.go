@@ -36,6 +36,9 @@ type Options struct {
 	Lab    string
 	RunDir string // the lab's run directory
 	Log    io.Writer
+	// Life bounds supervision after Run returns: restart policies apply
+	// until it is done or Handle.Stop is called. Nil means Background.
+	Life context.Context
 }
 
 type proc struct {
@@ -46,9 +49,71 @@ type proc struct {
 	deps   map[string]string // id -> condition
 	start  chan struct{}     // closed when started
 	ready  chan struct{}     // closed when ready
-	exited chan struct{}
-	pid    int
+	exited chan struct{}     // closed when the first run exits
 	err    error
+
+	mu       sync.Mutex
+	pid      int
+	alive    bool
+	isReady  bool
+	restarts int
+	logPath  string
+}
+
+// ProcInfo is a snapshot of one supervised process.
+type ProcInfo struct {
+	Node, Name string
+	Pid        int
+	Alive      bool
+	Ready      bool
+	Restarts   int
+	LogPath    string
+}
+
+// Handle supervises a lab's processes after Run returns.
+type Handle struct {
+	lab, runDir string
+	procs       map[string]*proc
+	stop        context.CancelFunc
+	life        context.Context
+	up          chan struct{} // closed when Run succeeded
+}
+
+// Stop ends supervision: no more restarts. Processes keep running; use
+// netsetup.Down to remove them.
+func (h *Handle) Stop() { h.stop() }
+
+// Snapshot returns every process's state, keyed by node/process.
+func (h *Handle) Snapshot() map[string]ProcInfo {
+	out := map[string]ProcInfo{}
+	for id, p := range h.procs {
+		p.mu.Lock()
+		out[id] = ProcInfo{Node: p.node, Name: p.name, Pid: p.pid, Alive: p.alive, Ready: p.isReady, Restarts: p.restarts, LogPath: p.logPath}
+		p.mu.Unlock()
+	}
+	return out
+}
+
+func (h *Handle) writeState() {
+	st := &State{Lab: h.lab, StartedAt: time.Now().UTC(), Pids: map[string]int{}}
+	for id, p := range h.Snapshot() {
+		if p.Pid > 0 {
+			st.Pids[id] = p.Pid
+		}
+	}
+	b, _ := json.MarshalIndent(st, "", "  ")
+	_ = os.WriteFile(filepath.Join(h.runDir, "state.json"), b, 0o644)
+}
+
+// ShouldRestart applies a restart policy to an exit.
+func ShouldRestart(policy string, exitErr error) bool {
+	switch policy {
+	case "always":
+		return true
+	case "on-failure":
+		return exitErr != nil
+	}
+	return false
 }
 
 // State is written to <run_dir>/state.json for status and humans.
@@ -61,8 +126,8 @@ type State struct {
 func NodeDir(runDir, node string) string { return filepath.Join(runDir, "nodes", node) }
 
 // Run starts everything and returns once all processes are ready, or the
-// first error.
-func Run(ctx context.Context, f *spec.File, o Options) (*State, error) {
+// first error. On error, supervision is already stopped.
+func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -118,6 +183,11 @@ func Run(ctx context.Context, f *spec.File, o Options) (*State, error) {
 	if err := checkCycles(procs); err != nil {
 		return nil, err
 	}
+	if o.Life == nil {
+		o.Life = context.Background()
+	}
+	life, stop := context.WithCancel(o.Life)
+	h := &Handle{lab: o.Lab, runDir: o.RunDir, procs: procs, stop: stop, life: life, up: make(chan struct{})}
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -134,30 +204,27 @@ func Run(ctx context.Context, f *spec.File, o Options) (*State, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := runOne(ctx, f, o, p, procs, bins, self, logf); err != nil {
+			if err := runOne(ctx, h, f, o, p, procs, bins, self, logf); err != nil {
 				p.err = err
 				cancel(fmt.Errorf("%s: %w", p.id, err))
 			}
 		}()
 	}
 	wg.Wait()
+	h.writeState()
 
-	st := &State{Lab: o.Lab, StartedAt: time.Now().UTC(), Pids: map[string]int{}}
-	for id, p := range procs {
-		if p.pid > 0 {
-			st.Pids[id] = p.pid
+	if cause := context.Cause(ctx); cause != nil {
+		stop()
+		if errors.Is(cause, context.Canceled) {
+			return h, ctx.Err()
 		}
+		return h, cause
 	}
-	b, _ := json.MarshalIndent(st, "", "  ")
-	_ = os.WriteFile(filepath.Join(o.RunDir, "state.json"), b, 0o644)
-
-	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
-		return st, cause
-	}
-	return st, ctx.Err()
+	close(h.up)
+	return h, nil
 }
 
-func runOne(ctx context.Context, f *spec.File, o Options, p *proc, procs map[string]*proc,
+func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, procs map[string]*proc,
 	bins map[string]string, self string, logf func(string, ...any)) error {
 
 	for _, d := range slices.Sorted(maps.Keys(p.deps)) {
@@ -183,43 +250,114 @@ func runOne(ctx context.Context, f *spec.File, o Options, p *proc, procs map[str
 	if key, ok := binaryKey(f, p.spec); ok {
 		argv[0] = bins[key]
 	}
-
-	logPath := filepath.Join(dir, p.name+".log")
-	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer lf.Close()
-
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.Stdout, cmd.Stderr = lf, lf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
 	for k, v := range p.spec.Env {
 		env = append(env, k+"="+vars.Replace(v))
 	}
-	cmd.Env = env
-
+	logPath := filepath.Join(dir, p.name+".log")
 	nsPath := netsetup.NetnsPath(o.Lab, p.node)
-	if err := startIn(nsPath, cmd); err != nil {
-		return fmt.Errorf("start: %w", err)
+	p.mu.Lock()
+	p.logPath = logPath
+	p.mu.Unlock()
+
+	// start forks one run of the process; the returned channel yields its
+	// exit error.
+	start := func() (<-chan error, error) {
+		lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = dir
+		cmd.Stdout, cmd.Stderr = lf, lf
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.Env = env
+		if err := startIn(nsPath, cmd); err != nil {
+			lf.Close()
+			return nil, fmt.Errorf("start: %w", err)
+		}
+		p.mu.Lock()
+		p.pid, p.alive = cmd.Process.Pid, true
+		p.mu.Unlock()
+		done := make(chan error, 1)
+		go func() {
+			err := cmd.Wait()
+			lf.Close()
+			p.mu.Lock()
+			p.alive, p.isReady = false, false
+			p.mu.Unlock()
+			done <- err
+		}()
+		return done, nil
 	}
-	p.pid = cmd.Process.Pid
+
+	done, err := start()
+	if err != nil {
+		return err
+	}
 	close(p.start)
 	logf("  started %-28s pid %d", p.id, p.pid)
 	go func() {
-		_ = cmd.Wait()
+		exitErr := <-done
 		close(p.exited)
+		h.supervise(p, exitErr, start, logf)
 	}()
 
 	t0 := time.Now()
 	if err := waitReady(ctx, p, nsPath, n, logPath); err != nil {
 		return fmt.Errorf("%w\n--- last lines of %s ---\n%s", err, logPath, tail(logPath, 15))
 	}
+	p.mu.Lock()
+	p.isReady = true
+	p.mu.Unlock()
 	close(p.ready)
 	logf("  ready   %-28s %s", p.id, time.Since(t0).Round(100*time.Millisecond))
 	return nil
+}
+
+// supervise applies the restart policy after each exit, once the lab is up
+// and until supervision stops. Restarts back off from 1s to 30s; a run that
+// lasted a minute resets the backoff. Restarted processes count as ready
+// once running (readiness checks run only during up).
+func (h *Handle) supervise(p *proc, exitErr error, start func() (<-chan error, error), logf func(string, ...any)) {
+	select {
+	case <-h.up:
+	case <-h.life.Done():
+		return
+	}
+	backoff := time.Second
+	for {
+		if !ShouldRestart(p.spec.Restart, exitErr) {
+			return
+		}
+		select {
+		case <-h.life.Done():
+			return
+		case <-time.After(backoff):
+		}
+		t0 := time.Now()
+		done, err := start()
+		if err != nil {
+			exitErr = err
+			backoff = min(backoff*2, 30*time.Second)
+			continue
+		}
+		p.mu.Lock()
+		p.restarts++
+		p.isReady = true
+		p.mu.Unlock()
+		h.writeState()
+		select {
+		case exitErr = <-done:
+		case <-h.life.Done():
+			return
+		}
+		if time.Since(t0) > time.Minute {
+			backoff = time.Second
+		} else {
+			backoff = min(backoff*2, 30*time.Second)
+		}
+	}
 }
 
 func waitReady(ctx context.Context, p *proc, nsPath string, n *spec.RawNode, logPath string) error {

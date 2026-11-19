@@ -3,11 +3,14 @@ module github.com/Ranjandas/parker
 go 1.27.4
 
 require (
+	connectrpc.com/connect v1.21.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/hashicorp/consul/api v1.35.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
+	golang.org/x/sys v0.48.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -29,5 +32,4 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
-	golang.org/x/sys v0.48.0 // indirect
 )

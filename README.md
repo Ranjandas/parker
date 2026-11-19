@@ -44,12 +44,14 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 
 | Command | What it does |
 |---|---|
-| `parker up FILE` | Clean up any previous run, create the network, start everything, return when all readiness checks pass. Processes keep running after it returns. On failure, prints the failing log tail and tears down (`--keep-on-failure` to inspect). Refuses subnets that clash with the host. If the FORWARD chain drops by default (Docker), adds labelled ACCEPT rules for the lab bridges (`--no-firewall` prints them instead). |
-| `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces, labelled links and firewall rules. Idempotent, needs no state file. Logs are kept. |
+| `parker up FILE` | Clean up any previous run, create the network, start everything, return when all readiness checks pass. Runs through `parker daemon` (started in the background if needed), which keeps supervising the processes afterwards; `--no-daemon` runs it in-process. On failure, prints the failing log tail and tears down (`--keep-on-failure` to inspect). Refuses subnets that clash with the host. If the FORWARD chain drops by default (Docker), adds labelled ACCEPT rules for the lab bridges (`--no-firewall` prints them instead). |
+| `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces, labelled links and firewall rules. Idempotent, needs no state file and works without the daemon. Logs are kept. |
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
 | `parker validate FILE` | Structural (unknown keys with line numbers) and semantic checks. |
 | `parker exec FILE NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. |
-| `parker status FILE\|LAB` | List the lab's namespaces. |
+| `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`) and restarts; with no argument, list labs. |
+| `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
+| `parker daemon [stop\|status]` | Run the daemon in the foreground, stop it (labs keep running), or check it. |
 | `parker fetch FILE` | Download pinned binaries into the cache. |
 
 `--var name=value` sets `${vars.name}`.
@@ -81,8 +83,26 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
    user's cache under sudo). `versions.consul: path:/abs/consul` uses a local
    build; `servers.overrides.server-3.version` gives mixed-version clusters.
 
+6. **Daemon** (`internal/daemon`, API in `api/parker/v1/parker.proto`):
+   `parker daemon` serves the Parker API with ConnectRPC on
+   `/run/parker/parker.sock` (mode 0600), so the same service speaks gRPC
+   and plain HTTP/JSON:
+   ```console
+   $ sudo curl --unix-socket /run/parker/parker.sock -H 'Content-Type: application/json' \
+       -d '{"lab":"minimal"}' http://parker/parker.v1.ParkerService/Status
+   ```
+   The CLI expands the file locally and sends the low-level topology, so
+   relative paths resolve on the client. The daemon is the parent of the
+   lab's processes: it reaps them and applies `restart: no | on-failure |
+   always` (backoff 1s to 30s) once the lab is up. Lab state still comes
+   from namespaces, link aliases and `state.json`, so stopping or
+   restarting the daemon never loses a lab; a new daemon reports such labs
+   as not supervised until the next `up`.
+
 Run directory: `/run/parker/<lab>/` (`PARKER_RUN_DIR` to change), with
-`nodes/<node>/{consul.json,consul.log,data/}` and `state.json`.
+`topology.yaml` (expanded), `nodes/<node>/{consul.json,consul.log,data/}`
+and `state.json`. The daemon's socket and `daemon.log` live in
+`/run/parker/`.
 
 ## Supported so far
 
@@ -94,11 +114,11 @@ Run directory: `/run/parker/<lab>/` (`PARKER_RUN_DIR` to change), with
   `register` passthrough), `processes:`
 - `run: fake-service`: built-in echo HTTP server (`parker fake-service`)
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
-  `ready_when: port | http | log | consul`)
+  `ready_when: port | http | log | consul`, `restart`)
 
 Not yet: partitions, multiple dcs/federation, peering, gateways, Envoy,
-ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`, restart
-policies (there is no resident supervisor), UI forwarding to localhost.
+ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`, remote
+clients and proxy mode (#5, #6).
 
 ## Development
 
@@ -108,6 +128,7 @@ Needs Go 1.27+ and Linux.
 $ go build -o bin/parker ./cmd/parker
 $ go test ./...
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
+$ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
 ```
 
 `hack/rootless-e2e.sh` runs a full `up` / `exec` / `down` inside
