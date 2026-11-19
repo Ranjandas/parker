@@ -327,14 +327,22 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   Connect on, registers a sidecar and runs `consul connect envoy` for it
   (needs `versions.envoy`). `upstreams: { api: 9091 }` binds an upstream
   on `127.0.0.1:9091`; the long form takes `{port, dc, peer, partition,
-  namespace}` (see `examples/mesh.yaml`). Transparent proxy is not yet.
+  namespace}` (see `examples/mesh.yaml`).
+- `connect: tproxy`: a transparent proxy (one per node). Parker redirects
+  the node's TCP through Envoy with iptables and its DNS to the local
+  agent, so `curl http://api.virtual.consul:9090/` works from `parker
+  exec` with no upstreams declared (see `examples/tproxy.yaml`). Envoy's
+  own traffic is told apart by a socket mark, not a UID, so it works in
+  rootless labs. Inbound TCP to the node goes through Envoy too, except
+  Consul's ports, so `port-forward` to the app is refused like any
+  non-mesh caller.
 - Low-level `networks:` and `nodes:` (files, processes, `depends_on`,
   `ready_when: port | http | log | consul`, `restart`)
 
 - `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
   upgrades (see [Scenarios](#scenarios))
 
-Not yet: partitions, transparent proxy, mesh-gateway federation, peering,
+Not yet: partitions, mesh-gateway federation, peering,
 gateways, impairments, modules/overlays/`--set`.
 
 ## Development

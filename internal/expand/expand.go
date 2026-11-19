@@ -434,9 +434,15 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				}
 				var regs []any
 				sidecars := 0
+				transparentNode := false
+				for _, s := range services {
+					if mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, s).Connect == "tproxy" {
+						transparentNode = true
+					}
+				}
 				for _, svcName := range slices.Sorted(maps.Keys(services)) {
 					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
-					reg, proc := expandService(svcName, svc, check)
+					reg, proc := expandService(svcName, svc, check, SidecarPort+sidecars)
 					if acl {
 						reg["token"] = sec.agent // registers and syncs the service
 					}
@@ -444,8 +450,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if proc != nil {
 						rn.Processes[svcName] = proc
 					}
-					if svc.Connect == "sidecar" {
-						rn.Processes[svcName+SidecarSuffix] = sidecarProcess(svcName, key, SidecarAdminPort+sidecars, apiEnv(token, tls), tls)
+					if inMesh(svc) {
+						sc := sidecar{svc: svcName, key: key, admin: SidecarAdminPort + sidecars, port: SidecarPort + sidecars,
+							tls: tls, marked: transparentNode, transparent: svc.Connect == "tproxy"}
+						rn.Processes[svcName+SidecarSuffix] = sc.process(apiEnv(token, tls))
 						sidecars++
 					}
 				}
@@ -471,8 +479,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						cfg["services"] = regs
 					}
 					if acl {
+						tokens := map[string]any{"agent": sec.agent}
+						if transparentNode {
+							// The node's DNS goes to this agent, and lookups
+							// under default deny need a token.
+							tokens["dns"] = sec.agent
+						}
 						cfg["acl"] = map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true,
-							"tokens": map[string]any{"agent": sec.agent}}
+							"tokens": tokens}
 						cfg["encrypt"] = sec.gossip
 					}
 					if tls {
@@ -532,7 +546,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 
 // expandService returns the agent service registration and, when the
 // service has a run: command, the process that runs it.
-func expandService(name string, svc *spec.Service, agent spec.ConsulCheck) (map[string]any, *spec.Process) {
+func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidecarPort int) (map[string]any, *spec.Process) {
 	reg := map[string]any{"name": name}
 	if svc.Port > 0 {
 		reg["port"] = svc.Port
@@ -550,7 +564,7 @@ func expandService(name string, svc *spec.Service, agent spec.ConsulCheck) (map[
 	case "tcp":
 		reg["check"] = map[string]any{"tcp": fmt.Sprintf("127.0.0.1:%d", svc.Port), "interval": "2s"}
 	}
-	if svc.Connect == "sidecar" {
+	if inMesh(svc) {
 		var ups []any
 		for _, dest := range slices.Sorted(maps.Keys(svc.Upstreams)) {
 			u := svc.Upstreams[dest]
@@ -567,7 +581,11 @@ func expandService(name string, svc *spec.Service, agent spec.ConsulCheck) (map[
 		if len(ups) > 0 {
 			proxy["upstreams"] = ups
 		}
-		reg["connect"] = map[string]any{"sidecar_service": map[string]any{"proxy": proxy}}
+		if svc.Connect == "tproxy" {
+			proxy["mode"] = "transparent"
+			proxy["transparent_proxy"] = map[string]any{"outbound_listener_port": TproxyOutboundPort}
+		}
+		reg["connect"] = map[string]any{"sidecar_service": map[string]any{"port": sidecarPort, "proxy": proxy}}
 	}
 	deepMerge(reg, svc.Register)
 
@@ -769,14 +787,20 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 	return nil
 }
 
-// Mesh: a service with connect: sidecar gets a sidecar proxy registered
-// with it and an Envoy process, `consul connect envoy`, on its node.
+// Mesh: a service with connect: sidecar (or tproxy) gets a sidecar proxy
+// registered with it and an Envoy process, `consul connect envoy`, on its
+// node.
 const (
-	SidecarSuffix    = "-sidecar"
-	SidecarAdminPort = 19000 // Envoy admin of a node's first sidecar; then 19001, ...
-	GRPCPort         = 8502
-	GRPCTLSPort      = 8503
+	SidecarSuffix      = "-sidecar"
+	SidecarAdminPort   = 19000 // Envoy admin of a node's first sidecar; then 19001, ...
+	SidecarPort        = 21000 // public listener of a node's first sidecar; then 21001, ...
+	TproxyOutboundPort = 15001 // Envoy's outbound listener in transparent mode
+	SidecarCmd         = "sidecar"
+	GRPCPort           = 8502
+	GRPCTLSPort        = 8503
 )
+
+func inMesh(svc *spec.Service) bool { return svc.Connect == "sidecar" || svc.Connect == "tproxy" }
 
 // meshServices reports whether any service is in the mesh, and checks
 // their connect settings.
@@ -798,25 +822,28 @@ func meshServices(c *spec.Consul) (bool, error) {
 			if node.Service != nil {
 				services = map[string]*spec.Service{nodeName: node.Service}
 			}
+			transparent := ""
 			for _, svcName := range slices.Sorted(maps.Keys(services)) {
 				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
 				where := fmt.Sprintf("consul.datacenters.%s.nodes.%s: service %s", dcName, nodeName, svcName)
 				switch svc.Connect {
 				case "", "none":
 					if len(svc.Upstreams) > 0 {
-						errs = append(errs, fmt.Errorf("%s: upstreams need connect: sidecar", where))
+						errs = append(errs, fmt.Errorf("%s: upstreams need connect: sidecar or tproxy", where))
 					}
 					continue
 				case "sidecar":
 				case "tproxy":
-					errs = append(errs, fmt.Errorf("%s: connect: tproxy is not supported yet; use sidecar with upstreams", where))
-					continue
+					if transparent != "" {
+						errs = append(errs, fmt.Errorf("%s: connect: tproxy: the node already has one (%s); a node takes at most one transparent proxy", where, transparent))
+					}
+					transparent = svcName
 				default:
-					errs = append(errs, fmt.Errorf("%s: connect: want none or sidecar, got %q", where, svc.Connect))
+					errs = append(errs, fmt.Errorf("%s: connect: want none, sidecar or tproxy, got %q", where, svc.Connect))
 					continue
 				}
 				if node.Agent == "none" {
-					errs = append(errs, fmt.Errorf("%s: connect: sidecar needs a Consul agent on the node", where))
+					errs = append(errs, fmt.Errorf("%s: connect: %s needs a Consul agent on the node", where, svc.Connect))
 				}
 				mesh = true
 				ports := map[int]string{}
@@ -839,20 +866,42 @@ func meshServices(c *spec.Consul) (bool, error) {
 	return mesh, errors.Join(errs...)
 }
 
-// sidecarProcess runs Envoy for service svc on node key through consul
-// connect envoy, ready once Envoy's admin /ready answers.
-func sidecarProcess(svc, key string, admin int, env map[string]string, tls bool) *spec.Process {
+// sidecar is one Envoy on a node.
+type sidecar struct {
+	svc, key    string
+	admin, port int
+	tls         bool
+	// marked runs Envoy through `parker sidecar`, which marks its upstream
+	// sockets so a transparent proxy on the node lets them through;
+	// transparent also applies that proxy's iptables rules.
+	marked, transparent bool
+}
+
+// process runs Envoy for the service through consul connect envoy, ready
+// once Envoy's admin /ready answers.
+func (s sidecar) process(env map[string]string) *spec.Process {
 	env["CONSUL_GRPC_ADDR"] = fmt.Sprintf("127.0.0.1:%d", GRPCPort)
-	if tls {
+	if s.tls {
 		env["CONSUL_GRPC_ADDR"] = fmt.Sprintf("https://127.0.0.1:%d", GRPCTLSPort)
 	}
+	run := spec.Command{"consul", "connect", "envoy", "-sidecar-for", s.svc,
+		"-admin-bind", fmt.Sprintf("127.0.0.1:%d", s.admin), "--", "--log-level", "info"}
+	uses := []string{"envoy"}
+	if s.marked {
+		wrap := spec.Command{VarParker, SidecarCmd}
+		if s.transparent {
+			wrap = append(wrap, "--transparent", "--inbound-port", strconv.Itoa(s.port),
+				"--outbound-port", strconv.Itoa(TproxyOutboundPort))
+		}
+		run = append(append(wrap, "--"), run...)
+		uses = []string{"consul", "envoy"}
+	}
 	return &spec.Process{
-		Run: spec.Command{"consul", "connect", "envoy", "-sidecar-for", svc,
-			"-admin-bind", fmt.Sprintf("127.0.0.1:%d", admin), "--", "--log-level", "info"},
-		Uses:      []string{"envoy"},
+		Run:       run,
+		Uses:      uses,
 		Env:       env,
-		DependsOn: map[string]*spec.Dep{key + "/consul": {Condition: "ready"}},
-		ReadyWhen: &spec.Ready{HTTP: &spec.HTTPCheck{URL: fmt.Sprintf("http://127.0.0.1:%d/ready", admin)}, Timeout: "60s"},
+		DependsOn: map[string]*spec.Dep{s.key + "/consul": {Condition: "ready"}},
+		ReadyWhen: &spec.Ready{HTTP: &spec.HTTPCheck{URL: fmt.Sprintf("http://127.0.0.1:%d/ready", s.admin)}, Timeout: "60s"},
 		Restart:   "on-failure",
 	}
 }

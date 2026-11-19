@@ -26,7 +26,7 @@ func TestMeshSidecars(t *testing.T) {
 		t.Errorf("client ports = %v", p)
 	}
 	reg := cfg["services"].([]any)[0].(map[string]any)
-	want := map[string]any{"sidecar_service": map[string]any{"proxy": map[string]any{
+	want := map[string]any{"sidecar_service": map[string]any{"port": float64(SidecarPort), "proxy": map[string]any{
 		"upstreams": []any{map[string]any{"destination_name": "api", "local_bind_port": float64(9091)}},
 	}}}
 	if !reflect.DeepEqual(reg["connect"], want) {
@@ -34,7 +34,7 @@ func TestMeshSidecars(t *testing.T) {
 	}
 	// api has a sidecar but no upstreams.
 	apiReg := agentConfig(t, low.Nodes["dc1-api"])["services"].([]any)[0].(map[string]any)
-	if !reflect.DeepEqual(apiReg["connect"], map[string]any{"sidecar_service": map[string]any{"proxy": map[string]any{}}}) {
+	if !reflect.DeepEqual(apiReg["connect"], map[string]any{"sidecar_service": map[string]any{"port": float64(SidecarPort), "proxy": map[string]any{}}}) {
 		t.Errorf("api connect = %v", apiReg["connect"])
 	}
 
@@ -97,12 +97,16 @@ func TestMeshErrors(t *testing.T) {
 		want string
 	}{
 		{"no envoy", func(f *spec.File) { delete(f.Versions, "envoy") }, "connect: sidecar needs versions.envoy"},
-		{"tproxy", func(f *spec.File) { f.Consul.Datacenters["dc1"].Nodes["api"].Service.Connect = "tproxy" }, "service api: connect: tproxy is not supported yet"},
-		{"bogus", func(f *spec.File) { f.Consul.Datacenters["dc1"].Nodes["api"].Service.Connect = "yes" }, `want none or sidecar, got "yes"`},
+		{"two tproxies", func(f *spec.File) {
+			n := f.Consul.Datacenters["dc1"].Nodes["api"]
+			n.Services = map[string]*spec.Service{"a": {Port: 1, Connect: "tproxy"}, "b": {Port: 2, Connect: "tproxy"}}
+			n.Service = nil
+		}, "service b: connect: tproxy: the node already has one (a)"},
+		{"bogus", func(f *spec.File) { f.Consul.Datacenters["dc1"].Nodes["api"].Service.Connect = "yes" }, `want none, sidecar or tproxy, got "yes"`},
 		{"upstreams without connect", func(f *spec.File) {
 			s := f.Consul.Datacenters["dc1"].Nodes["web"].Service
 			s.Connect = "none"
-		}, "service web: upstreams need connect: sidecar"},
+		}, "service web: upstreams need connect: sidecar or tproxy"},
 		{"same port", func(f *spec.File) {
 			s := f.Consul.Datacenters["dc1"].Nodes["web"].Service
 			s.Upstreams["db"] = &spec.Upstream{Port: 9091}
@@ -150,5 +154,68 @@ func TestUpstreamYAML(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ups, want) {
 		t.Errorf("upstreams = %v", ups)
+	}
+}
+
+func TestTransparentProxy(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/tproxy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := agentConfig(t, low.Nodes["dc1-web"])["services"].([]any)[0].(map[string]any)
+	want := map[string]any{"sidecar_service": map[string]any{"port": float64(SidecarPort), "proxy": map[string]any{
+		"mode":              "transparent",
+		"transparent_proxy": map[string]any{"outbound_listener_port": float64(TproxyOutboundPort)},
+	}}}
+	if !reflect.DeepEqual(reg["connect"], want) {
+		t.Errorf("web connect = %v", reg["connect"])
+	}
+	sc := low.Nodes["dc1-web"].Processes["web"+SidecarSuffix]
+	wantRun := VarParker + " sidecar --transparent --inbound-port 21000 --outbound-port 15001 -- " +
+		"consul connect envoy -sidecar-for web -admin-bind 127.0.0.1:19000 -- --log-level info"
+	if got := strings.Join(sc.Run, " "); got != wantRun {
+		t.Errorf("tproxy sidecar run = %s", got)
+	}
+	if !slices.Equal(sc.Uses, []string{"consul", "envoy"}) {
+		t.Errorf("uses = %v", sc.Uses)
+	}
+	// api is a plain sidecar on a node without a transparent proxy.
+	if got := low.Nodes["dc1-api"].Processes["api"+SidecarSuffix].Run[0]; got != "consul" {
+		t.Errorf("api sidecar runs %s", got)
+	}
+}
+
+func TestTransparentProxyMarksOtherSidecars(t *testing.T) {
+	f := load(t, "../../examples/tproxy.yaml")
+	n := f.Consul.Datacenters["dc1"].Nodes["web"]
+	n.Services = map[string]*spec.Service{"admin": {Port: 7000, Connect: "sidecar"}, "web": n.Service}
+	n.Service = nil
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := low.Nodes["dc1-web"].Processes
+	admin := strings.Join(ps["admin"+SidecarSuffix].Run, " ")
+	if !strings.HasPrefix(admin, VarParker+" sidecar -- consul connect envoy -sidecar-for admin -admin-bind 127.0.0.1:19000") {
+		t.Errorf("admin sidecar is marked but not transparent: %s", admin)
+	}
+	if web := strings.Join(ps["web"+SidecarSuffix].Run, " "); !strings.Contains(web, "--inbound-port 21001") {
+		t.Errorf("web takes the second sidecar port: %s", web)
+	}
+}
+
+func TestTransparentProxyDNSToken(t *testing.T) {
+	f := load(t, "../../hack/e2e/tproxy-secure.yaml")
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := agentConfig(t, low.Nodes["dc1-web"])["acl"].(map[string]any)["tokens"].(map[string]any)
+	if web["dns"] == nil || web["dns"] != web["agent"] {
+		t.Errorf("transparent node tokens = %v, want dns = agent", web)
+	}
+	api := agentConfig(t, low.Nodes["dc1-api"])["acl"].(map[string]any)["tokens"].(map[string]any)
+	if _, ok := api["dns"]; ok {
+		t.Errorf("plain sidecar node gets a dns token: %v", api)
 	}
 }

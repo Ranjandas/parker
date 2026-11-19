@@ -18,6 +18,8 @@ e2e: build
 	hack/rootless-e2e.sh examples/upgrade.yaml
 	hack/rootless-e2e.sh examples/mesh.yaml
 	hack/rootless-e2e.sh hack/e2e/mesh-secure.yaml
+	hack/rootless-e2e.sh examples/tproxy.yaml
+	hack/rootless-e2e.sh hack/e2e/tproxy-secure.yaml
 e2e-rootless: build
 	hack/rootless-mode-e2e.sh examples/minimal.yaml
 proto:

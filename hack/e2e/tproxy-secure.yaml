@@ -1,0 +1,36 @@
+# examples/tproxy.yaml with ACLs (default deny: an allow intention first,
+# and Consul DNS answers with the agent's token) and TLS.
+parker: v1alpha1
+name: tproxysec
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults: { acl: true, tls: true }
+  datacenters:
+    dc1:
+      servers: 3
+      service_defaults: { run: fake-service }
+      nodes:
+        web:
+          service: { port: 8080, connect: tproxy }
+        api:
+          service: { port: 9090, connect: sidecar }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { service_healthy: web-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - exec: { on: dc1/server-1, run: "consul intention create -allow web api" }
+    - name: Consul DNS answers on web's node
+      assert:
+        exec: { on: dc1/web, run: "getent hosts api.virtual.consul" }
+        within: 30s
+    - name: web reaches api through the mesh
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://api.virtual.consul:9090/", output: api }
+        within: 60s
+    - exec: { on: dc1/server-1, run: "consul intention create -replace -deny web api" }
+    - name: the intention cuts it
+      assert:
+        exec: { on: dc1/web, run: "! curl -sf -m 2 http://api.virtual.consul:9090/" }
+        within: 30s

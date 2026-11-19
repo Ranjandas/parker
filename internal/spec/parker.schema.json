@@ -675,9 +675,10 @@
           "type": "string",
           "enum": [
             "none",
-            "sidecar"
+            "sidecar",
+            "tproxy"
           ],
-          "description": "Connect puts the service in the mesh: sidecar registers a sidecar\nproxy and runs Envoy for it (needs versions.envoy); none (default)\nleaves it out."
+          "description": "Connect puts the service in the mesh: sidecar registers a sidecar\nproxy and runs Envoy for it (needs versions.envoy); tproxy does the\nsame as a transparent proxy, redirecting the node's traffic through\nEnvoy (one per node, needs iptables); none (default) leaves it out."
         },
         "upstreams": {
           "additionalProperties": {
