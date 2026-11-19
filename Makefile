@@ -12,6 +12,7 @@ e2e: build
 	hack/rootless-e2e.sh examples/federation.yaml
 	hack/rootless-e2e.sh examples/acl.yaml
 	hack/rootless-e2e.sh examples/tls.yaml
+	hack/rootless-e2e.sh examples/config-entries.yaml
 e2e-rootless: build
 	hack/rootless-mode-e2e.sh examples/minimal.yaml
 proto:

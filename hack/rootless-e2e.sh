@@ -49,6 +49,11 @@ if grep "acl: true" "$F" >/dev/null; then
   $P exec "$F" "$first" -- consul catalog services </dev/null
   $P exec "$F" "$first" -- consul keyring -list </dev/null | grep -q '\[' && echo "gossip key installed"
 fi
+if grep "config_entries:" "$F" >/dev/null; then
+  echo "--- config entries"
+  $P logs "$F" "$first/config-entries" -n 20 | grep applied
+  $P exec "$F" "$first" -- consul config list -kind service-defaults </dev/null
+fi
 if grep "tls: true" "$F" >/dev/null; then
   echo "--- TLS"
   if $P exec "$F" "$first" -- curl -sf http://127.0.0.1:8500/v1/status/leader </dev/null >/dev/null 2>&1; then

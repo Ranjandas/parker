@@ -341,16 +341,17 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			for _, r := range serverRefs {
 				deps[r] = &spec.Dep{Condition: "ready"}
 			}
-			env := map[string]string{"CONSUL_HTTP_TOKEN": sec.management, "CONSUL_HTTP_ADDR": "127.0.0.1:8500"}
-			if tls {
-				env["CONSUL_HTTP_ADDR"] = fmt.Sprintf("https://127.0.0.1:%d", HTTPSPort)
-				env["CONSUL_CACERT"] = VarNodeDir + "/" + CAFile
-			}
 			out.Nodes[dcName+"-server-1"].Processes[ACLSetup] = &spec.Process{
 				Run:       spec.Command{VarParker, ACLSetup, "--agent-token", sec.agent},
-				Env:       env,
+				Env:       apiEnv(token, tls),
 				DependsOn: deps,
 				ReadyWhen: &spec.Ready{Log: ACLReadyLine, Timeout: "60s"},
+			}
+		}
+
+		if len(dc.ConfigEntries) > 0 {
+			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, serverRefs, aclDeps, apiEnv(token, tls)); err != nil {
+				return err
 			}
 		}
 
@@ -607,4 +608,63 @@ func checkOverlaps(nets map[string]*spec.Network) error {
 func withMembers(c spec.ConsulCheck, members string) *spec.ConsulCheck {
 	c.Members = members
 	return &c
+}
+
+// apiEnv points the consul CLI and API clients run on a server at its
+// local agent.
+func apiEnv(token string, tls bool) map[string]string {
+	env := map[string]string{"CONSUL_HTTP_ADDR": "127.0.0.1:8500"}
+	if token != "" {
+		env["CONSUL_HTTP_TOKEN"] = token
+	}
+	if tls {
+		env["CONSUL_HTTP_ADDR"] = fmt.Sprintf("https://127.0.0.1:%d", HTTPSPort)
+		env["CONSUL_CACERT"] = VarNodeDir + "/" + CAFile
+	}
+	return env
+}
+
+// ConfigEntries is the process that applies a dc's config_entries, and
+// ConfigEntriesReadyLine what it logs when all are written.
+const (
+	ConfigEntries          = "config-entries"
+	ConfigEntriesReadyLine = "parker: config entries applied"
+	ConfigEntriesManifest  = "config-entries.json"
+)
+
+// EntryRef is one line of the config-entries manifest.
+type EntryRef struct {
+	File  string `json:"file"`
+	Label string `json:"label"`
+}
+
+func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, serverRefs []string, aclDeps map[string]*spec.Dep, env map[string]string) error {
+	var refs []EntryRef
+	for i, e := range dc.ConfigEntries {
+		var name, body string
+		if i < len(dc.EntrySources) && dc.EntrySources[i].HCL != "" {
+			name, body = fmt.Sprintf("config-entry-%d.hcl", i), dc.EntrySources[i].HCL
+		} else {
+			b, err := json.MarshalIndent(e, "", "  ")
+			if err != nil {
+				return fmt.Errorf("%s: %w", dc.EntryLabel(dcName, i), err)
+			}
+			name, body = fmt.Sprintf("config-entry-%d.json", i), string(b)
+		}
+		srv.Files[name] = body
+		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: dc.EntryLabel(dcName, i)})
+	}
+	srv.Files[ConfigEntriesManifest] = mustJSON(refs)
+	deps := map[string]*spec.Dep{}
+	for _, r := range serverRefs {
+		deps[r] = &spec.Dep{Condition: "ready"}
+	}
+	maps.Copy(deps, aclDeps)
+	srv.Processes[ConfigEntries] = &spec.Process{
+		Run:       spec.Command{VarParker, ConfigEntries, VarNodeDir + "/" + ConfigEntriesManifest},
+		Env:       env,
+		DependsOn: deps,
+		ReadyWhen: &spec.Ready{Log: ConfigEntriesReadyLine, Timeout: "60s"},
+	}
+	return nil
 }

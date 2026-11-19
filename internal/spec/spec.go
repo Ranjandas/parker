@@ -111,6 +111,24 @@ type Datacenter struct {
 	// Partitions are reserved for Admin Partitions (Enterprise); not
 	// supported yet.
 	Partitions map[string]any `yaml:"partitions,omitempty"`
+	// ConfigEntries are applied in order once the datacenter's servers
+	// (and ACLs) are ready. Each is an entry in Consul's own casing, pasted
+	// from the docs, or {file: path} to an HCL or JSON file relative to
+	// this YAML file.
+	ConfigEntries []ConfigEntry `yaml:"config_entries,omitempty"`
+
+	// EntrySources say where each config entry came from; Load fills it.
+	EntrySources []EntrySource `yaml:"-" json:"-"`
+}
+
+// ConfigEntry is a Consul config entry, passed through as is.
+type ConfigEntry map[string]any
+
+// EntrySource is where a config entry came from, for error messages.
+type EntrySource struct {
+	Line int    // line in the YAML file
+	File string // the file: it was read from, if any
+	HCL  string // the file's text when it is HCL
 }
 
 // Servers accepts either an int or {count, overrides}.
