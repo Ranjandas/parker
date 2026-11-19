@@ -36,7 +36,7 @@ echo "--- selectors"
 $P exec "$F" "${first%%-*}/leader" -- sh -c 'echo "leader is $PARKER_NODE"' </dev/null
 if grep "federation:" "$F" >/dev/null; then
   echo "--- WAN federation"
-  srv=$($P status "$F" | awk '$1 ~ /-server-/ {print $1; exit}')
+  srv=$($P status "$F" | awk '$1 ~ /-server-/ && !n++ {print $1}')
   $P exec "$F" "$srv" -- consul members -wan </dev/null
   for dc in $(awk '/^    dc[0-9]+:/ {sub(":","",$1); print $1}' "$F"); do
     $P exec "$F" "$first" -- consul catalog nodes -datacenter "$dc" </dev/null >/dev/null && echo "reached $dc"
@@ -62,7 +62,7 @@ if grep "tls: true" "$F" >/dev/null; then
     echo "plain HTTP API is open" >&2; exit 1
   fi
   echo "plain HTTP closed"
-  client=$($P status "$F" | awk 'NR>2 && $1 !~ /-server-/ && $3=="consul" {print $1; exit}')
+  client=$($P status "$F" | awk 'NR>2 && $1 !~ /-server-/ && $3=="consul" && !n++ {print $1}')
   if [ -n "$client" ]; then
     $P exec "$F" "$client" -- sh -c 'curl -sf --cacert "$CONSUL_CACERT" "$CONSUL_HTTP_ADDR/v1/agent/self" -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" >/dev/null' </dev/null
     echo "client HTTPS ($client, auto-encrypt cert) verifies against the lab CA"
