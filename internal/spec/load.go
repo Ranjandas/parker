@@ -58,6 +58,13 @@ func Load(path string, overrides map[string]string) (*File, error) {
 		return nil, fmt.Errorf("%s: undefined variables: %s", path, strings.Join(missing, ", "))
 	}
 
+	if errs := CheckKeys(text); len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return nil, fmt.Errorf("%s:\n  - %s", path, strings.Join(msgs, "\n  - "))
+	}
 	var f File
 	if err := yaml.NewDecoder(bytes.NewReader(text), yaml.Strict()).Decode(&f); err != nil {
 		return nil, fmt.Errorf("%s:\n%s", path, yaml.FormatError(err, false, true))

@@ -44,10 +44,12 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 
 | Command | What it does |
 |---|---|
+| `parker init [FILE]` | Write a starter file (`--pattern minimal\|clients\|raw`) whose first line points your editor at the schema for autocomplete and hover docs. |
 | `parker up FILE` | Clean up any previous run, create the network, start everything, return when all readiness checks pass. Runs through `parker daemon` (started in the background if needed), which keeps supervising the processes afterwards; `--no-daemon` runs it in-process. On failure, prints the failing log tail and tears down (`--keep-on-failure` to inspect). Refuses subnets that clash with the host. If the FORWARD chain drops by default (Docker), adds labelled ACCEPT rules for the lab bridges (`--no-firewall` prints them instead). |
 | `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces, labelled links and firewall rules. Idempotent, needs no state file and works without the daemon. Logs are kept. |
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
-| `parker validate FILE` | Structural (unknown keys with line numbers) and semantic checks. |
+| `parker validate FILE` | Structural and semantic checks. Unknown keys come with line numbers, "did you mean" suggestions, and where a misplaced key belongs (e.g. `servers` under a node). |
+| `parker schema` | Print the JSON Schema for topology files. |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
@@ -57,6 +59,20 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 | `parker fetch FILE` | Download pinned binaries into the cache. |
 
 `--var name=value` sets `${vars.name}`.
+
+### Editor support
+
+Files that start with
+
+```yaml
+# yaml-language-server: $schema=https://github.com/Ranjandas/parker/releases/latest/download/parker.schema.json
+```
+
+get autocomplete, hover docs and inline errors in any editor using
+[yaml-language-server](https://github.com/redhat-developer/yaml-language-server)
+(VS Code's YAML extension, Neovim, Helix, ...). `parker init` writes that
+line. Until releases publish the schema (and while the repository is private), save it locally:
+`parker schema > parker.schema.json` and `parker init --schema ./parker.schema.json`.
 
 ## How it works
 
@@ -186,6 +202,7 @@ $ go build -o bin/parker ./cmd/parker
 $ go test ./...
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
 $ make e2e-rootless                            # rootless mode as a normal user
+$ go generate ./internal/spec                  # regenerate the JSON Schema after changing internal/spec
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
 ```
 
