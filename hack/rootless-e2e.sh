@@ -58,7 +58,7 @@ $P down "$F"
 echo "--- down works without the daemon"
 $P up "$F" >/dev/null
 $P daemon stop
-$P status "$F" | head -1
+$P status "$F" | sed -n 1p  # sed, not head: head exits early and SIGPIPE fails pipefail
 $P down "$F"
 left_ns=$(ls /run/netns | wc -l)
 left_links=$(ip -o link | grep -c ' pk-\| pk[0-9a-f]' || true)
