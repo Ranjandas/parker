@@ -79,6 +79,8 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker schema` | Print the JSON Schema for topology files. |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs. |
+| `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table with state and raft role, `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:dc NAME`, `:q`. |
+| `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
 | `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker` or `server-1.dc1.<lab>.parker`; only lab addresses are reachable. |
 | `parker port-forward FILE\|LAB NODE [LOCAL:]PORT` | Forward a local port to a node's port. |
