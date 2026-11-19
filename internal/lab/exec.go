@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -49,4 +51,23 @@ func LookPath(name, path string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s: not found in PATH", name)
+}
+
+// Describe returns a node's expanded topology as YAML: networks, rendered
+// files and processes.
+func Describe(labName, node string) (string, string, error) {
+	low, err := LoadTopology(labName)
+	if err != nil {
+		return "", "", fmt.Errorf("lab %q: %w", labName, err)
+	}
+	name, err := ResolveNode(low, node)
+	if err != nil {
+		return "", "", err
+	}
+	b, err := yaml.MarshalWithOptions(map[string]*spec.RawNode{name: low.Nodes[name]},
+		yaml.UseLiteralStyleIfMultiline(true), yaml.IndentSequence(true))
+	if err != nil {
+		return "", "", err
+	}
+	return name, string(b), nil
 }

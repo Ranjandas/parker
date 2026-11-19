@@ -26,6 +26,10 @@ service ParkerService {
   // Status of one lab's nodes and processes.
   rpc Status(StatusRequest) returns (StatusResponse);
 
+  // Describe one node: its expanded topology (networks, rendered files
+  // such as consul.json, processes with command, env and checks) as YAML.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
   // Logs of one process: the last lines, then (with follow) new ones.
   rpc Logs(LogsRequest) returns (stream LogChunk);
 
@@ -109,6 +113,16 @@ message ProcessStatus {
   optional bool ready = 4;
   int32 restarts = 5;
   string log_path = 6;
+}
+
+message DescribeRequest {
+  string lab = 1;
+  string node = 2; // dc1-server-1 or dc1/server-1
+}
+
+message DescribeResponse {
+  string node = 1; // resolved name
+  string yaml = 2;
 }
 
 message LogsRequest {
