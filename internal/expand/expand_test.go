@@ -387,3 +387,45 @@ func TestTLSFederated(t *testing.T) {
 		t.Errorf("mixed tls: %v", err)
 	}
 }
+
+func TestConfigEntries(t *testing.T) {
+	f := load(t, "../../examples/config-entries.yaml")
+	on := true
+	f.Consul.Defaults = &spec.Inheritable{ACL: &on, TLS: &on}
+	low, err := Expand(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := low.Nodes["dc1-server-1"]
+	p := srv.Processes[ConfigEntries]
+	if p == nil || p.ReadyWhen.Log != ConfigEntriesReadyLine {
+		t.Fatalf("config-entries process: %+v", p)
+	}
+	if p.DependsOn["dc1-server-1/consul"] == nil || p.DependsOn["dc1-server-1/"+ACLSetup] == nil {
+		t.Errorf("deps: %v", p.DependsOn)
+	}
+	if p.Env["CONSUL_HTTP_TOKEN"] == "" || p.Env["CONSUL_CACERT"] == "" {
+		t.Errorf("env: %v", p.Env)
+	}
+	var refs []EntryRef
+	if err := json.Unmarshal([]byte(srv.Files[ConfigEntriesManifest]), &refs); err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 3 || refs[0].File != VarNodeDir+"/config-entry-0.json" || refs[2].File != VarNodeDir+"/config-entry-2.hcl" {
+		t.Fatalf("manifest: %+v", refs)
+	}
+	if !strings.Contains(refs[2].Label, "config_entries[2] (line ") || !strings.Contains(refs[2].Label, "web-intentions.hcl") {
+		t.Errorf("label %q", refs[2].Label)
+	}
+	var e0 map[string]any
+	json.Unmarshal([]byte(srv.Files["config-entry-0.json"]), &e0)
+	if e0["Kind"] != "proxy-defaults" || e0["Config"].(map[string]any)["protocol"] != "http" {
+		t.Errorf("entry 0: %v", e0)
+	}
+	if !strings.Contains(srv.Files["config-entry-2.hcl"], `Kind = "service-intentions"`) {
+		t.Errorf("hcl entry: %q", srv.Files["config-entry-2.hcl"])
+	}
+	if _, ok := low.Nodes["dc1-web"].Processes[ConfigEntries]; ok {
+		t.Error("config entries run on the first server only")
+	}
+}

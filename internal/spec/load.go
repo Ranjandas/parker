@@ -72,6 +72,9 @@ func Load(path string, overrides map[string]string) (*File, error) {
 	if f.Name == "" {
 		f.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+	if err := resolveConfigEntries(&f, text, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	if err := f.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -127,6 +130,11 @@ func (f *File) Validate() error {
 			if dc == nil {
 				add("%s: empty datacenter (set servers:)", p)
 				continue
+			}
+			for i, e := range dc.ConfigEntries {
+				if _, isFile := e["file"]; !isFile && entryKind(e) == "" {
+					add("%s: needs Kind (or file:)", dc.EntryLabel(name, i))
+				}
 			}
 			if len(dc.Partitions) > 0 {
 				add("%s.partitions: not supported by this prototype yet (Enterprise)", p)

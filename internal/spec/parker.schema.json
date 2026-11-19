@@ -29,6 +29,10 @@
         "ip"
       ]
     },
+    "ConfigEntry": {
+      "type": "object",
+      "description": "ConfigEntry is a Consul config entry, passed through as is."
+    },
     "Consul": {
       "properties": {
         "defaults": {
@@ -165,6 +169,13 @@
         "partitions": {
           "type": "object",
           "description": "Partitions are reserved for Admin Partitions (Enterprise); not\nsupported yet."
+        },
+        "config_entries": {
+          "items": {
+            "$ref": "#/$defs/ConfigEntry"
+          },
+          "type": "array",
+          "description": "ConfigEntries are applied in order once the datacenter's servers\n(and ACLs) are ready. Each is an entry in Consul's own casing, pasted\nfrom the docs, or {file: path} to an HCL or JSON file relative to\nthis YAML file."
         }
       },
       "additionalProperties": false,
