@@ -96,7 +96,8 @@ func TestExecEnv(t *testing.T) {
 	if path != "/usr/bin" {
 		t.Errorf("path %q", path)
 	}
-	want := []string{"HOME=/root", "PATH=/usr/bin", "PARKER_LAB=demo", "PARKER_NODE=box"}
+	// PARKER_IP: the first network by name (NodeIPs order).
+	want := []string{"HOME=/root", "PATH=/usr/bin", "PARKER_LAB=demo", "PARKER_NODE=box", "PARKER_IP=10.78.0.20"}
 	if !slices.Equal(env, want) {
 		t.Errorf("env %v, want %v", env, want)
 	}

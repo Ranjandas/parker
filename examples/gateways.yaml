@@ -1,0 +1,63 @@
+# Ingress, terminating and API gateways. api is in the mesh; legacy is not.
+# - the ingress gateway takes HTTP on :8080 and sends it to api;
+# - the API gateway takes HTTP on :8081 and routes / to api (http-route);
+# - the terminating gateway lets web reach legacy, outside the mesh,
+#   through web's sidecar on 127.0.0.1:9092.
+# Each gateway's `entry:` is its config entry in Consul casing; Parker adds
+# Kind and Name and applies it after config_entries (which set the
+# protocols the listeners need).
+parker: v1alpha1
+name: gateways
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      service_defaults: { run: fake-service }
+      gateways:
+        ingress:
+          entry:
+            Listeners:
+              - { Port: 8080, Protocol: http, Services: [{ Name: api, Hosts: ["*"] }] }
+        terminating:
+          entry:
+            Services: [{ Name: legacy }]
+        edge:
+          kind: api
+          entry:
+            Listeners: [{ Name: http, Port: 8081, Protocol: http }]
+      nodes:
+        api:
+          service: { port: 9090, connect: sidecar }
+        legacy:
+          service: { port: 7070 }
+        web:
+          service:
+            port: 8080
+            connect: sidecar
+            upstreams: { legacy: 9092 }
+      config_entries:
+        - Kind: service-defaults
+          Name: api
+          Protocol: http
+        - Kind: http-route
+          Name: edge-to-api
+          Parents: [{ Kind: api-gateway, Name: edge, SectionName: http }]
+          Rules: [{ Services: [{ Name: api }] }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - name: the ingress gateway reaches api
+      assert:
+        exec: { on: dc1/ingress, run: "curl -sf -m 2 http://$PARKER_IP:8080/", output: api }
+        within: 60s
+    - name: the API gateway routes to api
+      assert:
+        exec: { on: dc1/edge, run: "curl -sf -m 2 http://$PARKER_IP:8081/", output: api }
+        within: 60s
+    - name: web reaches legacy through the terminating gateway
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9092/", output: legacy }
+        within: 60s

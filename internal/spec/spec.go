@@ -245,8 +245,14 @@ func (c *Consul) UsesWAN() bool {
 
 // Gateway is a gateway node (or count of them).
 type Gateway struct {
-	// Kind is mesh. Default: the gateway's name when that is a kind.
-	Kind string `yaml:"kind,omitempty" jsonschema:"enum=mesh"`
+	// Kind is mesh, ingress, terminating or api. Default: the gateway's
+	// name when that is a kind.
+	Kind string `yaml:"kind,omitempty"`
+	// Entry is the gateway's config entry in Consul's casing, without Kind
+	// and Name (Parker sets them): Listeners for ingress and api gateways,
+	// Services for terminating ones. Applied after the dc's config_entries,
+	// so service-defaults there set the protocols its listeners need.
+	Entry map[string]any `yaml:"entry,omitempty"`
 	// Count of gateway nodes (default 1); several are named <name>-1, ...
 	Count int `yaml:"count,omitempty"`
 	// WAN attaches a mesh gateway to the wan network too. Default: on when
@@ -254,8 +260,20 @@ type Gateway struct {
 	WAN *bool `yaml:"wan,omitempty"`
 }
 
-// OnWAN reports whether the gateway joins the wan network.
+// GatewayKinds are the gateway kinds, with their config entry kinds.
+var GatewayKinds = map[string]string{
+	"mesh":        "", // configured by proxy-defaults / mesh entries
+	"ingress":     "ingress-gateway",
+	"terminating": "terminating-gateway",
+	"api":         "api-gateway",
+}
+
+// OnWAN reports whether the gateway joins the wan network. Only mesh
+// gateways do.
 func (g *Gateway) OnWAN(c *Consul) bool {
+	if g.Kind != "" && g.Kind != "mesh" {
+		return false
+	}
 	if g.WAN != nil {
 		return *g.WAN
 	}

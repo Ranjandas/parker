@@ -10,7 +10,8 @@ import (
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
-// MeshGatewayPort is where mesh gateways listen, on the LAN and the WAN.
+// MeshGatewayPort is where mesh gateways listen, on the LAN and the WAN
+// (and the registered port of the other gateway kinds).
 const MeshGatewayPort = 8443
 
 // gatewayNode is one gateway node: a client agent plus the gateway's
@@ -25,15 +26,31 @@ type gatewayNode struct {
 
 func (g gatewayNode) process() string { return g.kind + "-gateway" }
 
+// service is the gateway's Consul service (and config entry) name: the
+// group, or <kind>-gateway when the group is just the kind.
+func (g gatewayNode) service() string {
+	if g.group == g.kind {
+		return g.kind + "-gateway"
+	}
+	return g.group
+}
+
+// gatewayEntry is a config entry Parker writes for a gateway.
+type gatewayEntry struct {
+	label string
+	entry spec.ConfigEntry
+}
+
 // gatewayNodes resolves each datacenter's gateways (sorted by node name)
 // and checks them, and what mesh-gateway federation needs.
-func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string][]gatewayNode, error) {
+func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string][]gatewayNode, map[string][]gatewayEntry, error) {
 	defaults := c.Defaults
 	if defaults == nil {
 		defaults = &spec.Inheritable{}
 	}
 	meshFed := c.FederationMode() == spec.FederationMeshGateways
 	out := map[string][]gatewayNode{}
+	entries := map[string][]gatewayEntry{}
 	var errs []error
 	for _, dcName := range dcNames {
 		dc := c.Datacenters[dcName]
@@ -48,8 +65,17 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 			if kind == "" {
 				kind = group
 			}
-			if kind != "mesh" {
-				errs = append(errs, fmt.Errorf("%s: kind: want mesh, got %q (set kind: when the name isn't one)", where, kind))
+			entryKind, ok := spec.GatewayKinds[kind]
+			if !ok {
+				errs = append(errs, fmt.Errorf("%s: kind: want mesh, ingress, terminating or api, got %q (set kind: when the name isn't one)", where, kind))
+				continue
+			}
+			if kind != "mesh" && g.WAN != nil && *g.WAN {
+				errs = append(errs, fmt.Errorf("%s: wan: only mesh gateways join the wan network", where))
+				continue
+			}
+			if kind == "mesh" && g.Entry != nil {
+				errs = append(errs, fmt.Errorf("%s: entry: mesh gateways have no config entry of their own; set MeshGateway in proxy-defaults under config_entries", where))
 				continue
 			}
 			if _, ok := dc.Nodes[group]; ok {
@@ -60,17 +86,27 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 				errs = append(errs, fmt.Errorf("%s: count: want 1 or more", where))
 				continue
 			}
-			wan := g.OnWAN(c)
-			if wan && kind == "mesh" {
+			wan := kind == "mesh" && g.OnWAN(c)
+			if wan {
 				wanMesh = true
 			}
 			count := max(g.Count, 1)
+			var gn gatewayNode
 			for k := range count {
 				name := group
 				if g.Count > 1 {
 					name = group + "-" + strconv.Itoa(k+1)
 				}
-				out[dcName] = append(out[dcName], gatewayNode{group: group, name: name, kind: kind, count: g.Count, wan: wan})
+				gn = gatewayNode{group: group, name: name, kind: kind, count: g.Count, wan: wan}
+				out[dcName] = append(out[dcName], gn)
+			}
+			if entryKind != "" {
+				e := spec.ConfigEntry{}
+				for k, v := range g.Entry {
+					e[k] = v
+				}
+				e["Kind"], e["Name"] = entryKind, gn.service()
+				entries[dcName] = append(entries[dcName], gatewayEntry{label: where + ".entry", entry: e})
 			}
 		}
 		if meshFed {
@@ -82,12 +118,12 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 			}
 		}
 	}
-	return out, errors.Join(errs...)
+	return out, entries, errors.Join(errs...)
 }
 
-// envoyProcess runs the gateway's Envoy on node key. It binds 8443 on
-// every address, advertises lan (and wan) and, for mesh-gateway
-// federation, exposes the servers.
+// envoyProcess runs the gateway's Envoy on node key, registered at lan
+// (and wan). A mesh gateway binds 8443 on every address and, for
+// mesh-gateway federation, exposes the servers.
 func (g gatewayNode) envoyProcess(key, lan, wan string, admin int, exposeServers bool, env map[string]string, tls bool) *spec.Process {
 	env["CONSUL_GRPC_ADDR"] = fmt.Sprintf("127.0.0.1:%d", GRPCPort)
 	if tls {
@@ -95,8 +131,12 @@ func (g gatewayNode) envoyProcess(key, lan, wan string, admin int, exposeServers
 	}
 	port := strconv.Itoa(MeshGatewayPort)
 	run := spec.Command{"consul", "connect", "envoy", "-gateway=" + g.kind, "-register",
-		"-service", g.kind + "-gateway", "-address", lan + ":" + port,
-		"-bind-address", "default=0.0.0.0:" + port}
+		"-service", g.service(), "-address", lan + ":" + port}
+	if g.kind == "mesh" {
+		// Reachable on the LAN and wan addresses alike. Other kinds bind
+		// their listeners (from the config entry) on the LAN address.
+		run = append(run, "-bind-address", "default=0.0.0.0:"+port)
+	}
 	if wan != "" {
 		run = append(run, "-wan-address", wan+":"+port)
 	}

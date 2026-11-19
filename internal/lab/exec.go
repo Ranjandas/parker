@@ -54,6 +54,11 @@ func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path st
 		}
 	}
 	env = append(slices.Clone(base), "PATH="+path, "PARKER_LAB="+low.Name, "PARKER_NODE="+node)
+	if n := low.Nodes[node]; n != nil {
+		if ips := NodeIPs(n); len(ips) > 0 {
+			env = append(env, "PARKER_IP="+ips[0]) // its LAN address (networks sorted by name)
+		}
+	}
 	if tok := ManagementToken(low); tok != "" {
 		env = append(env, "CONSUL_HTTP_TOKEN="+tok)
 	}
