@@ -196,6 +196,25 @@ type Consul struct {
 	// Federation joins the datacenters' servers over a generated `wan`
 	// network. Without it, datacenters are independent clusters.
 	Federation *Federation `yaml:"federation,omitempty"`
+	// Peering connects datacenters as cluster peers, keyed by peering name
+	// (the peer's name on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and
+	// a mesh gateway in each peered datacenter for service traffic.
+	Peering map[string]*Peering `yaml:"peering,omitempty"`
+}
+
+// Peering is one cluster peering between two datacenters.
+type Peering struct {
+	// Acceptor generates the peering token.
+	Acceptor string `yaml:"acceptor"`
+	// Dialer establishes the peering with the token.
+	Dialer string `yaml:"dialer"`
+	// ViaMeshGateways sends the peering's control plane through the mesh
+	// gateways (mesh config entry PeerThroughMeshGateways); otherwise the
+	// dialer's servers reach the acceptor's on the wan network.
+	ViaMeshGateways bool `yaml:"via_mesh_gateways,omitempty"`
+	// Exports lists, per datacenter (acceptor or dialer), the services it
+	// exports to the other side (sugar for an exported-services entry).
+	Exports map[string][]string `yaml:"exports,omitempty"`
 }
 
 type Federation struct {
@@ -230,7 +249,7 @@ func (c *Consul) UsesWAN() bool {
 	if c == nil {
 		return false
 	}
-	if c.FederationMode() != "" {
+	if c.FederationMode() != "" || len(c.Peering) > 0 {
 		return true
 	}
 	for _, dc := range c.Datacenters {
@@ -256,7 +275,7 @@ type Gateway struct {
 	// Count of gateway nodes (default 1); several are named <name>-1, ...
 	Count int `yaml:"count,omitempty"`
 	// WAN attaches a mesh gateway to the wan network too. Default: on when
-	// the datacenters are federated.
+	// the datacenters are federated or peered.
 	WAN *bool `yaml:"wan,omitempty"`
 }
 
@@ -269,7 +288,7 @@ var GatewayKinds = map[string]string{
 }
 
 // OnWAN reports whether the gateway joins the wan network. Only mesh
-// gateways do.
+// gateways do; by default when the datacenters are federated or peered.
 func (g *Gateway) OnWAN(c *Consul) bool {
 	if g.Kind != "" && g.Kind != "mesh" {
 		return false
@@ -277,7 +296,7 @@ func (g *Gateway) OnWAN(c *Consul) bool {
 	if g.WAN != nil {
 		return *g.WAN
 	}
-	return c.FederationMode() != ""
+	return c.FederationMode() != "" || len(c.Peering) > 0
 }
 
 // UnmarshalYAML takes true (a gateway with defaults) or an object.

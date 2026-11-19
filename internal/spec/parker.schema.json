@@ -67,6 +67,13 @@
         "federation": {
           "$ref": "#/$defs/Federation",
           "description": "Federation joins the datacenters' servers over a generated `wan`\nnetwork. Without it, datacenters are independent clusters."
+        },
+        "peering": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Peering"
+          },
+          "type": "object",
+          "description": "Peering connects datacenters as cluster peers, keyed by peering name\n(the peer's name on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and\na mesh gateway in each peered datacenter for service traffic."
         }
       },
       "additionalProperties": false,
@@ -513,6 +520,39 @@
       "additionalProperties": false,
       "type": "object",
       "description": "NodeLabels place a node in the consul: tree."
+    },
+    "Peering": {
+      "properties": {
+        "acceptor": {
+          "type": "string",
+          "description": "Acceptor generates the peering token."
+        },
+        "dialer": {
+          "type": "string",
+          "description": "Dialer establishes the peering with the token."
+        },
+        "via_mesh_gateways": {
+          "type": "boolean",
+          "description": "ViaMeshGateways sends the peering's control plane through the mesh\ngateways (mesh config entry PeerThroughMeshGateways); otherwise the\ndialer's servers reach the acceptor's on the wan network."
+        },
+        "exports": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object",
+          "description": "Exports lists, per datacenter (acceptor or dialer), the services it\nexports to the other side (sugar for an exported-services entry)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "acceptor",
+        "dialer"
+      ],
+      "description": "Peering is one cluster peering between two datacenters."
     },
     "Process": {
       "properties": {

@@ -45,6 +45,24 @@ func minor(v string) string {
 	return parts[0] + "." + parts[1]
 }
 
+// AtLeast reports whether version v is minor min ("1.14") or later; ok is
+// false when v isn't a version (a path: build), which callers let pass.
+func AtLeast(v, min string) (yes, ok bool) {
+	m := minor(v)
+	if m == "" {
+		return false, false
+	}
+	num := func(s string) (int, int) {
+		a, b, _ := strings.Cut(s, ".")
+		x, _ := strconv.Atoi(a)
+		y, _ := strconv.Atoi(b)
+		return x, y
+	}
+	ma, mb := num(m)
+	na, nb := num(min)
+	return ma > na || ma == na && mb >= nb, true
+}
+
 // EnvoyFor lists the Envoy minors a Consul version supports, newest first;
 // ok is false when Parker doesn't know that Consul release.
 func EnvoyFor(consul string) (envoy []string, ok bool) {
