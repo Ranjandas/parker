@@ -1,0 +1,6 @@
+# The smallest useful lab: one datacenter, three servers.
+parker: v1alpha1
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1: { servers: 3 }

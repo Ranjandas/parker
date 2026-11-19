@@ -1,0 +1,18 @@
+# Three servers, two client nodes running the built-in echo service,
+# and one bare client agent.
+parker: v1alpha1
+name: clients
+vars:
+  consul_version: 1.22.7
+versions: { consul: "${vars.consul_version}" }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      agents: { log_level: DEBUG }
+      nodes:
+        web:
+          count: 2
+          meta: { zone: a }
+          service: { port: 8080, run: fake-service, env: { MESSAGE: hello } }
+        client: {}
