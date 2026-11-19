@@ -53,7 +53,16 @@ func init() {
 			commit += "-dirty"
 		}
 	}
-	daemon.Version = version
+	daemon.Version = buildID()
+}
+
+// buildID names this build for the daemon handshake: the version, plus
+// the commit when known, so two dev builds tell each other apart.
+func buildID() string {
+	if commit == "" {
+		return version
+	}
+	return version + "+" + commit
 }
 
 func versionString() string {

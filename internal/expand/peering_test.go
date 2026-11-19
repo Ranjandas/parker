@@ -48,7 +48,7 @@ func TestPeeringViaMeshGateways(t *testing.T) {
 	if est == nil || est.DependsOn["dc2-server-1/peering-dc1-dc2-token"] == nil || est.DependsOn["dc1-mesh/mesh-gateway"] == nil {
 		t.Fatalf("establish process: %+v", est)
 	}
-	if !strings.Contains(strings.Join(est.Run, " "), `consul peering establish -name dc1-dc2 -peering-token "$(cat ${run_dir}/peering-dc1-dc2.token)"`) {
+	if !strings.Contains(strings.Join(est.Run, " "), `until consul peering establish -name dc1-dc2 -peering-token "$(cat ${run_dir}/peering-dc1-dc2.token)"; do sleep 2; done`) {
 		t.Errorf("establish script: %v", est.Run)
 	}
 	if est.ReadyWhen.Log != PeeringActiveLine("dc1-dc2") {
