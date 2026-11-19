@@ -113,7 +113,7 @@ line. Until releases publish the schema (and while the repository is private), s
    Runtime variables (`${node_dir}`, `${run_dir}`, `${parker}`) are left for
    `up` to fill in.
 3. **Network** (`internal/netsetup`, vishvananda/netlink + netns): bridge
-   `pk-<hash>` per network, named netns `parker-<lab>-<node>`, veth into each
+   `pk-<hash>` per network, named netns `parker-<lab>_<node>`, veth into each
    (`eth0`, default route via the bridge). Host links get alias
    `parker:<lab>`; `down` finds everything by name and alias, and finds
    processes by matching `/proc/*/ns/net` inodes, so cleanup works after a
@@ -228,12 +228,18 @@ Needs Go 1.27+ and Linux.
 ```console
 $ go build -o bin/parker ./cmd/parker
 $ go test ./...
+$ make cover                                   # unit test coverage
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
 $ make e2e-rootless                            # rootless mode as a normal user
 $ go generate ./internal/spec                  # regenerate the JSON Schema after changing internal/spec
 $ goreleaser release --snapshot --clean       # release build into dist/ (tags v* release from CI)
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
 ```
+
+Every change comes with unit tests for what it touches; the e2e scripts
+below cover the whole flow on top. Tests that need a private network
+namespace are skipped unless their env var is set (`PARKER_LIVE_IPTABLES`,
+`PARKER_LIVE_NETNS`; see the CI e2e job for how to run them without sudo).
 
 `hack/rootless-e2e.sh` runs a full `up` / `exec` / `down` inside
 `unshare -Urnm`: a private user + network + mount namespace where an

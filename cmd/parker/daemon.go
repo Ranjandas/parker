@@ -324,17 +324,7 @@ func statusCmd() *cobra.Command {
 			}
 			switch output {
 			case "json":
-				// protojson varies its whitespace on purpose; re-indent so
-				// the output is stable for scripts and diffs.
-				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(st)
-				if err != nil {
-					return err
-				}
-				var out bytes.Buffer
-				if err := json.Indent(&out, b, "", "  "); err != nil {
-					return err
-				}
-				fmt.Println(out.String())
+				return printStatusJSON(os.Stdout, st)
 			case "", "table":
 				printStatus(os.Stdout, st)
 			default:
@@ -368,6 +358,22 @@ func listLabs(ctx context.Context, c parkerv1connect.ParkerServiceClient, viaDae
 		fmt.Fprintf(tw, "%s\t%d\t%v\n", l.Name, l.Namespaces, l.Supervised)
 	}
 	return tw.Flush()
+}
+
+// printStatusJSON writes st as indented JSON. protojson varies its
+// whitespace on purpose; re-indenting keeps the output stable for scripts.
+func printStatusJSON(w io.Writer, st *parkerv1.StatusResponse) error {
+	b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(st)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	if err := json.Indent(&out, b, "", "  "); err != nil {
+		return err
+	}
+	out.WriteByte('\n')
+	_, err = w.Write(out.Bytes())
+	return err
 }
 
 func printStatus(w io.Writer, st *parkerv1.StatusResponse) {

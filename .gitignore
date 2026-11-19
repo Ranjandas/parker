@@ -1,3 +1,5 @@
 /bin/
 /dist/
 /parker.schema.json
+/coverage.out
+/parker

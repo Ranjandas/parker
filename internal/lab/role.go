@@ -16,10 +16,15 @@ import (
 func consulRole(labName, node string, ips []string) string {
 	dial := supervisor.DialerIn(netsetup.NetnsPath(labName, node))
 	hc := &http.Client{Timeout: 700 * time.Millisecond, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
+	return roleFrom(hc, "http://127.0.0.1:8500", ips)
+}
+
+// roleFrom asks the agent API at base; ips are the node's own addresses.
+func roleFrom(hc *http.Client, base string, ips []string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	get := func(path string, v any) error {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8500"+path, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
 		resp, err := hc.Do(req)
 		if err != nil {
 			return err
