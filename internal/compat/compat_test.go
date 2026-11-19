@@ -61,3 +61,17 @@ func TestWarnings(t *testing.T) {
 		t.Errorf("no envoy: %q", w)
 	}
 }
+
+func TestAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		v, min  string
+		yes, ok bool
+	}{
+		{"1.22.7", "1.14", true, true}, {"1.14.0", "1.14", true, true}, {"1.13.9", "1.14", false, true},
+		{"2.0.0", "1.14", true, true}, {"v1.9.1+ent", "1.14", false, true}, {"path:/x", "1.14", false, false},
+	} {
+		if yes, ok := AtLeast(c.v, c.min); yes != c.yes || ok != c.ok {
+			t.Errorf("AtLeast(%s, %s) = %v, %v", c.v, c.min, yes, ok)
+		}
+	}
+}

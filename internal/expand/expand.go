@@ -203,7 +203,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		wanHosts = 1<<(32-wp.Bits()) - 2
 		out.Networks[WANNetwork] = &spec.Network{Subnet: wanSubnet}
 	}
-	if c.FederationMode() != "" {
+	if c.FederationMode() != "" || len(c.Peering) > 0 {
 		// Under mesh-gateways federation servers only need the wan to
 		// reach the gateways' public addresses: they keep serf WAN on
 		// their LAN address, which other datacenters can't route to.
@@ -257,7 +257,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	if err != nil {
 		return err
 	}
-	if len(gws) > 0 {
+	peers, peerEntries, err := peerings(c, out.Versions["consul"])
+	if err != nil {
+		return err
+	}
+	for dc, es := range peerEntries {
+		gwEntries[dc] = append(gwEntries[dc], es...)
+	}
+	if len(gws) > 0 || len(peers) > 0 {
 		mesh = true
 	}
 	if mesh && out.Versions["envoy"] == "" {
@@ -397,7 +404,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				attach[WANNetwork] = &spec.Attachment{IP: wan}
 				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
 			}
-			if c.FederationMode() == spec.FederationMeshGateways {
+			inPeering, peerOnWAN := peered(peers, dcName)
+			if c.FederationMode() == spec.FederationMeshGateways || peerOnWAN {
 				// RPC listens everywhere so that dials to a gateway's
 				// wan address leave from (and come back to) the wan
 				// interface; serf stays on the LAN address.
@@ -408,12 +416,25 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 			if tls {
 				ips := []string{ip}
-				if federated {
+				if federated || peerOnWAN {
 					ips = append(ips, wanIPs[dcName][s])
 				}
 				if err := labCA.serverTLS(cfg, files, name, dcName, ips); err != nil {
 					return err
 				}
+			}
+			if inPeering {
+				// Peering runs over the servers' gRPC port.
+				ports, _ := cfg["ports"].(map[string]any)
+				if ports == nil {
+					ports = map[string]any{}
+				}
+				if tls {
+					ports["grpc_tls"] = GRPCTLSPort
+				} else {
+					ports["grpc"] = GRPCPort
+				}
+				cfg["ports"] = ports
 			}
 			var serverDeps map[string]*spec.Dep
 			if meshFed {
@@ -475,6 +496,46 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		if len(dc.ConfigEntries) > 0 || len(gwEntries[dcName]) > 0 {
 			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, gwEntries[dcName], serverRefs, aclDeps, apiEnv(token, tls)); err != nil {
 				return err
+			}
+		}
+		for _, p := range peers {
+			if p.acceptor != dcName && p.dialer != dcName {
+				continue
+			}
+			s1 := out.Nodes[dcName+"-server-1"]
+			deps := map[string]*spec.Dep{}
+			for _, r := range serverRefs {
+				deps[r] = &spec.Dep{Condition: "ready"}
+			}
+			maps.Copy(deps, aclDeps)
+			if _, ok := s1.Processes[ConfigEntries]; ok {
+				deps[dcName+"-server-1/"+ConfigEntries] = &spec.Dep{Condition: "ready"}
+			}
+			if p.via {
+				// The token carries the acceptor's gateway addresses and
+				// the dialer reaches them through its own gateway.
+				for _, g := range gws[dcName] {
+					if g.kind == "mesh" && g.wan {
+						deps[dcName+"-"+g.name+"/"+g.process()] = &spec.Dep{Condition: "ready"}
+						break
+					}
+				}
+			}
+			if p.acceptor == dcName {
+				var external []string
+				if !p.via {
+					port := GRPCPort
+					if tls {
+						port = GRPCTLSPort
+					}
+					for _, ip := range wanIPs[dcName] {
+						external = append(external, fmt.Sprintf("%s:%d", ip, port))
+					}
+				}
+				s1.Processes[p.tokenProcess()] = p.tokenProc(deps, apiEnv(token, tls), external)
+			} else {
+				deps[p.acceptor+"-server-1/"+p.tokenProcess()] = &spec.Dep{Condition: "ready"}
+				s1.Processes[p.establishProcess()] = p.establishProc(deps, apiEnv(token, tls))
 			}
 		}
 

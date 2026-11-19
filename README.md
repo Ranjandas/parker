@@ -325,6 +325,15 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
   through the gateways; secondaries start once the primary's gateway is
   ready and `up` waits until the primary reaches every secondary (see
   `examples/mesh-federation.yaml`)
+- `consul.peering: { dc1-dc2: { acceptor: dc2, dialer: dc1, exports: {
+  dc2: [api] } } }` (Consul 1.14+, a mesh gateway in each side): the
+  acceptor's server-1 generates the token, the dialer's establishes the
+  peering and `up` waits until it is active; the name is the peer's name
+  on both sides (`upstreams: { api: { port: 9091, peer: dc1-dc2 } }`).
+  `exports` writes the exported-services entry. `via_mesh_gateways: true`
+  sends the control plane through the gateways; without it the servers
+  join the wan and the token names their wan gRPC addresses (see
+  `examples/peering.yaml`)
 - `acl: true` (under `consul.defaults` or a dc): ACLs with default deny
   plus gossip encryption. Parker generates the management token, an agent
   token and the gossip key; `parker exec` (and the TUI shell) sets
@@ -358,7 +367,7 @@ laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 - `scenario:` / `scenarios:` with waits, execs, asserts, faults and rolling
   upgrades (see [Scenarios](#scenarios))
 
-Not yet: partitions, peering, impairments, modules/overlays/`--set`.
+Not yet: partitions, impairments, modules/overlays/`--set`.
 
 ## Development
 
