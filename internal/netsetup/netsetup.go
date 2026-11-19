@@ -221,24 +221,53 @@ func Down(lab string, log func(string, ...any)) error {
 	if len(names) > 0 {
 		log("deleted %d namespaces", len(names))
 	}
-	links, err := netlink.LinkList()
-	if err != nil {
-		return err
-	}
+	// Deleting the namespaces tears down the veths inside them
+	// asynchronously, so a link dump right now is often interrupted
+	// (NLM_F_DUMP_INTR). Re-dump until a full, consistent pass finds
+	// nothing of ours left.
 	deleted := 0
-	for _, l := range links {
-		if l.Attrs().Alias == Label(lab) {
+	for attempt := 1; ; attempt++ {
+		links, err := labelledLinks(lab)
+		if err != nil && !errors.Is(err, netlink.ErrDumpInterrupted) {
+			return errors.Join(append(errs, fmt.Errorf("list links: %w", err))...)
+		}
+		if err == nil && len(links) == 0 {
+			break
+		}
+		if attempt > 10 {
+			names := make([]string, len(links))
+			for i, l := range links {
+				names[i] = l.Attrs().Name
+			}
+			errs = append(errs, fmt.Errorf("links still present after cleanup: %s", strings.Join(names, ", ")))
+			break
+		}
+		for _, l := range links {
 			if err := netlink.LinkDel(l); err != nil && !errors.Is(err, syscall.ENODEV) {
 				errs = append(errs, fmt.Errorf("delete link %s: %w", l.Attrs().Name, err))
 				continue
 			}
 			deleted++
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if deleted > 0 {
 		log("deleted %d links", deleted)
 	}
 	return errors.Join(errs...)
+}
+
+// labelledLinks returns the host links labelled for lab. With
+// ErrDumpInterrupted the list may be incomplete and the caller should retry.
+func labelledLinks(lab string) ([]netlink.Link, error) {
+	all, err := netlink.LinkList()
+	var out []netlink.Link
+	for _, l := range all {
+		if l.Attrs().Alias == Label(lab) {
+			out = append(out, l)
+		}
+	}
+	return out, err
 }
 
 // pidsIn returns the pids whose network namespace is one of inodes.
