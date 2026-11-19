@@ -44,8 +44,8 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 
 | Command | What it does |
 |---|---|
-| `parker up FILE` | Clean up any previous run, create the network, start everything, return when all readiness checks pass. Processes keep running after it returns. On failure, prints the failing log tail and tears down (`--keep-on-failure` to inspect). |
-| `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces and labelled links. Idempotent, needs no state file. Logs are kept. |
+| `parker up FILE` | Clean up any previous run, create the network, start everything, return when all readiness checks pass. Processes keep running after it returns. On failure, prints the failing log tail and tears down (`--keep-on-failure` to inspect). Refuses subnets that clash with the host. If the FORWARD chain drops by default (Docker), adds labelled ACCEPT rules for the lab bridges (`--no-firewall` prints them instead). |
+| `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces, labelled links and firewall rules. Idempotent, needs no state file. Logs are kept. |
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
 | `parker validate FILE` | Structural (unknown keys with line numbers) and semantic checks. |
 | `parker exec FILE NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. |
