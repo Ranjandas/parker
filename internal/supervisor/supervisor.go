@@ -532,6 +532,15 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 				return fmt.Errorf("consul: %d alive WAN members, want >=%d", alive, want)
 			}
 		}
+		if dc := r.Consul.Reaches; dc != "" {
+			nodes, _, err := c.Catalog().Nodes(&api.QueryOptions{Datacenter: dc})
+			if err != nil {
+				return fmt.Errorf("consul: datacenter %s not reachable yet: %w", dc, err)
+			}
+			if len(nodes) == 0 {
+				return fmt.Errorf("consul: datacenter %s has no nodes yet", dc)
+			}
+		}
 		if svc := r.Consul.ServiceHealthy; svc != "" {
 			// Ready means the catalog (not just the local agent) shows this
 			// node's instance as passing, so other nodes can discover it.
