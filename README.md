@@ -36,6 +36,8 @@ $ sudo parker exec examples/minimal.yaml dc1/server-2 -- consul members
 $ sudo parker down examples/minimal.yaml
 ```
 
+[![ci](https://github.com/Ranjandas/parker/actions/workflows/ci.yml/badge.svg)](https://github.com/Ranjandas/parker/actions/workflows/ci.yml)
+
 Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/schema-design.md) (v0.2).
 
 ## Commands

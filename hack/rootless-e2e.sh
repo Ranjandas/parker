@@ -17,6 +17,11 @@ F=$1
 P=./bin/parker
 mount -t tmpfs tmpfs /run && mkdir -p /run/netns
 export PARKER_RUN_DIR=/run/parker
+# The run dir lives on a private tmpfs; copy it out on failure so CI can
+# keep the logs (PARKER_E2E_LOGS, e.g. /tmp/parker-e2e-logs).
+if [ -n "${PARKER_E2E_LOGS:-}" ]; then
+  trap 'rc=$?; [ $rc = 0 ] || { mkdir -p "$PARKER_E2E_LOGS"; cp -r /run/parker/. "$PARKER_E2E_LOGS"/ 2>/dev/null || true; }' EXIT
+fi
 ip link set lo up
 
 $P up "$F"

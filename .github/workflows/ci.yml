@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "needs gofmt:"; echo "$out"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  e2e:
+    # Full up / exec / down inside `unshare -Urnm`, no sudo for parker itself.
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 blocks them via AppArmor by default.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Cache Consul binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/parker
+          key: parker-bin-${{ runner.os }}-${{ hashFiles('examples/*.yaml') }}
+      - run: make e2e
+        env:
+          PARKER_E2E_LOGS: /tmp/parker-e2e-logs
+      - name: Upload lab logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: /tmp/parker-e2e-logs
+          if-no-files-found: ignore
