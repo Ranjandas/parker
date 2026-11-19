@@ -14,7 +14,7 @@ import (
 // childEnv marks the re-executed daemon inside the namespaces.
 const childEnv = "PARKER_ROOTLESS_CHILD"
 
-// Dir is where a user's rootless daemon keeps its socket and run dirs:
+// Dir is where a user's rootless daemon keeps its socket:
 // $XDG_RUNTIME_DIR/parker, else /tmp/parker-<uid>. The same path is visible
 // inside and outside the namespace.
 func Dir() string {
@@ -27,8 +27,18 @@ func Dir() string {
 // SocketPath of the rootless daemon.
 func SocketPath() string { return filepath.Join(Dir(), "parker.sock") }
 
-// RunBase of the rootless daemon's labs.
-func RunBase() string { return filepath.Join(Dir(), "run") }
+// RunBase of the rootless daemon's labs: $XDG_STATE_HOME/parker/run, else
+// ~/.local/state/parker/run, else Dir()/run. Labs hold Consul data, which
+// outgrows the runtime dir (a small tmpfs), so they live on disk.
+func RunBase() string {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, "parker", "run")
+	}
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return filepath.Join(h, ".local", "state", "parker", "run")
+	}
+	return filepath.Join(Dir(), "run")
+}
 
 // InChild reports whether this process is the daemon inside the namespaces.
 func InChild() bool { return os.Getenv(childEnv) == "1" }

@@ -44,8 +44,15 @@ func SocketPath() string {
 	if rootless.InChild() || (os.Geteuid() != 0 && os.Getenv("PARKER_RUN_DIR") == "") {
 		return rootless.SocketPath()
 	}
-	return filepath.Join(lab.RunBase(), "parker.sock")
+	if b := os.Getenv("PARKER_RUN_DIR"); b != "" {
+		return filepath.Join(b, "parker.sock")
+	}
+	return RootSocket
 }
+
+// RootSocket is root's daemon socket without PARKER_RUN_DIR. It stays on
+// /run while the labs live under lab.RootRunBase.
+const RootSocket = "/run/parker/parker.sock"
 
 type labState struct {
 	h *supervisor.Handle
