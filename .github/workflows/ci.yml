@@ -26,6 +26,11 @@ jobs:
           if [ -n "$out" ]; then echo "needs gofmt:"; echo "$out"; exit 1; fi
       - run: go vet ./...
       - run: go test -race ./...
+      - name: client builds for macOS and arm64
+        run: |
+          GOOS=darwin GOARCH=arm64 go vet ./...
+          GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/parker
+          GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/parker
 
   e2e:
     # Full up / exec / down inside `unshare -Urnm`, no sudo for parker itself.
