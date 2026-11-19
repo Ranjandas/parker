@@ -21,8 +21,28 @@ import (
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
 	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
+	"github.com/Ranjandas/parker/internal/rootless"
 )
+
+// isRootless: this CLI runs as a normal user (not inside the rootless
+// daemon), so it uses, and starts, the per-user rootless daemon.
+func isRootless() bool {
+	return os.Geteuid() != 0 && !rootless.InChild() && os.Getenv("PARKER_RUN_DIR") == ""
+}
+
+func tailFile(path string, n int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "(no log at " + path + ")"
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -87,6 +107,11 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 	if err != nil {
 		return nil, err
 	}
+	if isRootless() {
+		if err := os.MkdirAll(rootless.Dir(), 0o700); err != nil {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(lab.RunBase(), 0o755); err != nil {
 		return nil, lab.PrivHint(err)
 	}
@@ -97,9 +122,15 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 	}
 	defer lf.Close()
 	cmd := exec.Command(self, "daemon")
-	cmd.Stdout, cmd.Stderr = lf, lf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if isRootless() {
+		cmd = rootless.Command(self, "daemon")
+	}
+	cmd.Stdout, cmd.Stderr = lf, lf
 	if err := cmd.Start(); err != nil {
+		if isRootless() {
+			return nil, rootless.Explain(err)
+		}
 		return nil, err
 	}
 	exited := make(chan struct{})
@@ -107,12 +138,16 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if c, ok := localDaemon(ctx); ok {
-			fmt.Fprintf(os.Stderr, "started parker daemon (pid %d, log %s)\n", cmd.Process.Pid, logPath)
+			mode := ""
+			if isRootless() {
+				mode = " in rootless mode; reach nodes with parker exec/proxy/port-forward"
+			}
+			fmt.Fprintf(os.Stderr, "started parker daemon%s (pid %d, log %s)\n", mode, cmd.Process.Pid, logPath)
 			return c, nil
 		}
 		select {
 		case <-exited:
-			return nil, fmt.Errorf("parker daemon exited at start; see %s", logPath)
+			return nil, fmt.Errorf("parker daemon exited at start:\n%s", tailFile(logPath, 8))
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -155,6 +190,17 @@ func upCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
+			// Fetch here: a rootless daemon has no network of its own, and
+			// the cache is shared.
+			if !target().IsRemote() {
+				for k, v := range low.Versions {
+					if lab.Needs(low, k) {
+						if _, err := fetch.Binary(k, v, os.Stdout); err != nil {
+							return err
+						}
+					}
+				}
+			}
 			if noDaemon {
 				_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: keepOnFail, NoFirewall: noFirewall})
 				if err != nil {
@@ -400,7 +446,31 @@ func daemonCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
 			defer stop()
-			return daemon.Serve(ctx, daemon.ServeOptions{Socket: daemon.SocketPath(), Listen: listen, SANs: sans}, os.Stdout)
+			if isRootless() {
+				// Re-run this command inside fresh user, network and mount
+				// namespaces, where we are root over a private network.
+				self, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				child := rootless.Command(self, os.Args[1:]...)
+				child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+				child.SysProcAttr.Setsid = false
+				if err := child.Start(); err != nil {
+					return rootless.Explain(err)
+				}
+				go func() { <-ctx.Done(); _ = child.Process.Signal(syscall.SIGTERM) }()
+				return child.Wait()
+			}
+			opts := daemon.ServeOptions{Socket: daemon.SocketPath(), Listen: listen, SANs: sans}
+			if rootless.InChild() {
+				if err := rootless.Setup(); err != nil {
+					return err
+				}
+				opts.DownLabsOnExit = true
+				say("rootless mode: labs live in this daemon's namespaces and stop with it")
+			}
+			return daemon.Serve(ctx, opts, os.Stdout)
 		},
 	}
 	c.Flags().StringVar(&listen, "listen", "", "also serve remote clients on this TCP address (e.g. :7443); TLS + token")

@@ -18,6 +18,7 @@ import (
 
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
+	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
@@ -25,11 +26,14 @@ import (
 // TopologyFile is the expanded topology saved in each lab's run dir.
 const TopologyFile = "topology.yaml"
 
-// RunBase is the parent of every lab's run directory (PARKER_RUN_DIR,
-// default /run/parker).
+// RunBase is the parent of every lab's run directory: PARKER_RUN_DIR, else
+// /run/parker for root, else the rootless daemon's dir.
 func RunBase() string {
 	if b := os.Getenv("PARKER_RUN_DIR"); b != "" {
 		return b
+	}
+	if os.Geteuid() != 0 {
+		return rootless.RunBase()
 	}
 	return "/run/parker"
 }
@@ -157,11 +161,15 @@ func allowForwarding(name string, low *spec.File, dryRun bool, say func(string, 
 	if fw == nil {
 		return nil
 	}
+	st, err := fw.State()
+	if err != nil {
+		say("firewall: can't read iptables, not adding rules (%v)", err)
+		return nil
+	}
+	if !st.NeedsRules() {
+		return nil
+	}
 	if dryRun {
-		st, err := fw.State()
-		if err != nil || !st.NeedsRules() {
-			return nil
-		}
 		say("firewall: FORWARD would drop lab traffic; not changing it (--no-firewall). Run:")
 		for _, a := range netsetup.RuleArgs(name, st.Chain(), low) {
 			say("  sudo iptables %s", strings.Join(a, " "))

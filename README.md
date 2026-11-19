@@ -106,6 +106,33 @@ Run directory: `/run/parker/<lab>/` (`PARKER_RUN_DIR` to change), with
 and `state.json`. The daemon's socket and `daemon.log` live in
 `/run/parker/`.
 
+## Rootless mode (no sudo)
+
+Run parker as a normal user and it uses a per-user daemon that lives in its
+own user + network + mount namespace, where you are root over a private
+network stack. Nothing touches the host's network, and no sudo is needed:
+
+```console
+$ parker up examples/minimal.yaml
+started parker daemon in rootless mode; reach nodes with parker exec/proxy/port-forward ...
+$ parker exec minimal dc1/server-1 -- consul members
+$ parker port-forward minimal dc1/server-1 8500     # Consul UI on http://127.0.0.1:8500/ui
+$ parker down minimal
+```
+
+- The host has no route into the lab, so `exec` (over the API), `logs`,
+  `proxy` and `port-forward` are the ways in.
+- Socket and run dirs: `$XDG_RUNTIME_DIR/parker/` (else `/tmp/parker-<uid>/`).
+- Binaries are fetched by the CLI (the daemon has no network) into the usual
+  cache.
+- Labs live in the daemon's namespaces, so `parker daemon stop` takes them
+  down with it.
+- Needs unprivileged user namespaces. On Ubuntu 23.10+ AppArmor blocks them;
+  parker says so and how to allow it
+  (`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`).
+- Use `sudo parker ...` instead when the lab should be reachable from the
+  host directly (bridges on the host, Docker interplay and so on).
+
 ## Remote use
 
 Run Parker on a VM and drive it from your laptop, with the same binary and
@@ -158,6 +185,7 @@ Needs Go 1.27+ and Linux.
 $ go build -o bin/parker ./cmd/parker
 $ go test ./...
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
+$ make e2e-rootless                            # rootless mode as a normal user
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
 ```
 

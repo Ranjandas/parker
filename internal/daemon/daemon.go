@@ -25,6 +25,7 @@ import (
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/netsetup"
+	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
@@ -32,8 +33,15 @@ import (
 // Version is reported by the Version RPC; main sets it.
 var Version = "dev"
 
-// SocketPath is where the daemon listens: <run base>/parker.sock.
-func SocketPath() string { return filepath.Join(lab.RunBase(), "parker.sock") }
+// SocketPath is where the daemon listens: /run/parker/parker.sock for root
+// (<run base>/parker.sock with PARKER_RUN_DIR), or the rootless daemon's
+// socket for other users and inside the rootless namespace.
+func SocketPath() string {
+	if rootless.InChild() || (os.Geteuid() != 0 && os.Getenv("PARKER_RUN_DIR") == "") {
+		return rootless.SocketPath()
+	}
+	return filepath.Join(lab.RunBase(), "parker.sock")
+}
 
 type labState struct {
 	h *supervisor.Handle
@@ -344,6 +352,10 @@ type ServeOptions struct {
 	Socket string   // unix socket (always served)
 	Listen string   // optional TCP address for remote clients (TLS + token)
 	SANs   []string // extra names/IPs for the self-signed certificate
+	// DownLabsOnExit tears every lab down when the daemon stops. Rootless
+	// daemons need it: their labs live in the daemon's namespaces, which a
+	// later daemon can't join.
+	DownLabsOnExit bool
 }
 
 // Serve runs the daemon until ctx is done or Shutdown is called. Labs keep
@@ -397,6 +409,14 @@ func Serve(ctx context.Context, o ServeOptions, log io.Writer) error {
 	case err := <-errc:
 		return err
 	}
+	if o.DownLabsOnExit {
+		names, _ := lab.Labs()
+		for _, n := range names {
+			s.stopSupervising(n)
+			say("down %s (rootless labs stop with their daemon)", n)
+			_ = lab.Down(n, io.Discard)
+		}
+	}
 	shutCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	_ = srv.Shutdown(shutCtx)
@@ -404,7 +424,11 @@ func Serve(ctx context.Context, o ServeOptions, log io.Writer) error {
 		_ = tcp.Shutdown(shutCtx)
 	}
 	_ = os.Remove(socket)
-	say("parker daemon stopped; labs keep running")
+	if o.DownLabsOnExit {
+		say("parker daemon stopped")
+	} else {
+		say("parker daemon stopped; labs keep running")
+	}
 	return nil
 }
 
