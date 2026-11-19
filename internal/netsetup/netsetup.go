@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package netsetup wires the lab's network: one Linux bridge per network on
 // the host and one named network namespace per node, joined by veth pairs.
 //
@@ -7,8 +9,6 @@
 package netsetup
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -27,21 +27,6 @@ import (
 
 	"github.com/Ranjandas/parker/internal/spec"
 )
-
-const netnsDir = "/run/netns"
-
-func Label(lab string) string { return "parker:" + lab }
-
-func NetnsName(lab, node string) string { return "parker-" + lab + "-" + node }
-
-func NetnsPath(lab, node string) string { return filepath.Join(netnsDir, NetnsName(lab, node)) }
-
-func short(parts ...string) string {
-	h := sha256.Sum256([]byte(strings.Join(parts, "/")))
-	return hex.EncodeToString(h[:])[:8]
-}
-
-func BridgeName(lab, network string) string { return "pk-" + short(lab, network) }
 
 // Up creates bridges, namespaces and veths. Call Down first for a clean slate.
 func Up(lab string, f *spec.File) error {

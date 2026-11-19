@@ -1,0 +1,57 @@
+# Release build: `git tag v0.1.0 && git push origin v0.1.0` runs
+# .github/workflows/release.yml. Try locally with
+#   goreleaser release --snapshot --clean
+version: 2
+project_name: parker
+
+before:
+  hooks:
+    - go mod download
+    - sh -c "go run ./cmd/parker schema > parker.schema.json"
+
+builds:
+  - id: parker
+    main: ./cmd/parker
+    binary: parker
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}
+    goos: [linux]
+    goarch: [amd64, arm64]
+  # macOS: client only (exec, logs, status, proxy, port-forward against a
+  # daemon on a Linux host). Labs themselves need Linux.
+  - id: parker-client
+    main: ./cmd/parker
+    binary: parker
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}
+    goos: [darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: parker
+    ids: [parker, parker-client]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - contrib/systemd/parker.service
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: ./parker.schema.json
+
+release:
+  extra_files:
+    - glob: ./parker.schema.json
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]

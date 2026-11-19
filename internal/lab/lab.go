@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -51,6 +52,9 @@ type Options struct {
 // Up recreates the lab from its expanded topology and returns when every
 // readiness check passes. ctx cancels the bring-up itself.
 func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, error) {
+	if runtime.GOOS != "linux" {
+		return nil, fmt.Errorf("labs need Linux network namespaces; on %s use a remote daemon (PARKER_HOST)", runtime.GOOS)
+	}
 	say := func(format string, a ...any) { fmt.Fprintf(o.Log, format+"\n", a...) }
 	name := low.Name
 	t0 := time.Now()

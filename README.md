@@ -40,6 +40,33 @@ $ sudo parker down examples/minimal.yaml
 
 Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/schema-design.md) (v0.2).
 
+## Install
+
+Download a release (static binaries for Linux amd64/arm64; the macOS build is
+a client for a daemon on a Linux host) and check it against `SHA256SUMS`:
+
+```console
+$ V=0.1.0 ARCH=amd64   # or arm64
+$ curl -LO https://github.com/Ranjandas/parker/releases/download/v$V/parker_${V}_linux_$ARCH.tar.gz
+$ curl -LO https://github.com/Ranjandas/parker/releases/download/v$V/SHA256SUMS
+$ sha256sum --ignore-missing -c SHA256SUMS
+$ tar xzf parker_${V}_linux_$ARCH.tar.gz && sudo install -m 0755 parker /usr/local/bin/parker
+$ parker version
+```
+
+To keep the daemon running across reboots, install the systemd unit from the
+archive (`contrib/systemd/parker.service`):
+
+```console
+$ sudo install -m 0644 contrib/systemd/parker.service /etc/systemd/system/
+$ echo 'PARKER_DAEMON_ARGS="--listen :7443"' | sudo tee /etc/default/parker   # optional: remote clients
+$ sudo systemctl daemon-reload && sudo systemctl enable --now parker
+```
+
+Stopping the unit stops only the daemon. Labs keep running, and
+`parker down` cleans them up either way. Or build from source:
+`go install github.com/Ranjandas/parker/cmd/parker@latest`.
+
 ## Commands
 
 | Command | What it does |
@@ -56,6 +83,7 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 | `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker` or `server-1.dc1.<lab>.parker`; only lab addresses are reachable. |
 | `parker port-forward FILE\|LAB NODE [LOCAL:]PORT` | Forward a local port to a node's port. |
 | `parker daemon [stop\|status\|credentials]` | Run the daemon in the foreground (`--listen :7443` for remote clients), stop it (labs keep running), check it, or print what a remote client needs. |
+| `parker version` | Client version, commit and build date, plus the daemon's when one answers. |
 | `parker fetch FILE` | Download pinned binaries into the cache. |
 
 `--var name=value` sets `${vars.name}`.
@@ -203,6 +231,7 @@ $ go test ./...
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
 $ make e2e-rootless                            # rootless mode as a normal user
 $ go generate ./internal/spec                  # regenerate the JSON Schema after changing internal/spec
+$ goreleaser release --snapshot --clean       # release build into dist/ (tags v* release from CI)
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
 ```
 

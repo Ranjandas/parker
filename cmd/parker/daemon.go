@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -52,6 +53,12 @@ func signalContext() (context.Context, context.CancelFunc) {
 }
 
 var hostFlag string
+
+// errNotLinux: off Linux, parker is a client for a daemon on a Linux host.
+var errNotLinux = errors.New("labs need Linux (network namespaces); from " + runtime.GOOS +
+	" point parker at a daemon on a Linux host:\n" +
+	"  PARKER_HOST=https://HOST:7443 PARKER_TOKEN=... PARKER_TLS_CA=cert.pem parker status\n" +
+	"(on that host: parker daemon --listen :7443, then parker daemon credentials)")
 
 // target is where the CLI talks to a daemon: --host / PARKER_HOST, with
 // PARKER_TOKEN, PARKER_TLS_CA and PARKER_TLS_INSECURE=1 for https.
@@ -105,6 +112,9 @@ func ensureDaemon(ctx context.Context) (parkerv1connect.ParkerServiceClient, err
 	}
 	if ok {
 		return c, nil
+	}
+	if runtime.GOOS != "linux" {
+		return nil, errNotLinux
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -471,6 +481,9 @@ func daemonCmd() *cobra.Command {
 			"  ssh -N -L /tmp/parker.sock:/run/parker/parker.sock vm & PARKER_HOST=unix:///tmp/parker.sock parker status",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if runtime.GOOS != "linux" {
+				return errNotLinux
+			}
 			ctx, stop := signalContext()
 			defer stop()
 			if isRootless() {
