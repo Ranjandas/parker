@@ -1,6 +1,7 @@
 // Package tui is `parker tui`: a k9s-style terminal UI over the daemon API.
 // Browse labs and their nodes with live status, open a shell in a node,
-// follow a process log, or describe a node, without typing long commands.
+// follow a process log, describe a node, break it on purpose (kill, stop,
+// pause, partition) and play scenarios, without typing long commands.
 package tui
 
 import (
@@ -22,6 +23,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
+	"github.com/Ranjandas/parker/internal/scenario"
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 // Client is the part of the daemon API the TUI uses.
@@ -44,6 +47,14 @@ type Options struct {
 	Shell func(lab, node string) *exec.Cmd
 	// Refresh is the status poll interval; default 2s.
 	Refresh time.Duration
+	// Run plays a scenario on the daemon (a named one, or inline YAML),
+	// calling line for each line of progress. Fault actions and :run need
+	// it.
+	Run func(ctx context.Context, lab, scenario, inline string, line func(string)) error
+	// Forward listens on local (a port, or "" for any) and tunnels each
+	// connection to node:remote through the daemon until ctx ends. It
+	// returns the address it listens on.
+	Forward func(ctx context.Context, lab, node, local, remote string) (string, error)
 }
 
 // Run starts the TUI and returns when the user quits.
@@ -59,6 +70,7 @@ const (
 	viewNodes
 	viewLogs
 	viewDescribe
+	viewRun // a scenario's progress, streamed like a log
 )
 
 type inputMode int
@@ -113,6 +125,11 @@ type Model struct {
 	describeTitle string
 	autoOpened    bool
 
+	confirm *pending // an action waiting for y
+	busy    string   // the action in flight
+
+	forwards []forward // port-forwards running until quit or :pf stop
+
 	err     error
 	flash   string
 	updated time.Time
@@ -131,7 +148,23 @@ type (
 	logEndMsg   struct{ err error }
 	errMsg      struct{ err error }
 	shellDone   struct{ err error }
+	actionDone  struct {
+		label, last string
+		err         error
+	}
+	runEndMsg struct{ err error }
 )
+
+type forward struct {
+	desc   string
+	cancel context.CancelFunc
+}
+
+// pending is a fault action shown for confirmation.
+type pending struct {
+	label string
+	step  *spec.Step
+}
 
 const maxLogLines = 5000
 
@@ -269,6 +302,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash = "log stream ended: " + msg.err.Error()
 		}
 		return m, nil
+	case runEndMsg:
+		if m.view == viewRun {
+			if msg.err != nil {
+				m.flash = "scenario failed: " + msg.err.Error()
+			} else {
+				m.flash = "scenario passed"
+			}
+		}
+		return m, waitLog(m.logCh)
+	case actionDone:
+		m.busy = ""
+		if msg.err != nil {
+			m.flash = msg.label + ": " + msg.err.Error()
+		} else {
+			m.flash = msg.label + ": done"
+		}
+		return m, m.refresh()
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -378,12 +428,21 @@ func (m Model) selected() (row, bool) {
 func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
 		m.stopLogs()
+		m.stopForwards()
 		return m, tea.Quit
 	}
 	if m.inputMode != inputNone {
 		return m.inputKey(k)
 	}
 	m.flash = ""
+	if p := m.confirm; p != nil {
+		m.confirm = nil
+		if k.String() == "y" || k.String() == "enter" {
+			return m.act(p.label, p.step)
+		}
+		m.flash = "cancelled"
+		return m, nil
+	}
 	switch k.String() {
 	case "/":
 		return m.startInput(inputFilter)
@@ -391,6 +450,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startInput(inputCommand)
 	case "q":
 		if m.view == viewLabs || (m.view == viewNodes && m.o.Lab != "") {
+			m.stopForwards()
 			return m, tea.Quit
 		}
 		return m.back()
@@ -440,11 +500,13 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			return m, m.refresh()
+		case "K", "R", "S", "P", "x", "H":
+			return m.hotkey(k.String())
 		}
 		var cmd tea.Cmd
 		m.nodeTable, cmd = m.nodeTable.Update(k)
 		return m, cmd
-	case viewLogs:
+	case viewLogs, viewRun:
 		switch k.String() {
 		case "f":
 			m.follow = !m.follow
@@ -481,7 +543,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) back() (tea.Model, tea.Cmd) {
 	switch m.view {
-	case viewLogs:
+	case viewLogs, viewRun:
 		m.stopLogs()
 		m.view = viewNodes
 		return m, m.refresh()
@@ -507,7 +569,7 @@ func (m Model) startInput(mode inputMode) (tea.Model, tea.Cmd) {
 		switch m.view {
 		case viewNodes:
 			m.input.SetValue(m.filter)
-		case viewLogs:
+		case viewLogs, viewRun:
 			m.input.SetValue(m.logFilter)
 		}
 		m.input.CursorEnd()
@@ -543,7 +605,7 @@ func (m Model) setFilter(f string) Model {
 	case viewNodes:
 		m.filter = f
 		m.applyRows()
-	case viewLogs:
+	case viewLogs, viewRun:
 		m.logFilter = f
 		m.renderLog()
 	}
@@ -557,7 +619,10 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 	switch verb {
 	case "q", "quit":
 		m.stopLogs()
+		m.stopForwards()
 		return m, tea.Quit
+	case "pf", "port-forward":
+		return m.portForward(arg)
 	case "labs", "lab":
 		if arg == "" {
 			m.stopLogs()
@@ -575,11 +640,186 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 		m.view, m.dc = viewNodes, arg
 		m.applyRows()
 		return m, nil
+	case "run":
+		if m.lab == "" {
+			m.flash = ":run needs a lab open"
+			return m, nil
+		}
+		return m.openRun(arg)
+	case "partition", "heal", "kill", "stop", "start", "restart", "pause", "resume":
+		if m.lab == "" {
+			m.flash = ":" + verb + " needs a lab open"
+			return m, nil
+		}
+		args := strings.Fields(arg)
+		if len(args) == 0 && verb != "heal" {
+			r, ok := m.selected()
+			if !ok {
+				m.flash = ":" + verb + " needs a selector or a selected node"
+				return m, nil
+			}
+			args = []string{r.node}
+		}
+		st, err := scenario.FaultStep(verb, args)
+		if err != nil {
+			m.flash = err.Error()
+			return m, nil
+		}
+		label := scenario.Label(st)
+		if verb == "heal" || verb == "start" || verb == "resume" {
+			return m.act(label, st)
+		}
+		m.confirm = &pending{label: label, step: st}
+		return m, nil
 	case "":
 		return m, nil
 	}
-	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc NAME, :q)", verb)
+	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc NAME, :kill, :partition, :heal, :run, :q)", verb)
 	return m, nil
+}
+
+// ---------------------------------------------------------------- actions
+
+// hotkey maps a nodes-view key to a fault on the selected node. Disruptive
+// ones ask first.
+func (m Model) hotkey(key string) (tea.Model, tea.Cmd) {
+	if key == "H" {
+		st, _ := scenario.FaultStep("heal", nil)
+		return m.act(scenario.Label(st), st)
+	}
+	r, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	action := map[string]string{"K": "kill", "R": "restart", "S": "stop", "P": "pause", "x": "partition"}[key]
+	switch {
+	case key == "S" && (r.state == "stopped" || r.state == "dead"):
+		action = "start"
+	case key == "P" && r.state == "paused":
+		action = "resume"
+	}
+	return m.command(action + " " + r.node)
+}
+
+// portForward handles :pf [LOCAL:]REMOTE (from the selected node),
+// :pf (list) and :pf stop.
+func (m Model) portForward(arg string) (tea.Model, tea.Cmd) {
+	switch arg {
+	case "":
+		if len(m.forwards) == 0 {
+			m.flash = "no port-forwards; :pf [LOCAL:]REMOTE forwards from the selected node"
+			return m, nil
+		}
+		var ds []string
+		for _, f := range m.forwards {
+			ds = append(ds, f.desc)
+		}
+		m.flash = strings.Join(ds, " · ")
+		return m, nil
+	case "stop":
+		n := len(m.forwards)
+		m.stopForwards()
+		m.flash = fmt.Sprintf("stopped %d port-forwards", n)
+		return m, nil
+	}
+	if m.o.Forward == nil {
+		m.flash = "port-forward isn't available here"
+		return m, nil
+	}
+	r, ok := m.selected()
+	if !ok || m.view != viewNodes {
+		m.flash = ":pf needs a node selected"
+		return m, nil
+	}
+	local, remote, found := strings.Cut(arg, ":")
+	if !found {
+		local, remote = arg, arg
+	}
+	if _, err := strconv.Atoi(remote); err != nil {
+		m.flash = ":pf [LOCAL:]REMOTE takes port numbers"
+		return m, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	addr, err := m.o.Forward(ctx, m.lab, r.node, local, remote)
+	if err != nil {
+		cancel()
+		m.flash = "port-forward: " + err.Error()
+		return m, nil
+	}
+	desc := addr + " → " + r.node + ":" + remote
+	m.forwards = append(m.forwards, forward{desc: desc, cancel: cancel})
+	m.flash = "forwarding " + desc
+	return m, nil
+}
+
+func (m *Model) stopForwards() {
+	for _, f := range m.forwards {
+		f.cancel()
+	}
+	m.forwards = nil
+}
+
+// act runs one fault step on the daemon.
+func (m Model) act(label string, st *spec.Step) (tea.Model, tea.Cmd) {
+	if m.o.Run == nil {
+		m.flash = "actions need the daemon's Run API"
+		return m, nil
+	}
+	if m.busy != "" {
+		m.flash = "still running: " + m.busy
+		return m, nil
+	}
+	y, err := scenario.Inline(st)
+	if err != nil {
+		m.flash = err.Error()
+		return m, nil
+	}
+	m.busy = label
+	run, lab := m.o.Run, m.lab
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		var last string
+		err := run(ctx, lab, "", y, func(l string) {
+			if strings.TrimSpace(l) != "" {
+				last = l
+			}
+		})
+		return actionDone{label: label, last: last, err: err}
+	}
+}
+
+// openRun plays a scenario (name, or the lab's only one) and streams its
+// progress; leaving the view stops it.
+func (m Model) openRun(name string) (tea.Model, tea.Cmd) {
+	if m.o.Run == nil {
+		m.flash = ":run needs the daemon's Run API"
+		return m, nil
+	}
+	m.stopLogs()
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan tea.Msg, 64)
+	target := "scenario"
+	if name != "" {
+		target = "scenario " + name
+	}
+	m.view, m.logTarget, m.logLines, m.logFilter, m.follow = viewRun, target, nil, "", true
+	m.logCh, m.logCancel = ch, cancel
+	m.renderLog()
+	run, lab := m.o.Run, m.lab
+	go func() {
+		defer close(ch)
+		err := run(ctx, lab, name, "", func(l string) {
+			select {
+			case ch <- logChunkMsg{l + "\n"}:
+			case <-ctx.Done():
+			}
+		})
+		if ctx.Err() == nil {
+			ch <- runEndMsg{err}
+		}
+	}()
+	return m, waitLog(ch)
 }
 
 // ---------------------------------------------------------------- logs
@@ -703,7 +943,7 @@ func (m Model) View() string {
 		}
 	case viewNodes:
 		b.WriteString(m.nodeTable.View())
-	case viewLogs, viewDescribe:
+	case viewLogs, viewDescribe, viewRun:
 		b.WriteString(m.vp.View())
 	}
 	b.WriteByte('\n')
@@ -721,6 +961,8 @@ func (m Model) header() string {
 		}
 	case viewLogs:
 		crumbs = append(crumbs, m.lab, m.logTarget, "logs")
+	case viewRun:
+		crumbs = append(crumbs, m.lab, m.logTarget)
 	case viewDescribe:
 		crumbs = append(crumbs, m.lab, m.describeTitle)
 	}
@@ -735,6 +977,9 @@ func (m Model) header() string {
 			}
 			info += " · " + summary(m.status) + " · " + sup
 		}
+		if n := len(m.forwards); n > 0 {
+			info += fmt.Sprintf(" · %d port-forwards", n)
+		}
 	case viewLogs:
 		mode := "follow"
 		if !m.follow {
@@ -748,7 +993,7 @@ func (m Model) header() string {
 	if m.filter != "" && m.view == viewNodes {
 		info += " · filter " + strconv.Quote(m.filter)
 	}
-	if m.logFilter != "" && m.view == viewLogs {
+	if m.logFilter != "" && (m.view == viewLogs || m.view == viewRun) {
 		info += " · filter " + strconv.Quote(m.logFilter)
 	}
 	return h + "  " + dimStyle.Render(info)
@@ -786,23 +1031,32 @@ func (m Model) footer() string {
 	if m.err != nil {
 		return errStyle.Render("error: " + m.err.Error())
 	}
+	if p := m.confirm; p != nil {
+		return errStyle.Render(p.label+"?") + " " + keyStyle.Render("y") + dimStyle.Render(" yes  any other key: no")
+	}
 	if m.flash != "" {
 		return errStyle.Render(m.flash)
+	}
+	if m.busy != "" {
+		return dimStyle.Render("running " + m.busy + "…")
 	}
 	var keys [][2]string
 	switch m.view {
 	case viewLabs:
 		keys = [][2]string{{"enter", "open"}, {":", "command"}, {"q", "quit"}}
 	case viewNodes:
-		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"/", "filter"}, {":", "command"}, {"esc", "back"}}
+		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
+			{"P", "pause"}, {"x", "partition"}, {"H", "heal"}, {"/", "filter"}, {":", "command"}, {"esc", "back"}}
 	case viewLogs:
 		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"/", "filter"}, {"g/G", "top/end"}, {"esc", "back"}}
 	case viewDescribe:
 		keys = [][2]string{{"↑/↓", "scroll"}, {"esc", "back"}}
+	case viewRun:
+		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"/", "filter"}, {"esc", "stop and back"}}
 	}
 	parts := make([]string, len(keys))
 	for i, k := range keys {
 		parts[i] = keyStyle.Render(k[0]) + " " + dimStyle.Render(k[1])
 	}
-	return strings.Join(parts, "  ")
+	return ansi.Truncate(strings.Join(parts, "  "), max(m.width, 10), "…")
 }

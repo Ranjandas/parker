@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 
@@ -10,17 +12,23 @@ import (
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/proxy"
 	"github.com/Ranjandas/parker/internal/tui"
 )
 
 func tuiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui [FILE|LAB]",
-		Short: "Terminal UI: browse labs and nodes, open shells, follow logs",
+		Short: "Terminal UI: browse labs and nodes, open shells, follow logs, inject faults",
 		Long: "A k9s-style terminal UI over the daemon API, local or remote (--host).\n\n" +
 			"Keys: enter open · s shell into the node · l follow the process log\n" +
 			"(f follow, w wrap, / filter) · d describe the node · / filter rows\n" +
-			"· : commands (:labs, :lab NAME, :dc NAME, :q) · esc back · q quit",
+			"· esc back · q quit\n\n" +
+			"Faults on the selected node: K kill · R restart · S stop/start · P pause/resume\n" +
+			"· x partition it from the rest · H heal all (disruptive ones ask y/n first).\n\n" +
+			"Commands: :labs · :lab NAME · :dc NAME · :run [SCENARIO] (watch it live; esc stops it)\n" +
+			"· :kill|:stop|:start|:restart|:pause|:resume [SELECTOR] · :partition GROUP... · :heal [SELECTOR]\n" +
+			"· :pf [LOCAL:]REMOTE (port-forward from the selected node; :pf lists, :pf stop) · :q",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
@@ -29,7 +37,28 @@ func tuiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			o := tui.Options{Client: c, Where: daemonWhere(), Shell: shellCommand}
+			o := tui.Options{Client: c, Where: daemonWhere(), Shell: shellCommand,
+				Run: func(ctx context.Context, lab, sc, inline string, line func(string)) error {
+					s, err := c.Run(ctx, connect.NewRequest(&parkerv1.RunRequest{Lab: lab, Scenario: sc, Inline: inline}))
+					if err != nil {
+						return rpcErr(err)
+					}
+					defer s.Close()
+					for s.Receive() {
+						line(s.Msg().Line)
+					}
+					return rpcErr(s.Err())
+				},
+				Forward: func(ctx context.Context, lab, node, local, remote string) (string, error) {
+					ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", local))
+					if err != nil {
+						return "", err
+					}
+					target := net.JoinHostPort(node+"."+lab+".parker", remote)
+					go func() { _ = proxy.Forward(ctx, ln, target, proxy.APIDialer(c, lab), func(string, ...any) {}) }()
+					return ln.Addr().String(), nil
+				},
+			}
 			if len(args) == 1 {
 				if o.Lab, err = labName(args[0]); err != nil {
 					return err

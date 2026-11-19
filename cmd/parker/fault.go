@@ -1,16 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-
 	"connectrpc.com/connect"
-	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/scenario"
-	"github.com/Ranjandas/parker/internal/spec"
 )
 
 func faultCmd() *cobra.Command {
@@ -34,11 +29,11 @@ func faultCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := faultStep(args[1], args[2:])
+			st, err := scenario.FaultStep(args[1], args[2:])
 			if err != nil {
 				return err
 			}
-			y, err := yaml.Marshal(&spec.Scenario{Steps: []*spec.Step{st}})
+			y, err := scenario.Inline(st)
 			if err != nil {
 				return err
 			}
@@ -59,61 +54,4 @@ func faultCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// faultStep turns `parker fault` arguments into a scenario step.
-func faultStep(action string, args []string) (*spec.Step, error) {
-	st := &spec.Step{}
-	one := func(dst *string) error {
-		if len(args) != 1 {
-			return fmt.Errorf("%s takes one selector", action)
-		}
-		*dst = args[0]
-		return nil
-	}
-	var err error
-	switch action {
-	case "partition":
-		if len(args) == 0 {
-			return nil, fmt.Errorf("partition needs at least one group (selectors joined by commas)")
-		}
-		for _, a := range args {
-			var g spec.NodeGroup
-			for _, sel := range strings.Split(a, ",") {
-				if sel = strings.TrimSpace(sel); sel != "" {
-					g = append(g, sel)
-				}
-			}
-			if len(g) == 0 {
-				return nil, fmt.Errorf("partition: empty group %q", a)
-			}
-			st.Partition = append(st.Partition, g)
-		}
-	case "heal":
-		st.Heal = "all"
-		if len(args) > 1 {
-			return nil, fmt.Errorf("heal takes at most one selector")
-		}
-		if len(args) == 1 {
-			st.Heal = args[0]
-		}
-	case "kill":
-		err = one(&st.Kill)
-	case "stop":
-		err = one(&st.Stop)
-	case "start":
-		err = one(&st.Start)
-	case "restart":
-		err = one(&st.Restart)
-	case "pause":
-		err = one(&st.Pause)
-	case "resume":
-		err = one(&st.Resume)
-	default:
-		return nil, fmt.Errorf("unknown action %q (want partition, heal or %s)", action, strings.Join(scenario.ProcActions, ", "))
-	}
-	if err != nil {
-		return nil, err
-	}
-	return st, nil
 }
