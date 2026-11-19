@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/Ranjandas/parker/internal/netsetup"
@@ -27,6 +28,7 @@ type NodeStatus struct {
 	IPs       []string
 	Namespace bool
 	Processes []ProcStatus
+	Role      string // leader | follower | no-leader | client | ""
 }
 
 type Status struct {
@@ -55,10 +57,14 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 		_ = json.Unmarshal(b, &saved)
 	}
 
-	for _, node := range slices.Sorted(maps.Keys(low.Nodes)) {
+	nodes := slices.Sorted(maps.Keys(low.Nodes))
+	roles := make([]string, len(nodes))
+	var roleWG sync.WaitGroup
+	for i, node := range nodes {
 		n := low.Nodes[node]
 		nsIno, nsOK := inode(netsetup.NetnsPath(name, node))
 		ns := NodeStatus{Name: node, IPs: NodeIPs(n), Namespace: nsOK}
+		hasAgent := false
 		for _, pn := range slices.Sorted(maps.Keys(n.Processes)) {
 			id := node + "/" + pn
 			ps := ProcStatus{Name: pn, LogPath: filepath.Join(supervisor.NodeDir(dir, node), pn+".log")}
@@ -70,8 +76,22 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 				ps.Alive = nsOK && pidInNetns(pid, nsIno)
 			}
 			ns.Processes = append(ns.Processes, ps)
+			if pn == "consul" && ps.Alive {
+				hasAgent = true
+			}
+		}
+		if hasAgent {
+			roleWG.Add(1)
+			go func() {
+				defer roleWG.Done()
+				roles[i] = consulRole(name, node, ns.IPs)
+			}()
 		}
 		st.Nodes = append(st.Nodes, ns)
+	}
+	roleWG.Wait()
+	for i := range st.Nodes {
+		st.Nodes[i].Role = roles[i]
 	}
 	return st, nil
 }

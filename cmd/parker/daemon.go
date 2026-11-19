@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
@@ -273,7 +276,8 @@ func downCmd() *cobra.Command {
 }
 
 func statusCmd() *cobra.Command {
-	return &cobra.Command{
+	var output string
+	c := &cobra.Command{
 		Use:   "status [FILE|LAB]",
 		Short: "Show a lab's nodes and processes, or list labs",
 		Args:  cobra.MaximumNArgs(1),
@@ -308,10 +312,29 @@ func statusCmd() *cobra.Command {
 				}
 				st = daemon.StatusToProto(s)
 			}
-			printStatus(os.Stdout, st)
+			switch output {
+			case "json":
+				// protojson varies its whitespace on purpose; re-indent so
+				// the output is stable for scripts and diffs.
+				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(st)
+				if err != nil {
+					return err
+				}
+				var out bytes.Buffer
+				if err := json.Indent(&out, b, "", "  "); err != nil {
+					return err
+				}
+				fmt.Println(out.String())
+			case "", "table":
+				printStatus(os.Stdout, st)
+			default:
+				return fmt.Errorf("-o %s: want table or json", output)
+			}
 			return nil
 		},
 	}
+	c.Flags().StringVarP(&output, "output", "o", "table", "table or json")
+	return c
 }
 
 func listLabs(ctx context.Context, c parkerv1connect.ParkerServiceClient, viaDaemon bool) error {
@@ -344,7 +367,7 @@ func printStatus(w io.Writer, st *parkerv1.StatusResponse) {
 	}
 	fmt.Fprintf(w, "lab %s: %s; run dir %s\n", st.Lab, sup, st.RunDir)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tIP\tPROCESS\tPID\tSTATE\tRESTARTS")
+	fmt.Fprintln(tw, "NODE\tIP\tPROCESS\tPID\tSTATE\tRESTARTS\tROLE")
 	for _, n := range st.Nodes {
 		ip := strings.Join(n.Ips, ",")
 		if !n.Namespace {
@@ -366,7 +389,11 @@ func printStatus(w io.Writer, st *parkerv1.StatusResponse) {
 			if p.Pid > 0 {
 				pid = fmt.Sprint(p.Pid)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\n", n.Name, ip, p.Name, pid, state, p.Restarts)
+			role := "-"
+			if p.Name == "consul" && n.Role != "" {
+				role = n.Role
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", n.Name, ip, p.Name, pid, state, p.Restarts, role)
 		}
 	}
 	tw.Flush()
