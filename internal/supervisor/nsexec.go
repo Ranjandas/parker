@@ -59,3 +59,7 @@ func dialerIn(path string) func(ctx context.Context, network, addr string) (net.
 		return c, err
 	}
 }
+
+// InNetns runs fn on an OS thread switched into the namespace at path, so a
+// process fn forks (cmd.Start, pty.Start) starts inside it.
+func InNetns(path string, fn func() error) error { return inNetns(path, fn) }

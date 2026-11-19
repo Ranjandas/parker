@@ -339,9 +339,17 @@ func (s *Server) Shutdown(context.Context, *connect.Request[parkerv1.ShutdownReq
 	return connect.NewResponse(&parkerv1.ShutdownResponse{}), nil
 }
 
-// Serve runs the daemon on the unix socket until ctx is done or Shutdown is
-// called. Labs keep running when it exits.
-func Serve(ctx context.Context, socket string, log io.Writer) error {
+// ServeOptions configures Serve.
+type ServeOptions struct {
+	Socket string   // unix socket (always served)
+	Listen string   // optional TCP address for remote clients (TLS + token)
+	SANs   []string // extra names/IPs for the self-signed certificate
+}
+
+// Serve runs the daemon until ctx is done or Shutdown is called. Labs keep
+// running when it exits.
+func Serve(ctx context.Context, o ServeOptions, log io.Writer) error {
+	socket := o.Socket
 	if err := os.MkdirAll(filepath.Dir(socket), 0o755); err != nil {
 		return err
 	}
@@ -369,9 +377,21 @@ func Serve(ctx context.Context, socket string, log io.Writer) error {
 	protocols.SetUnencryptedHTTP2(true)
 	srv := &http.Server{Handler: mux, Protocols: &protocols, ReadHeaderTimeout: 10 * time.Second}
 
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() { errc <- srv.Serve(ln) }()
-	fmt.Fprintf(log, "parker daemon %s (pid %d) listening on %s\n", Version, os.Getpid(), socket)
+	say := func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) }
+	say("parker daemon %s (pid %d) listening on %s", Version, os.Getpid(), socket)
+	var tcp *http.Server
+	if o.Listen != "" {
+		var tcpErr <-chan error
+		tcp, tcpErr, err = serveTCP(ctx, o.Listen, o.SANs, s, say)
+		if err != nil {
+			_ = srv.Close()
+			_ = os.Remove(socket)
+			return err
+		}
+		go func() { errc <- <-tcpErr }()
+	}
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
@@ -380,8 +400,11 @@ func Serve(ctx context.Context, socket string, log io.Writer) error {
 	shutCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	_ = srv.Shutdown(shutCtx)
+	if tcp != nil {
+		_ = tcp.Shutdown(shutCtx)
+	}
 	_ = os.Remove(socket)
-	fmt.Fprintln(log, "parker daemon stopped; labs keep running")
+	say("parker daemon stopped; labs keep running")
 	return nil
 }
 

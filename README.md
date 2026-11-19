@@ -48,10 +48,10 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 | `parker down FILE\|LAB` | Kill every process in the lab's namespaces, delete the namespaces, labelled links and firewall rules. Idempotent, needs no state file and works without the daemon. Logs are kept. |
 | `parker expand FILE` | Print the low-level form (networks, raw nodes, files, processes). It is valid input to `up` and expands to itself. |
 | `parker validate FILE` | Structural (unknown keys with line numbers) and semantic checks. |
-| `parker exec FILE NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. |
+| `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is `dc1-server-1` or `dc1/server-1`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`) and restarts; with no argument, list labs. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
-| `parker daemon [stop\|status]` | Run the daemon in the foreground, stop it (labs keep running), or check it. |
+| `parker daemon [stop\|status\|credentials]` | Run the daemon in the foreground (`--listen :7443` for remote clients), stop it (labs keep running), check it, or print what a remote client needs. |
 | `parker fetch FILE` | Download pinned binaries into the cache. |
 
 `--var name=value` sets `${vars.name}`.
@@ -104,6 +104,32 @@ Run directory: `/run/parker/<lab>/` (`PARKER_RUN_DIR` to change), with
 and `state.json`. The daemon's socket and `daemon.log` live in
 `/run/parker/`.
 
+## Remote use
+
+Run Parker on a VM and drive it from your laptop, with the same binary and
+the same commands, `exec` included:
+
+```console
+vm$ sudo parker daemon --listen :7443 --tls-san 203.0.113.7
+vm$ sudo parker daemon credentials        # token + where the certificate is
+laptop$ scp vm:/var/lib/parker/tls/cert.pem parker-ca.pem
+laptop$ export PARKER_HOST=https://203.0.113.7:7443 PARKER_TOKEN=... PARKER_TLS_CA=$PWD/parker-ca.pem
+laptop$ parker up examples/minimal.yaml   # the file is read and expanded on the laptop
+laptop$ parker exec minimal dc1/server-1 -- consul members
+laptop$ parker logs minimal dc1-server-1 -f
+```
+
+The TCP listener is off unless `--listen` is given, uses TLS 1.3 with a
+self-signed certificate (kept in `/var/lib/parker`, `PARKER_STATE_DIR`), and
+requires the bearer token on every call. Remote exec is a root shell on the
+VM, so prefer not exposing the port at all: tunnel the unix socket instead,
+or put the VM on Tailscale.
+
+```console
+laptop$ ssh -N -L /tmp/parker.sock:/run/parker/parker.sock root@vm &
+laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
+```
+
 ## Supported so far
 
 - `consul.defaults` / dc-level `agents`, `server`, `client` (`config`
@@ -117,8 +143,8 @@ and `state.json`. The daemon's socket and `daemon.log` live in
   `ready_when: port | http | log | consul`, `restart`)
 
 Not yet: partitions, multiple dcs/federation, peering, gateways, Envoy,
-ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`, remote
-clients and proxy mode (#5, #6).
+ACL/TLS/gossip, impairments, `scenario:`, modules/overlays/`--set`, proxy
+mode to reach node IPs from the client (#6).
 
 ## Development
 
