@@ -32,6 +32,15 @@ func CacheDir() string {
 	return filepath.Join(d, "parker")
 }
 
+// releasesURL is PARKER_RELEASES_URL (a mirror laid out like
+// releases.hashicorp.com), else releases.hashicorp.com.
+func releasesURL() string {
+	if u := os.Getenv("PARKER_RELEASES_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	return "https://releases.hashicorp.com"
+}
+
 // Binary returns the path of product@version, downloading it if needed.
 // version may be "path:/abs/binary" to use a local build.
 func Binary(product, version string, log io.Writer) (string, error) {
@@ -48,7 +57,7 @@ func Binary(product, version string, log io.Writer) (string, error) {
 	}
 	fmt.Fprintf(log, "fetching %s %s ...\n", product, version)
 
-	base := fmt.Sprintf("https://releases.hashicorp.com/%s/%s", product, version)
+	base := fmt.Sprintf("%s/%s/%s", releasesURL(), product, version)
 	zipName := fmt.Sprintf("%s_%s_%s_%s.zip", product, version, runtime.GOOS, runtime.GOARCH)
 
 	want, err := checksum(base+fmt.Sprintf("/%s_%s_SHA256SUMS", product, version), zipName)

@@ -4,7 +4,7 @@
 // the host and one named network namespace per node, joined by veth pairs.
 //
 // Everything Parker creates is labelled so `parker down` can find it with no
-// state file: namespaces are named parker-<lab>-<node>, and host-side links
+// state file: namespaces are named parker-<lab>_<node>, and host-side links
 // carry the alias "parker:<lab>".
 package netsetup
 
