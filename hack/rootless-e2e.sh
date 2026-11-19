@@ -62,6 +62,22 @@ rc=0; $P exec -T "$F" "$first" -- sh -c 'exit 3' </dev/null || rc=$?
 unset PARKER_HOST
 echo ok
 
+echo "--- proxy and port-forward"
+lab=$($P status "$F" | awk 'NR==1 {sub(":", "", $2); print $2}')
+short=${first#*-}; dc=${first%%-*}   # dc1-server-1 -> server-1, dc1
+$P proxy --listen 127.0.0.1:1080 </dev/null >/dev/null 2>&1 &
+pp=$!
+$P port-forward "$F" "$first" 18500:8500 </dev/null >/dev/null 2>&1 &
+pf=$!
+sleep 1
+curl -sf --proxy "socks5h://127.0.0.1:1080" "http://$short.$dc.$lab.parker:8500/v1/status/leader" | grep 8300 >/dev/null
+curl -sf --proxy "http://127.0.0.1:1080" "http://$first.$lab.parker:8500/v1/status/leader" | grep 8300 >/dev/null
+curl -sf "http://127.0.0.1:18500/v1/status/leader" | grep 8300 >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' --proxy "http://127.0.0.1:1080" http://192.0.2.1:80/ || true)
+[ "$code" = 403 ] || { echo "proxy reached a non-lab address ($code)"; exit 1; }
+kill $pp $pf
+echo ok
+
 echo "--- down, twice"
 $P down "$F"
 $P down "$F"
