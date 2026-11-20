@@ -36,7 +36,12 @@ func (e KeyError) Error() string {
 // mean" suggestions and a hint when the key belongs at another level.
 // Passthrough maps (config:, register:, vars:, ...) are not checked. A YAML
 // syntax error returns nil; the decoder reports it better.
-func CheckKeys(text []byte) []KeyError {
+func CheckKeys(text []byte) []KeyError { return checkKeysAs(text, reflect.TypeFor[File]()) }
+
+// CheckModuleKeys is CheckKeys for a module file.
+func CheckModuleKeys(text []byte) []KeyError { return checkKeysAs(text, reflect.TypeFor[Module]()) }
+
+func checkKeysAs(text []byte, root reflect.Type) []KeyError {
 	f, err := parser.ParseBytes(text, 0)
 	if err != nil {
 		return nil
@@ -44,7 +49,7 @@ func CheckKeys(text []byte) []KeyError {
 	var out []KeyError
 	for _, d := range f.Docs {
 		if d.Body != nil {
-			walk(d.Body, reflect.TypeFor[File](), "", &out)
+			walk(d.Body, root, "", &out)
 		}
 	}
 	return out

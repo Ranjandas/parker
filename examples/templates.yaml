@@ -1,0 +1,23 @@
+# Templates and modules. A template is one node shape reused across
+# datacenters; a node takes it with from: and overrides fields after it.
+# imports: merges modules (examples/modules/acl.yaml) under this file.
+#
+#   parker expand --merged examples/templates.yaml   # see the result
+parker: v1alpha1
+versions: { consul: 1.22.7 }
+imports:
+  - module: modules/acl.yaml
+    with: { dc: dc1, servers: 3 }
+consul:
+  templates:
+    api-node:
+      count: 2
+      service: { port: 9090, run: fake-service }
+  datacenters:
+    dc1:
+      nodes:
+        api: { from: api-node }
+    dc2:
+      servers: 1
+      nodes:
+        api: { from: api-node, count: 1 }   # one copy here

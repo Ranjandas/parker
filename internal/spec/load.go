@@ -32,21 +32,28 @@ func (l Layers) empty() bool { return len(l.Overlays) == 0 && len(l.Sets) == 0 }
 
 // LoadWith is Load with overlays and --set.
 func LoadWith(path string, l Layers) (*File, error) {
-	text, err := Merged(path, l)
+	text, merged, err := merge(path, l)
 	if err != nil {
 		return nil, err
 	}
 	label := path
-	if !l.empty() {
-		label = path + " (with overlays and --set)"
+	if merged {
+		label = path + " (merged)"
 	}
 	return decode(path, label, text)
 }
 
-// Merged is the base file with vars substituted and overlays and --set
-// applied: the input LoadWith decodes. Without overlays or --set it is the
-// base file's own text.
+// Merged is the base file with vars substituted, imports, overlays,
+// --set and templates applied: the input LoadWith decodes. Without any of
+// those it is the base file's own text.
 func Merged(path string, l Layers) ([]byte, error) {
+	text, _, err := merge(path, l)
+	return text, err
+}
+
+// merge is Merged, and whether anything was merged (so lines in the text
+// match no file).
+func merge(path string, l Layers) ([]byte, bool, error) {
 	paths := append([]string{path}, l.Overlays...)
 	raws := make([][]byte, len(paths))
 	// Pass 1: the vars blocks; a later file's value wins, --var over all.
@@ -54,14 +61,14 @@ func Merged(path string, l Layers) ([]byte, error) {
 	for i, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		raws[i] = raw
 		var head struct {
 			Vars map[string]any `yaml:"vars"`
 		}
 		if err := yaml.Unmarshal(raw, &head); err != nil {
-			return nil, fmt.Errorf("%s:\n%s", p, yaml.FormatError(err, false, true))
+			return nil, false, fmt.Errorf("%s:\n%s", p, yaml.FormatError(err, false, true))
 		}
 		for k, v := range head.Vars {
 			vars[k] = fmt.Sprint(v)
@@ -74,12 +81,22 @@ func Merged(path string, l Layers) ([]byte, error) {
 	for i, raw := range raws {
 		t, err := substitute(paths[i], raw, vars)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		texts[i] = t
 	}
-	if l.empty() {
-		return texts[0], nil
+	trees := make([]any, len(texts))
+	tree := !l.empty()
+	for i, t := range texts {
+		var v any
+		if err := yaml.UnmarshalWithOptions(t, &v, yaml.UseOrderedMap()); err != nil {
+			return nil, false, fmt.Errorf("%s:\n%s", paths[i], yaml.FormatError(err, false, true))
+		}
+		trees[i] = dedupe(v)
+		tree = tree || needsTree(trees[i])
+	}
+	if !tree {
+		return texts[0], false, nil
 	}
 	var doc any
 	for i, t := range texts {
@@ -89,27 +106,33 @@ func Merged(path string, l Layers) ([]byte, error) {
 			for j, e := range errs {
 				msgs[j] = e.Error()
 			}
-			return nil, fmt.Errorf("%s:\n  - %s", paths[i], strings.Join(msgs, "\n  - "))
+			return nil, false, fmt.Errorf("%s:\n  - %s", paths[i], strings.Join(msgs, "\n  - "))
 		}
-		var v any
-		if err := yaml.UnmarshalWithOptions(t, &v, yaml.UseOrderedMap()); err != nil {
-			return nil, fmt.Errorf("%s:\n%s", paths[i], yaml.FormatError(err, false, true))
-		}
+		v := trees[i]
 		if v == nil {
 			continue
 		}
 		if _, ok := v.(yaml.MapSlice); !ok {
-			return nil, fmt.Errorf("%s: want a YAML map at the top", paths[i])
+			return nil, false, fmt.Errorf("%s: want a YAML map at the top", paths[i])
 		}
-		doc = Merge(doc, dedupe(v))
+		v, err := resolveImports(v, filepath.Dir(paths[i]), vars, nil)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s: %w", paths[i], err)
+		}
+		doc = Merge(doc, v)
 	}
 	for _, set := range l.Sets {
 		var err error
 		if doc, err = ApplySet(doc, set); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return yaml.MarshalWithOptions(doc, yaml.UseLiteralStyleIfMultiline(true), yaml.IndentSequence(true))
+	doc, err := resolveTemplates(doc)
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	out, err := yaml.MarshalWithOptions(doc, yaml.UseLiteralStyleIfMultiline(true), yaml.IndentSequence(true))
+	return out, true, err
 }
 
 func substitute(path string, raw []byte, vars map[string]string) ([]byte, error) {

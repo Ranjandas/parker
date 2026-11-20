@@ -154,7 +154,7 @@ consul:
 	if _, err := LoadWith(base, Layers{Overlays: []string{typo}}); err == nil || !strings.Contains(err.Error(), "typo.yaml:\n  - line 4: consul.datacenters.dc1.nodez: unknown key") {
 		t.Errorf("typo: %v", err)
 	}
-	if _, err := LoadWith(base, Layers{Sets: []string{"dc1:servers=0"}}); err == nil || !strings.Contains(err.Error(), "base.yaml (with overlays and --set)") {
+	if _, err := LoadWith(base, Layers{Sets: []string{"dc1:servers=0"}}); err == nil || !strings.Contains(err.Error(), "base.yaml (merged)") {
 		t.Errorf("invalid merge: %v", err)
 	}
 	list := write("list.yaml", "- a\n")
