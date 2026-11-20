@@ -268,24 +268,29 @@ type Consul struct {
 	// Federation joins the datacenters' servers over a generated `wan`
 	// network. Without it, datacenters are independent clusters.
 	Federation *Federation `yaml:"federation,omitempty"`
-	// Peering connects datacenters as cluster peers, keyed by peering name
-	// (the peer's name on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and
-	// a mesh gateway in each peered datacenter for service traffic.
+	// Peering connects datacenters (or admin partitions in different
+	// datacenters) as cluster peers, keyed by peering name (the peer's name
+	// on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and a mesh gateway
+	// on each side (in the side's partition) for service traffic.
 	Peering map[string]*Peering `yaml:"peering,omitempty"`
 }
 
-// Peering is one cluster peering between two datacenters.
+// Peering is one cluster peering between two datacenters, or between
+// admin partitions of two datacenters.
 type Peering struct {
-	// Acceptor generates the peering token.
+	// Acceptor generates the peering token: a dc, or dc/partition
+	// (Enterprise; dc alone is dc/default).
 	Acceptor string `yaml:"acceptor"`
-	// Dialer establishes the peering with the token.
+	// Dialer establishes the peering with the token: a dc, or
+	// dc/partition.
 	Dialer string `yaml:"dialer"`
 	// ViaMeshGateways sends the peering's control plane through the mesh
 	// gateways (mesh config entry PeerThroughMeshGateways); otherwise the
 	// dialer's servers reach the acceptor's on the wan network.
 	ViaMeshGateways bool `yaml:"via_mesh_gateways,omitempty"`
-	// Exports lists, per datacenter (acceptor or dialer), the services it
-	// exports to the other side (sugar for an exported-services entry).
+	// Exports lists, per side (acceptor or dialer, written as there), the
+	// services it exports to the other side, as service or
+	// namespace/service (sugar for the partition's exported-services entry).
 	Exports map[string][]string `yaml:"exports,omitempty"`
 }
 

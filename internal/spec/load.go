@@ -340,8 +340,8 @@ func (f *File) Validate() error {
 		if v := f.Versions["consul"]; !strings.Contains(v, "+ent") && !strings.HasPrefix(v, "path:") {
 			add("partitions and namespaces need Consul Enterprise: pin versions.consul to an Enterprise build such as %s+ent", strings.TrimPrefix(v, "v"))
 		}
-		if f.Consul.FederationMode() != "" || len(f.Consul.Peering) > 0 {
-			add("consul: partitions and namespaces don't work with federation or peering in Parker yet")
+		if f.Consul.FederationMode() != "" {
+			add("consul: partitions and namespaces don't work with federation in Parker yet; use consul.peering between partitions instead")
 		}
 	}
 	for nn, n := range f.Nodes {

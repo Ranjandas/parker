@@ -126,7 +126,7 @@
             "$ref": "#/$defs/Peering"
           },
           "type": "object",
-          "description": "Peering connects datacenters as cluster peers, keyed by peering name\n(the peer's name on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and\na mesh gateway in each peered datacenter for service traffic."
+          "description": "Peering connects datacenters (or admin partitions in different\ndatacenters) as cluster peers, keyed by peering name (the peer's name\non both sides, e.g. dc1-dc2). Needs Consul 1.14+ and a mesh gateway\non each side (in the side's partition) for service traffic."
         }
       },
       "additionalProperties": false,
@@ -926,11 +926,11 @@
       "properties": {
         "acceptor": {
           "type": "string",
-          "description": "Acceptor generates the peering token."
+          "description": "Acceptor generates the peering token: a dc, or dc/partition\n(Enterprise; dc alone is dc/default)."
         },
         "dialer": {
           "type": "string",
-          "description": "Dialer establishes the peering with the token."
+          "description": "Dialer establishes the peering with the token: a dc, or\ndc/partition."
         },
         "via_mesh_gateways": {
           "type": "boolean",
@@ -944,7 +944,7 @@
             "type": "array"
           },
           "type": "object",
-          "description": "Exports lists, per datacenter (acceptor or dialer), the services it\nexports to the other side (sugar for an exported-services entry)."
+          "description": "Exports lists, per side (acceptor or dialer, written as there), the\nservices it exports to the other side, as service or\nnamespace/service (sugar for the partition's exported-services entry)."
         }
       },
       "additionalProperties": false,
@@ -953,7 +953,7 @@
         "acceptor",
         "dialer"
       ],
-      "description": "Peering is one cluster peering between two datacenters."
+      "description": "Peering is one cluster peering between two datacenters, or between admin partitions of two datacenters."
     },
     "Process": {
       "properties": {

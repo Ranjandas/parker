@@ -30,7 +30,7 @@ const PALETTE = [
   ["Structure", [["dc", "Datacenter", "A Consul datacenter", "dc"], ["part", "Admin partition", "Groups nodes in a dc", "part", true]]],
   ["Consul", [["servers", "Server group", "servers: 1, 3 or 5", "server"], ["client", "Client node", "A client agent, no service", "client"], ["dp", "Dataplane node", "Agentless, consul-dataplane", "dp"]]],
   ["Services and mesh", [["svc", "Service", "fake-service with a sidecar", "svc"], ["mesh", "Mesh gateway", "Cross-dc, peering, partitions", "mesh"], ["ingress", "Ingress gateway", "North-south entry point", "ingress"], ["terminating", "Terminating gateway", "Reach services outside the mesh", "terminating"], ["api", "API gateway", "HTTP routes into the mesh", "api"]]],
-  ["Connections", [["up", "Upstream", "A service calls a service", "up"], ["peer", "Cluster peering", "Peer two datacenters", "peer"], ["fed", "WAN federation", "Federate the datacenters", "fed"]]],
+  ["Connections", [["up", "Upstream", "A service calls a service", "up"], ["peer", "Cluster peering", "Peer two datacenters or partitions", "peer"], ["fed", "WAN federation", "Federate the datacenters", "fed"]]],
 ];
 
 const SVC_NAMES = ["web", "api", "billing", "orders", "cart", "search", "auth", "ledger", "inventory", "payments"];
@@ -427,11 +427,15 @@ function bInspector() {
   } else if (f.t === "peering") {
     const p = f.peering, a = Build.dcById(m, p.acceptor), d = Build.dcById(m, p.dialer);
     title = `Peering · ${esc(Build.peeringName(m, p))}`;
-    body = fld("Name", txt("name", p.name, `${d.name}-${a.name}`), sdoc("Consul", "peering").replace(/,? keyed by.*$/, "."), "bf-name") +
-      fld("Dialer", `<b class="mono">${esc(d.name)}</b>`, sdoc("Peering", "dialer")) +
-      fld("Acceptor", `<b class="mono">${esc(a.name)}</b> <button class="btn sm" data-f="swap" style="margin-left:6px">Swap</button>`, sdoc("Peering", "acceptor")) +
+    // A side's partition: a picker when its dc has partitions.
+    const side = (dd, pid, f) => `<b class="mono">${esc(dd.name)}</b>` + (dd.parts.length
+      ? ` / <select data-f="${f}" id="bf-${f}" aria-label="Partition" style="width:auto;display:inline-block">${[{ id: "", name: "default" }, ...dd.parts].map((x) => `<option value="${x.id}" ${(pid || "") === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`
+      : "");
+    body = fld("Name", txt("name", p.name, Build.peeringName(m, Object.assign({}, p, { name: "" }))), sdoc("Consul", "peering").replace(/,? keyed by.*$/, "."), "bf-name") +
+      fld("Dialer", side(d, p.dialPart, "dpart"), sdoc("Peering", "dialer")) +
+      fld("Acceptor", side(a, p.accPart, "apart") + ` <button class="btn sm" data-f="swap" style="margin-left:6px">Swap</button>`, sdoc("Peering", "acceptor")) +
       fld("Via mesh gw", seg("pmesh", yes, p.mesh), sdoc("Peering", "via_mesh_gateways")) +
-      `<div class="hint">Exports follow from the calls: a service called over this peering is exported by its datacenter.</div>` +
+      `<div class="hint">Exports follow from the calls: a service called over this peering is exported by its partition. Each side's partition gets a mesh gateway, in its default namespace; through mesh gateways the control plane uses each datacenter's default-partition gateway.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove peering</button></div>`;
   }
   const og = f && f.t ? bOrigin(BL.sel) : "";
@@ -475,7 +479,14 @@ function bField(el) {
     } else if (t.t === "peering") {
       const p = t.peering;
       if (f === "pmesh") p.mesh = v === "true";
-      if (f === "swap") [p.acceptor, p.dialer] = [p.dialer, p.acceptor];
+      if (f === "swap") { [p.acceptor, p.dialer] = [p.dialer, p.acceptor]; [p.accPart, p.dialPart] = [p.dialPart || "", p.accPart || ""]; }
+      if (f === "dpart" || f === "apart") {
+        const k = f === "dpart" ? "dialPart" : "accPart", was = p[k];
+        p[k] = v;
+        const key = (o) => [`${o.acceptor}:${o.accPart || ""}`, `${o.dialer}:${o.dialPart || ""}`].sort().join("|");
+        if (m.peerings.some((o) => o !== p && key(o) === key(p))) { p[k] = was; throw new Error("Those two partitions are peered already."); }
+      }
+      if (f === "pmesh" || f === "dpart" || f === "apart") Build.peeringGateways(m, p);
     }
   });
 }
@@ -485,7 +496,9 @@ function bAdd(kind, dcId, pid) {
   BL.pick = null;
   if (kind === "up" || kind === "peer" || kind === "fed") {
     bMode("link");
-    toast(kind === "up" ? "Click the calling service, then the one it calls. Or drag from a service's dot." : "Click one datacenter, then the other. Or drag from a datacenter's dot.");
+    toast(kind === "up" ? "Click the calling service, then the one it calls. Or drag from a service's dot."
+      : kind === "peer" ? "Click one datacenter or partition, then one in another datacenter. Or drag from a datacenter's dot onto the other side."
+      : "Click one datacenter, then the other. Or drag from a datacenter's dot.");
     return;
   }
   bEdit((m) => {
@@ -964,7 +977,9 @@ function bBind() {
     const line = $("#blinkline"); if (line) line.setAttribute("d", "");
     const under = document.elementFromPoint(e.clientX, e.clientY);
     const tgt = under && (under.closest("#bworld [data-bid]") || under.closest("#bworld [data-drop]"));
-    const id = tgt ? tgt.dataset.bid || (tgt.dataset.drop || "").split(":")[0] : "";
+    // A partition's region names the partition (a peering side).
+    const [dropDC, dropPart] = tgt ? (tgt.dataset.drop || "").split(":") : [];
+    const id = tgt ? tgt.dataset.bid || dropPart || dropDC || "" : "";
     BL.from = "";
     if (!id || id === "new" || id === d.from || id === "lab") { bCanvas(); return; }
     const w = $("#bworld").getBoundingClientRect();

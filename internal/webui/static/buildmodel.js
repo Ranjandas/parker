@@ -31,7 +31,9 @@
   //     connect: "" (from service_defaults) | "none" | "sidecar" | "tproxy"
   //     to: the called node's id
   // gw: {id, name, kind, part, to: [node ids]}
-  // peering: {id, name, acceptor, dialer, mesh} (dc ids; name "" = dialer-acceptor)
+  // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
+  //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
+  //   name "" = dialer-acceptor
   function lab(name) {
     return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [] };
   }
@@ -55,8 +57,17 @@
   }
   const dcById = (m, id) => m.dcs.find((d) => d.id === id);
   const partName = (d, pid) => (pid ? (d.parts.find((p) => p.id === pid) || { name: "default" }).name : "default");
-  const peeringName = (m, p) => p.name || `${(dcById(m, p.dialer) || {}).name}-${(dcById(m, p.acceptor) || {}).name}`;
+  // sideName is a peering side as the YAML writes it: dc or dc/partition.
+  const sideName = (m, dcId, pid) => { const d = dcById(m, dcId) || {}; return pid ? `${d.name}/${partName(d, pid)}` : d.name; };
+  const peeringName = (m, p) => p.name || `${sideName(m, p.dialer, p.dialPart).replace("/", "-")}-${sideName(m, p.acceptor, p.accPart).replace("/", "-")}`;
   const peeringOf = (m, a, b) => m.peerings.find((p) => (p.acceptor === a && p.dialer === b) || (p.acceptor === b && p.dialer === a));
+  // peerOf finds the peering between two sides (dc id and part id each).
+  const peerOf = (m, a, ap, b, bp) => m.peerings.find((p) => {
+    const acc = [p.acceptor, p.accPart || ""], dial = [p.dialer, p.dialPart || ""];
+    const x = [a, ap || ""], y = [b, bp || ""];
+    const eq = (u, v) => u[0] === v[0] && u[1] === v[1];
+    return (eq(acc, x) && eq(dial, y)) || (eq(acc, y) && eq(dial, x));
+  });
   const ent = (m) => m.dcs.some((d) => d.parts.length > 0);
   // Every name in a dc: nodes and gateways share one namespace.
   const namesIn = (d) => new Set([...d.nodes.map((n) => n.name), ...d.gws.map((g) => g.name)]);
@@ -64,9 +75,12 @@
   // How an upstream from node src (in dc sd) reaches node t (in dc td).
   function route(m, sd, src, td, t) {
     if (sd.id !== td.id) {
-      const p = peeringOf(m, sd.id, td.id);
+      const p = peerOf(m, sd.id, src.part, td.id, t.part);
       if (p) return { kind: "peer", peer: peeringName(m, p), peering: p };
-      return { kind: m.fed ? "dc" : "none", dc: td.name };
+      // Peers belong to a partition: a peering of other partitions of
+      // these dcs doesn't carry this call.
+      const parts = sd.parts.length || td.parts.length;
+      return { kind: m.fed && !parts ? "dc" : "none", dc: td.name, peerParts: !!parts };
     }
     if ((src.part || "") !== (t.part || "")) return { kind: "partition", partition: partName(td, t.part) };
     return { kind: "local" };
@@ -124,12 +138,11 @@
       if (connectOf(m, a.node) === "none") throw new Error(`${a.node.name} is outside the mesh (connect: none), and upstreams go through a sidecar. Set its Connect to sidecar first.`);
       if (a.node.svc.ups.some((u) => u.to === b.node.id)) throw new Error(`${a.node.name} already calls ${b.node.name}.`);
       if (a.node.svc.ups.some((u) => { const f = find(m, u.to); return f && f.node && f.node.name === b.node.name; })) throw new Error(`${a.node.name} already calls a service named ${b.node.name}.`);
-      if (a.dc.id !== b.dc.id && (a.dc.parts.length || b.dc.parts.length)) throw new Error("Calls between datacenters don't work with partitions in Parker yet.");
       const u = { to: b.node.id, port: nextUpPort(a.node) };
       a.node.svc.ups.push(u);
       const r = route(m, a.dc, a.node, b.dc, b.node);
       const how = { local: "", partition: ` in partition ${r.partition}`, dc: ` in ${b.dc.name}`, none: ` in ${b.dc.name}`, peer: ` over the peering ${r.peer}` }[r.kind];
-      return `${a.node.name} calls ${b.node.name}${how} on 127.0.0.1:${u.port}.` + (r.kind === "none" ? ` Federate or peer ${a.dc.name} and ${b.dc.name} so the call can go through.` : "");
+      return `${a.node.name} calls ${b.node.name}${how} on 127.0.0.1:${u.port}.` + (r.kind === "none" ? ` ${joinHint(m, a.dc, a.node.part, b.dc, b.node.part)}` : "");
     }
     if (a.t === "gw" && b.t === "node") {
       if (a.gw.kind === "mesh") throw new Error("Mesh gateways carry traffic between datacenters and partitions; link the services themselves.");
@@ -145,22 +158,68 @@
     }
     const da = a.t === "dc" ? a.dc : null, db = b.t === "dc" ? b.dc : null;
     if (da && db) {
-      if (peeringOf(m, da.id, db.id)) throw new Error(`${da.name} and ${db.name} are peered already.`);
+      if (peerOf(m, da.id, "", db.id, "")) throw new Error(`${da.name} and ${db.name} are peered already.`);
       return "pick"; // the canvas asks: federation or peering
     }
-    throw new Error("Link a service to a service it calls, a gateway to a service, or two datacenters.");
+    // A partition with a partition (or a datacenter's default partition)
+    // in another datacenter: they peer.
+    if ((a.t === "dc" || a.t === "part") && (b.t === "dc" || b.t === "part")) {
+      const ap = a.t === "part" ? a.part.id : "", bp = b.t === "part" ? b.part.id : "";
+      if (a.dc.id === b.dc.id) throw new Error(`Consul can't peer two partitions of one datacenter. Link their services instead: the builder exports them to the other partition.`);
+      if (peerOf(m, a.dc.id, ap, b.dc.id, bp)) throw new Error(`${sideName(m, a.dc.id, ap)} and ${sideName(m, b.dc.id, bp)} are peered already.`);
+      return joinDCs(m, a.t === "part" ? a.part.id : a.dc.id, b.t === "part" ? b.part.id : b.dc.id, "peering");
+    }
+    throw new Error("Link a service to a service it calls, a gateway to a service, or two datacenters (or partitions in two datacenters).");
   }
 
-  // joinDCs federates the lab or peers two dcs (how is wan, mesh-gateways or peering).
-  function joinDCs(m, aId, bId, how) {
-    const a = dcById(m, aId), b = dcById(m, bId);
-    if (how === "peering") {
-      // The dc that calls dials; the other accepts (it exports).
-      const p = { id: uid("p"), name: "", acceptor: b.id, dialer: a.id, mesh: true };
-      m.peerings.push(p);
-      for (const d of [a, b]) if (!d.gws.some((g) => g.kind === "mesh" && !g.part)) d.gws.push(gw("mesh", uniqueName(d, "mesh")));
-      return `Peered ${a.name} (dialer) with ${b.name} (acceptor) as ${peeringName(m, p)}, with a mesh gateway in each.`;
+  // joinHint says how to let a call between two sides through.
+  function joinHint(m, sd, sp, td, tp) {
+    if (sd.parts.length || td.parts.length) return `Peer ${sideName(m, sd.id, sp)} with ${sideName(m, td.id, tp)} so the call can go through: peers belong to a partition.`;
+    return `Federate or peer ${sd.name} and ${td.name} so the call can go through.`;
+  }
+
+  // side resolves a dc or part id to [dc, part id].
+  function sideOf(m, id) {
+    const f = find(m, id);
+    if (f && f.t === "part") return [f.dc, f.part.id];
+    return [dcById(m, id), ""];
+  }
+  // addMesh puts a mesh gateway in a dc's partition unless it has one.
+  function addMesh(d, pid) {
+    pid = pid || "";
+    if (d.gws.some((g) => g.kind === "mesh" && (g.part || "") === pid)) return;
+    // Partitions may reuse a name, as Consul allows.
+    const used = new Set([...d.nodes, ...d.gws].filter((x) => (x.part || "") === pid).map((x) => x.name));
+    let name = "mesh";
+    for (let i = 2; used.has(name); i++) name = `mesh-${i}`;
+    d.gws.push(gw("mesh", name, pid));
+  }
+  // peeringGateways adds what a peering needs: a mesh gateway in each side's
+  // partition for service traffic and, through gateways, one in each dc's
+  // default partition for the control plane (Consul only peers through
+  // the default partition's gateway).
+  function peeringGateways(m, p) {
+    for (const [dcId, pid] of [[p.acceptor, p.accPart], [p.dialer, p.dialPart]]) {
+      const d = dcById(m, dcId);
+      if (!d) continue;
+      addMesh(d, pid);
+      if (p.mesh && pid) addMesh(d, "");
     }
+  }
+
+  // joinDCs federates the lab or peers two dcs (how is wan, mesh-gateways
+  // or peering). For a peering, an id can be a partition's.
+  function joinDCs(m, aId, bId, how) {
+    if (how === "peering") {
+      // The side that calls dials; the other accepts (it exports).
+      const [a, ap] = sideOf(m, aId), [b, bp] = sideOf(m, bId);
+      const p = { id: uid("p"), name: "", acceptor: b.id, dialer: a.id, accPart: bp, dialPart: ap, mesh: true };
+      m.peerings.push(p);
+      peeringGateways(m, p);
+      const where = ap || bp ? "each side's partition" : "each";
+      return `Peered ${sideName(m, a.id, ap)} (dialer) with ${sideName(m, b.id, bp)} (acceptor) as ${peeringName(m, p)}, with a mesh gateway in ${where}.`;
+    }
+    const a = dcById(m, aId), b = dcById(m, bId);
     m.fed = how;
     if (how === "mesh-gateways") {
       m.tls = true;
@@ -185,6 +244,7 @@
       f.dc.nodes.filter((n) => n.part === id).forEach((n) => drop.add(n.id));
       f.dc.nodes = f.dc.nodes.filter((n) => n.part !== id);
       f.dc.gws = f.dc.gws.filter((g) => g.part !== id);
+      m.peerings = m.peerings.filter((p) => p.accPart !== id && p.dialPart !== id);
     } else if (f.t === "node") {
       f.dc.nodes = f.dc.nodes.filter((n) => n.id !== id);
     } else if (f.t === "gw") {
@@ -243,10 +303,13 @@
       for (const p of m.peerings) {
         const a = dcById(m, p.acceptor), d = dcById(m, p.dialer);
         if (!a || !d) continue;
-        const pe = { acceptor: a.name, dialer: d.name };
+        const pe = { acceptor: sideName(m, a.id, p.accPart), dialer: sideName(m, d.id, p.dialPart) };
         if (p.mesh) pe.via_mesh_gateways = true;
         const exp = {};
-        for (const c of all) if (c.r.kind === "peer" && c.r.peering === p) (exp[c.td.name] = exp[c.td.name] || []).includes(c.t.name) || exp[c.td.name].push(c.t.name);
+        for (const c of all) if (c.r.kind === "peer" && c.r.peering === p) {
+          const k = sideName(m, c.td.id, c.t.part);
+          (exp[k] = exp[k] || []).includes(c.t.name) || exp[k].push(c.t.name);
+        }
         if (Object.keys(exp).length) pe.exports = exp;
         consul.peering[peeringName(m, p)] = pe;
       }
@@ -471,7 +534,16 @@
     const out = [];
     if (!NAME_RE.test(m.name)) out.push({ message: "The lab name wants lowercase letters, digits and single hyphens.", id: "" });
     if (!m.dcs.length) out.push({ message: "Add a datacenter to start.", id: "" });
-    for (const c of calls(m)) if (c.r.kind === "none") out.push({ message: `${c.sd.name}/${c.src.name} calls ${c.t.name} in ${c.td.name}, but the datacenters are neither federated nor peered. Link ${c.sd.name} to ${c.td.name}.`, id: c.src.id });
+    for (const c of calls(m)) if (c.r.kind === "none") {
+      const message = c.r.peerParts
+        ? `${sideName(m, c.sd.id, c.src.part)}/${c.src.name} calls ${c.t.name} in ${sideName(m, c.td.id, c.t.part)}, but those partitions aren't peered. Link ${sideName(m, c.sd.id, c.src.part)} to ${sideName(m, c.td.id, c.t.part)}.`
+        : `${c.sd.name}/${c.src.name} calls ${c.t.name} in ${c.td.name}, but the datacenters are neither federated nor peered. Link ${c.sd.name} to ${c.td.name}.`;
+      out.push({ message, id: c.src.id });
+    }
+    for (const p of m.peerings) {
+      const a = dcById(m, p.acceptor), d = dcById(m, p.dialer);
+      if (a && d && a.id === d.id) out.push({ message: `Consul can't peer two partitions of one datacenter (${peeringName(m, p)}). Link their services instead: the builder exports them to the other partition.`, id: p.id });
+    }
     return out;
   }
 
@@ -560,10 +632,15 @@
               pending.push(() => {
                 let td = d, tp = pid;
                 if (u.dc) td = m.dcs.find((x) => x.name === u.dc);
-                else if (u.peer) { const p = m.peerings.find((x) => x.name === u.peer); td = p && dcById(m, p.dialer === d.id ? p.acceptor : p.dialer); }
+                else if (u.peer) {
+                  const p = m.peerings.find((x) => x.name === u.peer);
+                  const mine = p && p.dialer === d.id && (p.dialPart || "") === pid;
+                  td = p && dcById(m, mine ? p.acceptor : p.dialer);
+                  tp = p ? (mine ? p.accPart : p.dialPart) || "" : "";
+                }
                 if (!td) return;
                 if (u.partition) tp = ((td.parts.find((x) => x.name === u.partition) || { id: u.partition === "default" ? "" : null }).id);
-                else if (td !== d) tp = "";
+                else if (td !== d && !u.peer) tp = "";
                 const t = td.nodes.find((x) => x.name === un && (x.part || "") === tp && x.svc);
                 if (t) n.svc.ups.push({ to: t.id, port: Number(u.port) || 0 });
               });
@@ -584,8 +661,17 @@
     }
     for (const [pn, pvRaw] of Object.entries(isMap(c.peering) ? c.peering : {})) {
       const pv = isMap(pvRaw) ? pvRaw : {};
-      const a = m.dcs.find((x) => x.name === pv.acceptor), d = m.dcs.find((x) => x.name === pv.dialer);
-      if (a && d) m.peerings.push(keep({ id: uid("p"), name: pn, acceptor: a.id, dialer: d.id, mesh: !!pv.via_mesh_gateways }, ["consul", "peering", pn]));
+      // A side is dc or dc/partition.
+      const side = (v) => {
+        const [dn, part] = String(v || "").split("/");
+        const x = m.dcs.find((y) => y.name === dn);
+        if (!x) return null;
+        if (!part || part === "default") return [x, ""];
+        const pp = x.parts.find((y) => y.name === part);
+        return pp ? [x, pp.id] : null;
+      };
+      const a = side(pv.acceptor), d = side(pv.dialer);
+      if (a && d) m.peerings.push(keep({ id: uid("p"), name: pn, acceptor: a[0].id, dialer: d[0].id, accPart: a[1], dialPart: d[1], mesh: !!pv.via_mesh_gateways }, ["consul", "peering", pn]));
     }
     pending.forEach((f) => f());
     return m;
@@ -764,7 +850,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { VERSIONS, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, peeringName, peeringOf, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { VERSIONS, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

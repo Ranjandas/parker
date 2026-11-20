@@ -1,0 +1,48 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up peering-partitions.yaml
+parker: v1alpha1
+name: peering-partitions
+versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  peering:
+    dc1-team-a-dc2-team-b:
+      acceptor: dc2/team-b
+      dialer: dc1/team-a
+      via_mesh_gateways: true
+      exports: { dc2/team-b: [billing] }
+  datacenters:
+    dc1:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        team-a:
+          gateways: { mesh: true }
+          nodes:
+            frontend:
+              service:
+                port: 8080
+                upstreams:
+                  billing: { port: 9091, peer: dc1-team-a-dc2-team-b }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+    dc2:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        team-b:
+          gateways: { mesh: true }
+          nodes:
+            billing:
+              service: { port: 9000 }
+          config_entries:
+            - Kind: service-intentions
+              Name: billing
+              Sources:
+                - { Name: frontend, Peer: dc1-team-a-dc2-team-b, Action: allow }
