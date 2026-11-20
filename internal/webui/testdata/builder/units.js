@@ -98,3 +98,31 @@ console.log("ok externals");
   assert.strictEqual(B.stepText({ assert: { exec: { on: "dc1/web", run: "x", output: "ok" }, within: "9s" } }), "exec on dc1/web shows ok within 9s");
 }
 console.log("ok scenario");
+
+// Failover: a link between two copies of a service, and an external
+// service failing over between its registrations.
+{
+  const m = B.lab("f"); m.acl = true;
+  const d1 = B.dc("dc1", 1), d2 = B.dc("dc2", 1); m.dcs.push(d1, d2);
+  const web = B.node("web", 8080), a1 = B.node("api", 9090), a2 = B.node("api", 9090);
+  d1.nodes.push(web, a1); d2.nodes.push(a2);
+  B.link(m, web.id, a1.id);
+  assert.match(B.link(m, a1.id, a2.id), /api in dc1 fails over to dc2.*Federate or peer dc1 and dc2/);
+  assert.ok(B.checks(m).some((c) => /fails over to dc2, but nothing joins them/.test(c.message)));
+  assert.ok(!B.toDoc(m).consul.datacenters.dc1.config_entries.some((e) => e.Kind === "service-resolver"), "no resolver without a way there");
+  B.joinDCs(m, d1.id, d2.id, "peering");
+  const doc = B.toDoc(m);
+  const e1 = doc.consul.datacenters.dc1.config_entries, e2 = doc.consul.datacenters.dc2.config_entries;
+  assert.deepStrictEqual(e1.find((e) => e.Kind === "service-resolver"), { Kind: "service-resolver", Name: "api", Failover: { "*": { Targets: [{ Peer: "dc1-dc2" }] } } });
+  assert.ok(e1.some((e) => e.Kind === "proxy-defaults"), "mesh gateways in local mode");
+  assert.deepStrictEqual(e2.find((e) => e.Kind === "service-intentions"), { Kind: "service-intentions", Name: "api", Sources: [{ Name: "web", Peer: "dc1-dc2", Action: "allow" }] });
+  assert.deepStrictEqual(Object.values(doc.consul.peering)[0].exports, { dc2: ["api"] });
+  assert.deepStrictEqual(doc.consul.datacenters.dc1.nodes.web.service.upstreams, { api: 9091 }, "the call itself stays local");
+  assert.throws(() => B.link(m, a1.id, a2.id), /fails over to dc2 already/);
+  const back = B.fromTree(JSON.parse(JSON.stringify(doc)));
+  assert.strictEqual(back.fails.length, 1, "the resolver reads back as a failover");
+  assert.ok(B.same(B.toDoc(back), doc));
+  B.remove(m, a2.id);
+  assert.strictEqual(m.fails.length, 0, "no target, no failover");
+}
+console.log("ok failover");

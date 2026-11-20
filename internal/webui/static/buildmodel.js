@@ -40,13 +40,16 @@
   // ext: {id, name, port, ns, in: [{dc, part}]}, an external service:
   //   one node outside Consul, registered in the catalog of each side in
   //   in (dc id, part id). Calls and gateways name it by id.
+  // fail: {id, svc, dc, part, to: [{dc, part}], timeout}, a failover: a
+  //   service-resolver in side (dc, part) sending the service svc (a node
+  //   or ext id) to the same service in each side of to, in order.
   // scenario: null or the file's scenario: as is ({steps: [...], ...}).
   //   named: the file has scenarios: too (the builder edits scenario: only)
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
   function lab(name) {
-    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [] };
+    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [], fails: [] };
   }
   function dc(name, servers) { return { id: uid("d"), name, servers: servers || 1, ui: false, parts: [], nodes: [], gws: [] }; }
   function node(name, port, opts) {
@@ -66,6 +69,7 @@
     }
     for (const p of m.peerings) if (p.id === id) return { t: "peering", peering: p };
     for (const x of m.exts || []) if (x.id === id) return { t: "ext", ext: x };
+    for (const x of m.fails || []) if (x.id === id) return { t: "fail", fail: x };
     return null;
   }
   const dcById = (m, id) => m.dcs.find((d) => d.id === id);
@@ -148,8 +152,85 @@
     return { kind: "local" };
   }
 
-  // Every call in the lab, resolved: [{sd, src, td, t, port, r}].
-  function calls(m) {
+  // ---------- failover ----------
+  // svcAt is service id (a node or an ext) as side (dcId, part) has it:
+  // {td, t}, or null when that side has no such service.
+  function svcAt(m, id, dcId, part) {
+    const f = find(m, id), d = dcById(m, dcId);
+    if (!f || !d) return null;
+    if (f.t === "ext") { const r = regAt(f.ext, dcId, part); return r ? extNode(m, f.ext, r) : null; }
+    if (f.t !== "node" || !f.node.svc) return null;
+    const ns = nsOf(f.node);
+    const t = d.nodes.find((n) => n.svc && n.name === f.node.name && (n.part || "") === (part || "") && nsOf(n) === ns);
+    return t ? { td: d, t } : null;
+  }
+  // foSides lists where service id could fail over to from side (dc, part):
+  // every other side that has a service of that name.
+  function foSides(m, id, dcId, part) {
+    const out = [];
+    for (const d of m.dcs) for (const p of [{ id: "" }, ...d.parts]) {
+      if (d.id === dcId && p.id === (part || "")) continue;
+      if (svcAt(m, id, d.id, p.id)) out.push({ dc: d.id, part: p.id });
+    }
+    return out;
+  }
+  // foTarget is one failover target as the resolver writes it, or null
+  // when nothing joins the two sides.
+  function foTarget(m, fo, to) {
+    const src = svcAt(m, fo.svc, fo.dc, fo.part), dst = svcAt(m, fo.svc, to.dc, to.part);
+    if (!src || !dst) return null;
+    const ns = nsOf(dst.t) !== nsOf(src.t) || (nsOf(dst.t) && to.dc !== fo.dc) ? { Namespace: nsOf(dst.t) || "default" } : {};
+    if (to.dc === fo.dc) return Object.assign({ Partition: partName(dst.td, to.part) }, ns);
+    const p = peerOf(m, fo.dc, fo.part, to.dc, to.part);
+    // Consul takes Peer with Namespace, never with Partition.
+    if (p) return Object.assign({ Peer: peeringName(m, p) }, ns);
+    const sd = dcById(m, fo.dc);
+    if (m.fed && !sd.parts.length && !dst.td.parts.length) return Object.assign({ Datacenter: dst.td.name }, ns);
+    return null;
+  }
+  // failover makes a failover from service id (a node, or an ext as side
+  // dc/part registers it) to the same service in side (toDc, toPart).
+  function failover(m, id, dcId, part, toDc, toPart) {
+    part = part || ""; toPart = toPart || "";
+    const src = svcAt(m, id, dcId, part), dst = svcAt(m, id, toDc, toPart);
+    if (!src) throw new Error("Nothing to fail over from there.");
+    if (!dst) throw new Error(`${sideName(m, toDc, toPart)} has no ${src.t.name} to fail over to.`);
+    let fo = m.fails.find((x) => x.svc === id && x.dc === dcId && (x.part || "") === part);
+    if (fo && fo.to.some((t) => t.dc === toDc && (t.part || "") === toPart)) throw new Error(`${src.t.name} in ${sideName(m, dcId, part)} fails over to ${sideName(m, toDc, toPart)} already.`);
+    if (!fo) { fo = { id: uid("f"), svc: id, dc: dcId, part, to: [], timeout: "" }; m.fails.push(fo); }
+    fo.to.push({ dc: toDc, part: toPart });
+    const ok = foTarget(m, fo, { dc: toDc, part: toPart });
+    return `${src.t.name} in ${sideName(m, dcId, part)} fails over to ${sideName(m, toDc, toPart)} (a service-resolver), which exports it and allows its callers.` +
+      (ok ? "" : ` ${joinHint(m, dcById(m, dcId), part, dcById(m, toDc), toPart)}`);
+  }
+  // pruneFails drops failovers (and targets) whose service is gone from
+  // their side.
+  function pruneFails(m) {
+    m.fails = (m.fails || []).filter((fo) => svcAt(m, fo.svc, fo.dc, fo.part));
+    for (const fo of m.fails) fo.to = fo.to.filter((t) => svcAt(m, fo.svc, t.dc, t.part));
+    m.fails = m.fails.filter((fo) => fo.to.length);
+  }
+  // foCalls are the calls a failover may carry: each call to the service
+  // in the failover's side, again to each target. They bring the
+  // exports, intentions and mesh gateway mode a call there would.
+  function foCalls(m, base) {
+    const out = [];
+    for (const fo of m.fails || []) {
+      const at = svcAt(m, fo.svc, fo.dc, fo.part);
+      if (!at) continue;
+      const callers = base.filter((c) => c.td.id === fo.dc && (c.t.part || "") === (fo.part || "") && c.t.name === at.t.name && nsOf(c.t) === nsOf(at.t));
+      for (const to of fo.to) {
+        const dst = svcAt(m, fo.svc, to.dc, to.part);
+        if (!dst || !foTarget(m, fo, to)) continue;
+        for (const c of callers) out.push({ sd: c.sd, src: c.src, td: dst.td, t: dst.t, port: c.port, r: route(m, c.sd, c.src, dst.td, dst.t), fo });
+      }
+    }
+    return out;
+  }
+
+  // Every call in the lab, resolved: [{sd, src, td, t, port, r}]. With
+  // fo, the calls failovers may carry too (marked fo).
+  function calls(m, withFo) {
     fillInh(m);
     const out = [];
     for (const sd of m.dcs) for (const src of sd.nodes) for (const u of (src.svc && src.svc.ups) || []) {
@@ -157,7 +238,7 @@
       if (f && f.t === "node" && f.node.svc) out.push({ sd, src, td: f.dc, t: f.node, port: u.port, r: route(m, sd, src, f.dc, f.node) });
       else if (f && f.t === "ext") { const e = extFor(m, f.ext, sd, src.part); if (e) out.push({ sd, src, td: e.td, t: e.t, port: u.port, r: route(m, sd, src, e.td, e.t) }); }
     }
-    return out;
+    return withFo ? out.concat(foCalls(m, out)) : out;
   }
 
   // The connect mode a node's service ends up with.
@@ -246,6 +327,10 @@
       const note = regAt(x, a.dc.id, a.gw.part) ? "" : " " + register(m, x, a.dc, a.gw.part);
       a.gw.to.push(x.id);
       return `${a.gw.name} fronts ${x.name}. Services reach it with an upstream to ${x.name}.${note}`;
+    }
+    // A service to the same service elsewhere: it fails over there.
+    if (a.t === "node" && b.t === "node" && a.node.svc && b.node.svc && a.node.name === b.node.name && nsOf(a.node) === nsOf(b.node)) {
+      return failover(m, a.node.id, a.dc.id, a.node.part, b.dc.id, b.node.part);
     }
     if (a.t === "node" && b.t === "node") {
       if (!a.node.svc) throw new Error(`${a.node.name} runs no service, so it can't call anything. Give it a service first.`);
@@ -368,9 +453,12 @@
       m.peerings = m.peerings.filter((p) => p.id !== id);
     } else if (f.t === "ext") {
       m.exts = m.exts.filter((x) => x.id !== id);
+    } else if (f.t === "fail") {
+      m.fails = m.fails.filter((x) => x.id !== id);
     }
     // Registrations in a removed datacenter or partition go with it.
     if (f.t === "dc" || f.t === "part") for (const x of m.exts || []) x.in = x.in.filter((r) => r.dc !== id && r.part !== id);
+    pruneFails(m);
     for (const d of m.dcs) {
       for (const n of d.nodes) if (n.svc) n.svc.ups = n.svc.ups.filter((u) => !drop.has(u.to));
       for (const g of d.gws) g.to = g.to.filter((t) => !drop.has(t));
@@ -532,7 +620,7 @@
       }
     }
 
-    const all = calls(m);
+    const all = calls(m, true);
     if (m.peerings.length) {
       consul.peering = {};
       for (const p of m.peerings) {
@@ -619,7 +707,7 @@
           if (want !== inherited(m, n)) sv.connect = want;
           if (normNs(n.svc.ns || n.svc.inhNs) !== normNs(n.svc.inhNs)) sv.namespace = n.svc.ns;
           const ups = {};
-          for (const c of all.filter((c) => c.src === n)) {
+          for (const c of all.filter((c) => c.src === n && !c.fo)) {
             let u;
             if (c.r.kind === "local") u = { port: c.port };
             else if (c.r.kind === "partition") u = { port: c.port, partition: c.r.partition };
@@ -646,6 +734,16 @@
       if (seenHttp.has(k)) continue;
       seenHttp.add(k);
       entries.push(Object.assign({ Kind: "service-defaults", Name: t.name }, nsOf(t) ? { Namespace: nsOf(t) } : {}, { Protocol: "http" }));
+    }
+    // Failovers from here: a service-resolver each.
+    for (const fo of (m.fails || []).filter((x) => x.dc === d.id && (x.part || "") === s.id)) {
+      const at = svcAt(m, fo.svc, fo.dc, fo.part);
+      const targets = fo.to.map((t) => foTarget(m, fo, t)).filter(Boolean);
+      if (!at || !targets.length) continue;
+      const e = Object.assign({ Kind: "service-resolver", Name: at.t.name }, nsOf(at.t) ? { Namespace: nsOf(at.t) } : {});
+      if (fo.timeout) e.ConnectTimeout = fo.timeout;
+      e.Failover = { "*": { Targets: targets } };
+      entries.push(e);
     }
     // Exports to other partitions.
     const exp = new Map();
@@ -779,6 +877,7 @@
     if (!f) return "";
     if (f.t === "peering") return `consul.peering.${peeringName(m, f.peering)}`;
     if (f.t === "ext") return `consul.external.${f.ext.name}`;
+    if (f.t === "fail") return "";
     const base = `consul.datacenters.${f.dc.name}`;
     if (f.t === "dc") return base;
     const scope = (pid) => (f.dc.parts.length ? `${base}.partitions.${partName(f.dc, pid)}` : base);
@@ -818,6 +917,11 @@
       if (x.ns && !NAME_RE.test(x.ns)) out.push({ message: `${x.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: x.id });
       if (!x.in.length) out.push({ message: `${x.name} isn't registered anywhere. Link it to a datacenter or partition, or link a terminating gateway to it.`, id: x.id });
     }
+    for (const fo of m.fails || []) {
+      const at = svcAt(m, fo.svc, fo.dc, fo.part);
+      if (!at) continue;
+      for (const t of fo.to) if (!foTarget(m, fo, t)) out.push({ message: `${at.t.name} in ${sideName(m, fo.dc, fo.part)} fails over to ${sideName(m, t.dc, t.part)}, but nothing joins them. ${joinHint(m, dcById(m, fo.dc), fo.part, dcById(m, t.dc), t.part)}`, id: fo.svc });
+    }
     const unfronted = new Set();
     for (const c of calls(m)) if (c.t.ext && c.r.kind !== "none") {
       const k = c.t.ext.id + "@" + c.td.id + "/" + c.t.part;
@@ -850,6 +954,7 @@
     if (!f) return null;
     if (f.t === "peering") return ["consul", "peering", peeringName(m, f.peering)];
     if (f.t === "ext") return ["consul", "external", f.ext.name];
+    if (f.t === "fail") return null;
     const base = ["consul", "datacenters", f.dc.name];
     if (f.t === "dc") return base;
     const scope = (pid) => (f.dc.parts.length ? [...base, "partitions", partName(f.dc, pid)] : base);
@@ -887,6 +992,7 @@
     if (typeof sdOf(defs).namespace === "string" && normNs(sdOf(defs).namespace)) m.defNs = sdOf(defs).namespace;
     if (isMap(c.federation) && c.federation.mode) m.fed = String(c.federation.mode);
     const pending = []; // upstreams and routes, resolved once every node exists
+    const resolvers = []; // failover candidates: {d, pid, ce}
     for (const [dn, dvRaw] of Object.entries(isMap(c.datacenters) ? c.datacenters : {})) {
       const dv = isMap(dvRaw) ? dvRaw : {};
       const dpath = ["consul", "datacenters", dn];
@@ -917,6 +1023,12 @@
               if (id && !g.to.includes(id)) g.to.push(id);
             }
           });
+        }
+        // Service-resolvers the builder would write: failovers.
+        for (const ce of Array.isArray(sv.config_entries) ? sv.config_entries : []) {
+          const fo = isMap(ce) && ce.Kind === "service-resolver" && isMap(ce.Failover) ? ce.Failover["*"] : null;
+          if (!isMap(fo) || Object.keys(ce).some((k) => !["Kind", "Name", "Namespace", "ConnectTimeout", "Failover"].includes(k)) || Object.keys(ce.Failover).length !== 1 || Object.keys(fo).join() !== "Targets" || !Array.isArray(fo.Targets) || !fo.Targets.length) continue;
+          resolvers.push({ d, pid, ce });
         }
         for (const [nn, nvRaw] of Object.entries(isMap(sv.nodes) ? sv.nodes : {})) {
           const nv = isMap(nvRaw) ? nvRaw : {};
@@ -997,6 +1109,33 @@
       m.exts.push(x);
     }
     pending.forEach((f) => f());
+    // A resolver becomes a failover when the builder would write it back
+    // the same; else it stays the file's own entry.
+    for (const { d, pid, ce } of resolvers) {
+      const ns = normNs(typeof ce.Namespace === "string" ? ce.Namespace : "");
+      const n = d.nodes.find((x) => x.svc && x.name === ce.Name && (x.part || "") === pid && nsOf(x) === ns);
+      const x = !n && m.exts.find((y) => y.name === ce.Name && regAt(y, d.id, pid) && extNs(m, y) === ns);
+      const svc = (n || x || {}).id;
+      if (!svc) continue;
+      const to = [];
+      for (const t of ce.Failover["*"].Targets) {
+        if (!isMap(t)) { to.length = 0; break; }
+        if (typeof t.Peer === "string") {
+          const p = m.peerings.find((y) => y.name === t.Peer || peeringName(m, y) === t.Peer);
+          const mine = p && p.dialer === d.id && (p.dialPart || "") === pid;
+          if (p) to.push(mine ? { dc: p.acceptor, part: p.accPart || "" } : { dc: p.dialer, part: p.dialPart || "" });
+        } else if (typeof t.Partition === "string") {
+          const pp = t.Partition === "default" ? { id: "" } : d.parts.find((y) => y.name === t.Partition);
+          if (pp) to.push({ dc: d.id, part: pp.id });
+        } else if (typeof t.Datacenter === "string") {
+          const td = m.dcs.find((y) => y.name === t.Datacenter);
+          if (td) to.push({ dc: td.id, part: "" });
+        }
+      }
+      if (to.length !== ce.Failover["*"].Targets.length) continue;
+      const fo = { id: uid("f"), svc, dc: d.id, part: pid, to, timeout: typeof ce.ConnectTimeout === "string" ? ce.ConnectTimeout : "" };
+      if (same(to.map((t) => foTarget(m, fo, t)), ce.Failover["*"].Targets)) m.fails.push(fo);
+    }
     return m;
   }
 
@@ -1173,7 +1312,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);
