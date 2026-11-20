@@ -51,6 +51,8 @@ type Config struct {
 	// ReadyCode and ReadyFailureCode are /ready's answers after and
 	// before ReadyDelay.
 	ReadyCode, ReadyFailureCode int
+	// LogLevel is the level the service starts at (LOG_LEVEL).
+	LogLevel Level
 }
 
 // Load builds the config from fake-service's env vars, then the fake:
@@ -60,7 +62,7 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		getenv = os.Getenv
 	}
 	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second,
-		Protocol: "http", Faults: DefaultFaults(), RequestFaults: true, Facts: true, ReadyCode: 200, ReadyFailureCode: 503}
+		LogLevel: LevelInfo, Protocol: "http", Faults: DefaultFaults(), RequestFaults: true, Facts: true, ReadyCode: 200, ReadyFailureCode: 503}
 	if v := getenv("NAME"); v != "" && name == "" {
 		c.Name = v
 	}
@@ -111,6 +113,13 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		}
 		c.ReadyDelay = d
 	}
+	if v := getenv("LOG_LEVEL"); v != "" {
+		l, err := ParseLevel(v)
+		if err != nil {
+			return nil, fmt.Errorf("LOG_LEVEL: %w", err)
+		}
+		c.LogLevel = l
+	}
 	if raw := getenv(EnvConfig); raw != "" {
 		var f spec.Fake
 		if err := json.Unmarshal([]byte(raw), &f); err != nil {
@@ -148,6 +157,13 @@ func (c *Config) apply(f *spec.Fake) error {
 	}
 	if f.Seed != 0 {
 		c.Seed = f.Seed
+	}
+	if f.LogLevel != "" {
+		l, err := ParseLevel(f.LogLevel)
+		if err != nil {
+			return err
+		}
+		c.LogLevel = l
 	}
 	if f.RequestFaults != nil {
 		c.RequestFaults = *f.RequestFaults

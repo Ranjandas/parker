@@ -130,6 +130,14 @@ func (f *fakeLab) Fake(_ context.Context, node string, st *spec.FakeStep) ([]str
 	return []string{node + "/api: health 503"}, nil
 }
 
+func (f *fakeLab) LogLevel(_ context.Context, node string, st *spec.LogLevelStep) ([]string, error) {
+	f.log = append(f.log, "log_level "+node+" "+st.Level)
+	if node == f.procFail {
+		return []string{node + "/consul (consul): debug"}, errors.New(node + "/web-sidecar: connection refused")
+	}
+	return []string{node + "/web-sidecar (envoy): " + st.Level + " (60 loggers)"}, nil
+}
+
 func (f *fakeLab) Call(_ context.Context, node, svc, path string, hdr map[string]string) (int, []byte, error) {
 	f.log = append(f.log, "call "+node+path)
 	if len(f.calls) == 0 {
@@ -470,5 +478,64 @@ func TestCallAssert(t *testing.T) {
 	}
 	if got := Selectors(parse(t, "steps:\n  - assert: { call: { on: dc1/api } }\n")); !slices.Equal(got, []string{"dc1/api"}) {
 		t.Errorf("Selectors = %v", got)
+	}
+}
+
+func TestLogLevelStep(t *testing.T) {
+	f := newLab()
+	sc := parse(t, `
+steps:
+  - log_level: {on: dc1/web, level: debug, only: envoy}
+`)
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"step 1: log level debug on dc1/web (envoy)", "dc1-web-2/web-sidecar (envoy): debug (60 loggers)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if got := strings.Join(f.log, ";"); got != "log_level dc1-web-1 debug;log_level dc1-web-2 debug" {
+		t.Errorf("log %q", got)
+	}
+
+	// One node failing still shows the others' lines, and fails the step.
+	f = newLab()
+	f.procFail = "dc1-web-1"
+	out, err = run(t, parse(t, "steps:\n  - log_level: {on: dc1/web, level: info}\n"), f)
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("err %v", err)
+	}
+	if !strings.Contains(out, "dc1-web-1/consul (consul): debug") || !strings.Contains(out, "dc1-web-2/web-sidecar") {
+		t.Errorf("out:\n%s", out)
+	}
+}
+
+func TestValidateLogLevel(t *testing.T) {
+	for _, c := range []struct {
+		y, err string
+	}{
+		{"log_level: {on: dc1, level: debug}", ""},
+		{"log_level: {on: dc1}", ""},
+		{"log_level: {on: dc1, reset: true}", ""},
+		{"log_level: {on: dc1, loggers: {upstream: trace}}", ""},
+		{"log_level: {on: dc1, level: off, only: envoy}", ""},
+		{"log_level: {level: debug}", "needs on:"},
+		{"log_level: {on: dc1, level: loud}", `level "loud"`},
+		{"log_level: {on: dc1, level: off}", "Envoy's only"},
+		{"log_level: {on: dc1, only: nomad}", "only:"},
+		{"log_level: {on: dc1, reset: true, level: debug}", "reset: true takes no"},
+		{"log_level: {on: dc1, only: consul, loggers: {upstream: trace}}", "loggers are Envoy's"},
+		{"log_level: {on: dc1, loggers: {upstream: chatty}}", `logger upstream "chatty"`},
+		{"log_level: {on: dc1, loggers: {paths: debug}}", "name an Envoy logger"},
+	} {
+		err := Validate(parse(t, "steps:\n  - "+c.y+"\n"))
+		switch {
+		case c.err == "" && err != nil:
+			t.Errorf("%s: %v", c.y, err)
+		case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+			t.Errorf("%s: err %v, want %q", c.y, err, c.err)
+		}
 	}
 }

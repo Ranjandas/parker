@@ -597,11 +597,25 @@ func printStatus(w io.Writer, st *parkerv1.StatusResponse) {
 func logsCmd() *cobra.Command {
 	var follow bool
 	var lines int
+	var level, only string
+	var loggers []string
 	c := &cobra.Command{
 		Use:   "logs FILE|LAB NODE[/PROCESS]",
-		Short: "Print a node's process log (default: its only process, else consul)",
+		Short: "Print a node's process log (default: its only process, else consul); change log levels",
+		Long: "Print a node's process log (default: its only process, else consul).\n\n" +
+			"--level changes the log level of the Consul agent, Envoys and fake services on the\n" +
+			"node (or one /PROCESS, or every node a selector like dc1/web matches) while they run,\n" +
+			"then prints the levels in force; with -f it then follows the log. Consul's log_level\n" +
+			"is rewritten and the agent reloaded; Envoy changes through its admin /logging; a\n" +
+			"fake service through its control socket. --level reset goes back to the lab's\n" +
+			"levels, --level show only prints them. consul-dataplane's own level can't change\n" +
+			"at runtime (its Envoy's can).",
 		Example: "  parker logs examples/minimal.yaml dc1-server-1 -f\n" +
-			"  parker logs clients dc1-web-1/web -n 100",
+			"  parker logs clients dc1-web-1/web -n 100\n" +
+			"  parker logs mesh dc1-web-1/web-sidecar --level debug -f\n" +
+			"  parker logs mesh dc1-web-1 --logger upstream=trace,http=debug\n" +
+			"  parker logs mesh dc1 --level debug --only consul\n" +
+			"  parker logs mesh dc1 --level reset",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := labName(args[0])
@@ -615,6 +629,19 @@ func logsCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
+			st, err := logLevelStep(node, proc, level, only, loggers)
+			if err != nil {
+				return err
+			}
+			if st != nil {
+				if err := applyLogLevel(ctx, name, st, os.Stdout); err != nil {
+					return err
+				}
+				if !follow {
+					return nil
+				}
+				fmt.Println("---")
+			}
 			c, ok, err := connectDaemon(ctx)
 			if err != nil {
 				return err
@@ -646,6 +673,9 @@ func logsCmd() *cobra.Command {
 	}
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep printing new lines")
 	c.Flags().IntVarP(&lines, "lines", "n", 50, "lines to print first (-1 for all)")
+	c.Flags().StringVar(&level, "level", "", "change the log level first: trace, debug, info, warn, error (critical, off: Envoy), reset or show")
+	c.Flags().StringArrayVar(&loggers, "logger", nil, "change one Envoy logger: NAME=LEVEL (upstream=trace); repeatable or comma-separated")
+	c.Flags().StringVar(&only, "only", "", "with --level: only consul, envoy or fake processes")
 	return c
 }
 
