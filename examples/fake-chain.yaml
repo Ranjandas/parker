@@ -1,0 +1,68 @@
+# The v0.9 fake service demo: web -> api -> db in two datacenters, federated
+# through mesh gateways. A service-resolver fails api over to dc2 when dc1's
+# instances are unhealthy. The scenario fails dc1/api's health check without
+# killing it, and the call assertions (like `parker call dc1/web`) watch the
+# request go to dc2/api and come back.
+#
+#   parker up examples/fake-chain.yaml
+#   parker call examples/fake-chain.yaml dc1/web --every 1s     # in one terminal
+#   parker fake examples/fake-chain.yaml dc1/api --health 503   # in another
+#   parker fake examples/fake-chain.yaml dc1/api --reset
+#
+# `parker ui` shows the same: open the topology, pick dc1-web and Send
+# request, or open a fake's page to change its faults with sliders.
+parker: v1alpha1
+name: failover
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults:
+    tls: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  federation: { mode: mesh-gateways }
+  datacenters:
+    dc1:
+      servers: 1
+      gateways: { mesh: true }
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+        - Kind: service-resolver
+          Name: api
+          ConnectTimeout: 2s
+          Failover:
+            "*": { Datacenters: [dc2] }
+      nodes:
+        web:
+          service: { port: 8080, upstreams: { api: 9091 } }
+        api:
+          service: { port: 9090, upstreams: { db: 9092 } }
+        db:
+          service: { port: 7000, fake: { message: rows } }
+    dc2:
+      servers: 1
+      gateways: { mesh: true }
+      nodes:
+        api:
+          service: { port: 9090, upstreams: { db: 9092 } }
+        db:
+          service: { port: 7000, fake: { message: rows } }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the servers are federated through the gateways
+      assert:
+        exec: { on: dc1/server-1, run: "test $(consul members -wan | grep -c alive) -eq 2" }
+        within: 60s
+    - assert: { consul: { service_healthy: api-sidecar-proxy, dc: dc2 }, within: 60s }
+    - name: web reaches api and db in dc1
+      assert: { call: { on: dc1/web, reaches: dc1/db, body: rows }, within: 90s }
+    - name: dc1/api fails its health check but keeps running
+      fake: { on: dc1/api, health: { code: 503 } }
+    - name: the request fails over to dc2/api, and on to dc2's db
+      assert: { call: { on: dc1/web, reaches: dc2/api, body: rows }, within: 60s }
+    - fake: { on: dc1/api, reset: true }
+    - name: and comes back to dc1 when api recovers
+      assert: { call: { on: dc1/web, reaches: dc1/api }, within: 60s }

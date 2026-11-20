@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -375,5 +376,26 @@ func TestFaultEnv(t *testing.T) {
 		if _, err := Load("x", "", 1, env(e)); err == nil {
 			t.Errorf("%v: want an error", e)
 		}
+	}
+}
+
+func TestUpstreamCallsUseFreshConnections(t *testing.T) {
+	var conns atomic.Int64
+	ds := New(&Config{Name: "db", Workers: 1})
+	ds.log = log.New(io.Discard, "", 0)
+	db := httptest.NewUnstartedServer(ds.Handler())
+	db.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	db.Start()
+	defer db.Close()
+	web, _ := start(t, &Config{Name: "web", Upstreams: []string{db.URL}, Workers: 1})
+	for range 3 {
+		get(t, web.URL, nil)
+	}
+	if n := conns.Load(); n != 3 {
+		t.Errorf("%d connections for 3 calls; a kept-alive one would pin a failover", n)
 	}
 }

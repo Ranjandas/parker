@@ -81,7 +81,7 @@ type Server struct {
 func New(cfg *Config) *Server {
 	return &Server{
 		cfg:     cfg,
-		client:  &http.Client{Timeout: cfg.ClientTimeout},
+		client:  &http.Client{Timeout: cfg.ClientTimeout, Transport: freshConns()},
 		h2c:     h2cClient(cfg.ClientTimeout),
 		ips:     localIPs(),
 		log:     log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
@@ -92,6 +92,15 @@ func New(cfg *Config) *Server {
 		inj:     newInjector(cfg.Seed),
 		facts:   newFactTeller(cfg.Version, uint64(cfg.Seed)),
 	}
+}
+
+// freshConns opens a connection per upstream call. Through a sidecar's TCP
+// proxy a kept-alive connection stays pinned to the instance it first
+// reached, so a failover or a traffic split wouldn't show.
+func freshConns() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DisableKeepAlives = true
+	return tr
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
