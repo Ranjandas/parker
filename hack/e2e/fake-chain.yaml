@@ -36,3 +36,9 @@ scenario:
       assert:
         exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/db | grep -q 7000/health" }
         within: 30s
+    - name: a caller can fail one request at a hop further down
+      assert:
+        exec: { on: dc1/web, run: "curl -s -o /dev/null -w '%{http_code}' -H 'X-Parker-Fault: db=error-rate:100' http://127.0.0.1:8080/", output: "500" }
+    - name: and only that request
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/" }

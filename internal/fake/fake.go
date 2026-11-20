@@ -47,6 +47,9 @@ type Response struct {
 	UpstreamCalls map[string]*Response `json:"upstream_calls,omitempty"`
 	Code          int                  `json:"code"`
 	Error         string               `json:"error,omitempty"`
+	// Injected names the fault injected into this answer, if any:
+	// error, delay or rate_limit.
+	Injected string `json:"injected,omitempty"`
 	// Cycle is set when this service was already on the request's path:
 	// its upstreams aren't called again.
 	Cycle bool `json:"cycle,omitempty"`
@@ -61,6 +64,13 @@ type Server struct {
 	// now is time.Now outside tests.
 	now     func() time.Time
 	started time.Time
+	// sleep waits for d or the request to end; time.Sleep-like outside
+	// tests.
+	sleep func(ctx context.Context, d time.Duration)
+
+	mu     sync.RWMutex
+	faults Faults
+	inj    *injector
 }
 
 func New(cfg *Config) *Server {
@@ -71,7 +81,36 @@ func New(cfg *Config) *Server {
 		log:     log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
 		now:     time.Now,
 		started: time.Now(),
+		sleep:   sleepCtx,
+		faults:  cfg.Faults,
+		inj:     newInjector(cfg.Seed),
 	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+// Faults returns the faults in force now.
+func (s *Server) Faults() Faults {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.faults
+}
+
+// SetFaults replaces the faults in force.
+func (s *Server) SetFaults(f Faults) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.faults = f
 }
 
 // Handler serves the fake service's HTTP API.
@@ -113,15 +152,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if t := r.Header.Get(HeaderTrail); t != "" {
 		trail = strings.Split(t, ",")
 	}
+	if !s.inject(r, resp) {
+		s.reply(w, r, resp, start, id)
+		return
+	}
 	switch {
 	case len(s.cfg.Upstreams) == 0:
 	case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
 		// Answer, but don't go round again.
 		resp.Cycle = true
 	default:
-		resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","))
+		resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","), r.Header.Get(HeaderFault))
 		for _, u := range s.cfg.Upstreams {
-			if up := resp.UpstreamCalls[u]; up.Error != "" || up.Code >= 400 {
+			if up := resp.UpstreamCalls[u]; up.Code < 0 || up.Code >= 400 {
 				if !s.cfg.IgnoreUpstreamErrors {
 					resp.Code = http.StatusInternalServerError
 					resp.Error = "upstream " + u + " failed"
@@ -130,6 +173,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.reply(w, r, resp, start, id)
+}
+
+func (s *Server) reply(w http.ResponseWriter, r *http.Request, resp *Response, start time.Time, id string) {
 	s.finish(resp, start)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(HeaderRequestID, id)
@@ -138,9 +185,43 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.log.Printf("request id=%s path=%s from=%s code=%d duration=%s", id, resp.URI, r.RemoteAddr, resp.Code, resp.Duration)
 }
 
+// inject applies the request's faults: the rate limit, then an injected
+// error, then latency. It reports whether the request goes on to its
+// upstreams; when it doesn't, resp holds the error.
+func (s *Server) inject(r *http.Request, resp *Response) bool {
+	f := s.Faults()
+	var rf requestFaults
+	if s.cfg.RequestFaults {
+		var err error
+		if rf, err = parseRequestFaults(s.cfg.Name, r.URL.Query(), r.Header); err != nil {
+			resp.Code, resp.Error = http.StatusBadRequest, err.Error()
+			return false
+		}
+	}
+	if !s.inj.allow(f.RateLimit, s.now()) {
+		resp.Code, resp.Error, resp.Injected = f.RateLimitCode, "rate limit exceeded", "rate_limit"
+		return false
+	}
+	rate := f.ErrorRate
+	if rf.errorRate > 0 {
+		rate = rf.errorRate
+	}
+	if rate > 0 && s.inj.float() < rate {
+		if f.ErrorType == "delay" {
+			s.sleep(r.Context(), f.ErrorDelay)
+			resp.Injected = "delay"
+		} else {
+			resp.Code, resp.Error, resp.Injected = f.ErrorCode, "error injected", "error"
+			return false
+		}
+	}
+	s.sleep(r.Context(), s.inj.latency(f)+rf.delay)
+	return true
+}
+
 // health answers the health check: HealthCode.
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	status(w, s.cfg.HealthCode)
+	status(w, s.Faults().HealthCode)
 }
 
 // ready fails until ReadyDelay has passed since the server started.
@@ -170,7 +251,7 @@ func (s *Server) finish(resp *Response, start time.Time) {
 }
 
 // callUpstreams calls every upstream, Workers at a time, keyed by URI.
-func (s *Server) callUpstreams(ctx context.Context, id, trail string) map[string]*Response {
+func (s *Server) callUpstreams(ctx context.Context, id, trail, fault string) map[string]*Response {
 	out := make(map[string]*Response, len(s.cfg.Upstreams))
 	var mu sync.Mutex
 	sem := make(chan struct{}, max(1, s.cfg.Workers))
@@ -181,7 +262,7 @@ func (s *Server) callUpstreams(ctx context.Context, id, trail string) map[string
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r := s.call(ctx, u, id, trail)
+			r := s.call(ctx, u, id, trail, fault)
 			mu.Lock()
 			out[u] = r
 			mu.Unlock()
@@ -193,7 +274,7 @@ func (s *Server) callUpstreams(ctx context.Context, id, trail string) map[string
 
 // call makes one upstream request. A fake upstream's JSON is nested as
 // is; anything else becomes a Response with the code and body.
-func (s *Server) call(ctx context.Context, uri, id, trail string) *Response {
+func (s *Server) call(ctx context.Context, uri, id, trail, fault string) *Response {
 	start := s.now()
 	fail := func(code int, err string) *Response {
 		r := &Response{URI: uri, Type: "HTTP", Code: code, Error: err}
@@ -206,6 +287,9 @@ func (s *Server) call(ctx context.Context, uri, id, trail string) *Response {
 	}
 	req.Header.Set(HeaderRequestID, id)
 	req.Header.Set(HeaderTrail, trail)
+	if fault != "" {
+		req.Header.Set(HeaderFault, fault)
+	}
 	res, err := s.client.Do(req)
 	if err != nil {
 		return fail(-1, err.Error())

@@ -410,11 +410,61 @@
         "ready": {
           "$ref": "#/$defs/FakeReady",
           "description": "Ready sets what /ready answers; Parker waits on it at up."
+        },
+        "latency": {
+          "$ref": "#/$defs/FakeLatency",
+          "description": "Latency adds a delay to each answer, drawn from these percentiles."
+        },
+        "errors": {
+          "$ref": "#/$defs/FakeErrors",
+          "description": "Errors fails a share of requests."
+        },
+        "rate_limit": {
+          "$ref": "#/$defs/FakeRateLimit",
+          "description": "RateLimit answers requests over a rate with an error code."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Seed makes the random draws (errors, latency) repeatable\n(RAND_SEED); default: a new seed each start."
+        },
+        "request_faults": {
+          "type": "boolean",
+          "description": "RequestFaults lets a caller ask for faults on one request\n(?error-rate=50\u0026delay=2s, or the X-Parker-Fault header); default\ntrue."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "description": "Fake configures Parker's built-in fake service."
+    },
+    "FakeErrors": {
+      "properties": {
+        "rate": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Rate is the share of requests that fail, 0 to 1 (ERROR_RATE)."
+        },
+        "code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Code a failed request answers (ERROR_CODE); default 500."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "http_error",
+            "delay"
+          ],
+          "description": "Type is http_error (default: answer Code) or delay (answer late,\nafter Delay) (ERROR_TYPE)."
+        },
+        "delay": {
+          "type": "string",
+          "description": "Delay for type: delay, e.g. 5s (ERROR_DELAY)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "FakeHealth": {
       "properties": {
@@ -423,6 +473,47 @@
           "maximum": 599,
           "minimum": 100,
           "description": "Code /health answers (HEALTH_CHECK_RESPONSE_CODE); default 200. A\ncode of 400 or more fails the Consul check while the process keeps\nrunning."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "FakeLatency": {
+      "properties": {
+        "p50": {
+          "type": "string",
+          "description": "P50 is the median delay, e.g. 20ms (TIMING_50_PERCENTILE)."
+        },
+        "p90": {
+          "type": "string",
+          "description": "P90 (TIMING_90_PERCENTILE); default p50."
+        },
+        "p99": {
+          "type": "string",
+          "description": "P99 (TIMING_99_PERCENTILE); default p90."
+        },
+        "variance": {
+          "type": "integer",
+          "maximum": 100,
+          "minimum": 0,
+          "description": "Variance spreads each draw by up to this percentage either way\n(TIMING_VARIANCE)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "FakeRateLimit": {
+      "properties": {
+        "rps": {
+          "type": "number",
+          "minimum": 0,
+          "description": "RPS is the requests per second allowed (RATE_LIMIT); 0 is off."
+        },
+        "code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Code for requests over the limit (RATE_LIMIT_CODE); default 503."
         }
       },
       "additionalProperties": false,
