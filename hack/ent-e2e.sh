@@ -45,7 +45,10 @@ ip link set lo up
 lab=$($P expand "$F" | awk '/^name:/ {print $2; exit}')
 
 $P up "$F"
-first=$($P status "$F" | awk 'NR==3 {print $1}')
+# A node with a Consul agent: the first server (an external service's
+# node, e.g. api, sorts first but runs no agent).
+first=$($P status "$F" | awk 'NR>2 && $1 ~ /-server-1$/ {print $1; exit}')
+[ -n "$first" ] || first=$($P status "$F" | awk 'NR==3 {print $1}')
 echo "--- Enterprise is running, licensed"
 $P exec "$F" "$first" -- consul version </dev/null | grep -F +ent
 $P exec "$F" "$first" -- consul license get </dev/null | grep -iE 'valid|expires' | head -3
