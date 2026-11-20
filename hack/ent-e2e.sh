@@ -33,31 +33,36 @@ fi
 case "$out" in *"needs a Consul Enterprise license"*) echo "refused: ${out%%$'\n'*}" ;; *) echo "unexpected: $out" >&2; exit 1 ;; esac
 
 echo "--- expand output carries no license"
-if ./bin/parker expand "$F" | grep -qF "$NEEDLE"; then echo "license in expand output" >&2; exit 1; fi
+if ./bin/parker expand "$F" | grep -F "$NEEDLE" >/dev/null; then echo "license in expand output" >&2; exit 1; fi
 
 exec unshare -Urnm --propagation private bash -s "$F" <<'INNER'
 set -euo pipefail
+trap 'echo "FAIL: line $LINENO: $BASH_COMMAND" >&2' ERR
 F=$1
 P=./bin/parker
 mount -t tmpfs tmpfs /run && mkdir -p /run/netns
 export PARKER_RUN_DIR=/run/parker
 ip link set lo up
-lab=$($P expand "$F" | awk '/^name:/ {print $2; exit}')
+lab=$($P expand "$F" | awk '/^name:/ && !n++ {print $2}')
 
 $P up "$F"
 # A node with a Consul agent: the first server (an external service's
-# node, e.g. api, sorts first but runs no agent).
-first=$($P status "$F" | awk 'NR>2 && $1 ~ /-server-1$/ {print $1; exit}')
-[ -n "$first" ] || first=$($P status "$F" | awk 'NR==3 {print $1}')
+# node, e.g. api, sorts first but runs no agent). awk reads all of the
+# status output: exiting early would SIGPIPE status, and pipefail plus
+# set -e would end the script without a word.
+st=$($P status "$F")
+first=$(awk 'NR>2 && $1 ~ /-server-1$/ && !n++ {print $1}' <<<"$st")
+[ -n "$first" ] || first=$(awk 'NR==3 {print $1}' <<<"$st")
 echo "--- Enterprise is running, licensed"
 $P exec "$F" "$first" -- consul version </dev/null | grep -F +ent
-$P exec "$F" "$first" -- consul license get </dev/null | grep -iE 'valid|expires' | head -3
+lic_info=$($P exec "$F" "$first" -- consul license get </dev/null)
+grep -iE 'valid|expires' <<<"$lic_info" | sed -n 1,3p | grep . || { echo "license get: $lic_info" >&2; exit 1; }
 
 echo "--- the license is in one 0600 file, nowhere else"
 lic=/run/parker/$lab/consul.hclic
 [ "$(stat -c %a "$lic")" = 600 ] || { echo "license file mode $(stat -c %a "$lic")" >&2; exit 1; }
 if grep -rlF "$NEEDLE" /run/parker | grep -vxF "$lic"; then echo "license leaked into the files above" >&2; exit 1; fi
-if $P describe "$F" "$first" | grep -qF "$NEEDLE"; then echo "license in describe" >&2; exit 1; fi
+if $P describe "$F" "$first" | grep -F "$NEEDLE" >/dev/null; then echo "license in describe" >&2; exit 1; fi
 echo "only $lic"
 
 if grep "^scenario:" "$F" >/dev/null; then
