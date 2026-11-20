@@ -167,8 +167,13 @@ func TestValidate(t *testing.T) {
 		}, "partitions and namespaces need Consul Enterprise"},
 		{"node name", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["Web"] = &Node{} }, "invalid node name"},
 		{"reserved node", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["server-9"] = &Node{} }, "reserved for servers"},
-		{"agent", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "bogus" }, "must be client or none"},
-		{"dataplane", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "dataplane" }, "dataplane is reserved"},
+		{"agent", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "bogus" }, "must be client, dataplane or none"},
+		{"dataplane version", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "dataplane" }, "dataplane needs versions.consul-dataplane"},
+		{"dataplane config", func(f *File) {
+			f.Versions["consul-dataplane"] = "1.9.12"
+			f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "dataplane"
+			f.Consul.Datacenters["dc1"].Nodes["web"].Config = map[string]any{"x": 1}
+		}, "a dataplane node has no agent to configure"},
 		{"service and services", func(f *File) {
 			n := f.Consul.Datacenters["dc1"].Nodes["web"]
 			n.Service, n.Services = &Service{}, map[string]*Service{"x": {}}

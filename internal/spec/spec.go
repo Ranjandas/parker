@@ -597,8 +597,10 @@ type Node struct {
 	From string `yaml:"from,omitempty"`
 	// Count makes N copies of the node, named <name>-1 ... <name>-N.
 	Count int `yaml:"count,omitempty" jsonschema:"minimum=1"`
-	// Agent is client (default) or none.
-	Agent string `yaml:"agent,omitempty" jsonschema:"enum=client,enum=none"`
+	// Agent is client (default), dataplane (no agent: services are
+	// registered in the catalog and each sidecar is consul-dataplane, which
+	// talks to the servers) or none.
+	Agent string `yaml:"agent,omitempty" jsonschema:"enum=client,enum=dataplane,enum=none"`
 	// Config is merged into this node's agent configuration.
 	Config map[string]any `yaml:"config,omitempty"`
 	// Meta is the node's Consul node metadata.

@@ -502,9 +502,10 @@
           "type": "string",
           "enum": [
             "client",
+            "dataplane",
             "none"
           ],
-          "description": "Agent is client (default) or none."
+          "description": "Agent is client (default), dataplane (no agent: services are\nregistered in the catalog and each sidecar is consul-dataplane, which\ntalks to the servers) or none."
         },
         "config": {
           "type": "object",
