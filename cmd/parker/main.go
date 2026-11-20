@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Ranjandas/parker/internal/compat"
-	"github.com/Ranjandas/parker/internal/echo"
 	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/scenario"
@@ -184,15 +184,16 @@ func fetchCmd() *cobra.Command {
 }
 
 func fakeServiceCmd() *cobra.Command {
-	var name string
+	var name, dc string
 	var port int
 	c := &cobra.Command{
 		Use:    "fake-service",
-		Short:  "Built-in echo HTTP service",
+		Short:  "Built-in fake service (run: fake-service)",
 		Hidden: true,
-		RunE:   func(cmd *cobra.Command, args []string) error { return echo.Serve(name, port) },
+		RunE:   func(cmd *cobra.Command, args []string) error { return fake.Serve(name, dc, port) },
 	}
 	c.Flags().StringVar(&name, "name", "fake", "service name")
+	c.Flags().StringVar(&dc, "dc", "", "datacenter, shown in responses")
 	c.Flags().IntVar(&port, "port", 8080, "listen port")
 	return c
 }

@@ -1,0 +1,34 @@
+# The built-in fake service calls its upstreams and nests their answers:
+# web -> api through web's sidecar (upstreams:), api -> db through api's
+# transparent proxy (db.virtual.consul). One request to web shows all
+# three hops.
+parker: v1alpha1
+name: fake-chain
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      service_defaults: { run: fake-service }
+      nodes:
+        web:
+          service: { port: 8080, connect: sidecar, upstreams: { api: 9091 }, fake: { version: v1 } }
+        api:
+          service: { port: 9090, connect: tproxy, fake: { upstreams: ["http://db.virtual.consul:7000/"] } }
+        db:
+          service: { port: 7000, connect: sidecar, fake: { message: rows } }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert: { consul: { service_healthy: web-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: db-sidecar-proxy }, within: 60s }
+    - name: one request to web reaches db through two proxies
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/", output: '"body":"rows"' }
+        within: 60s
+    - name: every hop answered 200
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/ | grep -o '\"code\":200' | wc -l | grep -qx 3" }
+        within: 30s
