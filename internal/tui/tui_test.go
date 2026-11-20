@@ -151,7 +151,7 @@ func TestFilterAndDC(t *testing.T) {
 		t.Fatalf("filter web: %+v", mm.rows)
 	}
 	m = drive(t, m, key("esc"))           // clears the filter
-	if n := len(m.(Model).rows); n != 5 { // 3 processes under 2 headings
+	if n := len(m.(Model).rows); n != 6 { // 3 processes under 2 headings, a blank between
 		t.Fatalf("after esc: %d rows", n)
 	}
 	m = drive(t, m, append([]tea.Msg{key(":")}, append(typed("dc dc1"), key("enter"))...)...)

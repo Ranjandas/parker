@@ -209,12 +209,18 @@ func (g grid) View() string {
 	return b.String()
 }
 
-// sectionLine is a heading: "── dc1 ───── 3 servers · 1 client ──".
+// sectionLine is a heading on a tinted band the width of the grid:
+// " dc1  3 servers · 1 client". An empty title is a blank spacer line.
 func sectionLine(title string, width int) string {
-	name, rest, _ := strings.Cut(title, "\t")
-	l := ruleStyle.Render("─ ") + sectionStyle.Render(name) + " "
-	if rest != "" {
-		l += mutedStyle.Render(rest) + " "
+	if title == "" {
+		return ""
 	}
-	return l + ruleStyle.Render(strings.Repeat("─", max(width-ansi.StringWidth(l), 0)))
+	name, rest, _ := strings.Cut(title, "\t")
+	band := lipgloss.NewStyle().Background(colBand)
+	l := band.Render(" ") + sectionStyle.Background(colBand).Render(name)
+	if rest != "" {
+		l += band.Render("  ") + mutedStyle.Background(colBand).Render(rest)
+	}
+	l = ansi.Truncate(l, width, "")
+	return l + band.Render(strings.Repeat(" ", max(width-ansi.StringWidth(l), 0)))
 }

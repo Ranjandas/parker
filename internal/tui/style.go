@@ -20,6 +20,11 @@ var (
 	colMuted  = lipgloss.AdaptiveColor{Dark: "#9AA4B2", Light: "#5B6472"}
 	colRule   = lipgloss.AdaptiveColor{Dark: "#3B4252", Light: "#C9CED6"}
 	colNavy   = lipgloss.Color("#0F1B2D")
+	// colBand tints a datacenter heading: a step off the background, so it
+	// separates groups without competing with the orange cursor bar.
+	colBand = lipgloss.AdaptiveColor{Dark: "#363C4F", Light: "#EFE7D6"}
+	// colEmber is the cool end of the logo's trail.
+	colEmber = lipgloss.AdaptiveColor{Dark: "#A8442E", Light: "#F2A48C"}
 )
 
 var (
@@ -57,17 +62,17 @@ func stateCell(s string) cell {
 	return cell{text: s, style: plain}
 }
 
-// roleCell is a Consul role: the leader stands out, clients recede.
+// roleCell is a ROLE: what a process is on its node. The leader stands
+// out; helpers (clients, sidecars, setup jobs) recede.
 func roleCell(r string) cell {
-	switch r {
-	case "leader":
-		return cell{text: "★ leader", style: leadStyle}
-	case "no-leader":
-		return cell{text: "no leader", style: errStyle}
-	case "client", "-", "":
-		if r == "" {
-			r = "-"
-		}
+	switch {
+	case r == roleLeader:
+		return cell{text: r, style: leadStyle}
+	case r == roleNoLeader:
+		return cell{text: r, style: errStyle}
+	case r == "", r == "-":
+		return cell{text: "-", style: mutedStyle}
+	case r == "client", r == "setup", strings.HasPrefix(r, "sidecar"):
 		return cell{text: r, style: mutedStyle}
 	}
 	return cell{text: r, style: plain}
@@ -105,19 +110,28 @@ func box(title, content string, width int, border lipgloss.Style) string {
 	return top + "\n" + mid + "\n" + bot
 }
 
-// The logo, after the monogram: speed lines trailing a sun. The lines
-// shimmer from gold through orange to red as frames advance, so Parker
-// looks like it's moving.
-var trail = []lipgloss.TerminalColor{colGold, colAccent, colRed, colRule}
+// The logo, after the monogram: speed lines trailing a sun, fading from
+// ember at the tail to gold at the sun. Animated, a bright pulse runs down
+// the trail into the sun, so Parker looks like it's moving.
+var trail = []lipgloss.TerminalColor{colEmber, colEmber, colRed, colRed, colAccent, colGold}
 
 const trailLen = 6
 
+// pulse is how far apart pulses run, in frames: the trail plus a rest.
+const pulse = trailLen + 5
+
 func (m Model) logo() string {
 	var b strings.Builder
+	p := m.frame % pulse
 	for i := range trailLen {
-		c := trail[(i-m.frame%len(trail)+len(trail))%len(trail)]
-		if m.o.Static {
-			c = trail[min(trailLen-1-i, len(trail)-1)] // a still gradient, brightest at the sun
+		c := trail[i]
+		if !m.o.Static {
+			switch i {
+			case p:
+				c = colGold
+			case p - 1:
+				c = colAccent
+			}
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(c).Render("━"))
 	}

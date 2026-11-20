@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
@@ -88,16 +89,16 @@ func TestRowGroupsProcesses(t *testing.T) {
 	for _, r := range mm.rows {
 		got = append(got, r.section+"|"+r.node+"/"+r.proc)
 	}
-	want := []string{"dc1\t1 server|/", "|dc1-server-1/consul", "other|/", "|dc2-web-1/consul", "|dc2-web-1/web"}
+	want := []string{"dc1\t1 server|/", "|dc1-server-1/consul", "|/", "other|/", "|dc2-web-1/consul", "|dc2-web-1/web"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rows %q", got)
 	}
-	c := mm.rows[4].cells(true)
+	c := mm.rows[5].cells(true)
 	if c[0].text != "" || c[1].text != "" || c[2].text != "web" {
 		t.Errorf("continuation row: %+v", c)
 	}
 	v := mm.View()
-	if strings.Count(v, "dc2-web-1") != 1 || !strings.Contains(v, "─ dc1 1 server ─") {
+	if strings.Count(v, "dc2-web-1") != 1 || !strings.Contains(v, " dc1  1 server ") {
 		t.Errorf("dc2-web-1 listed once, dc1 heading:\n%s", v)
 	}
 	// The cursor starts on the first node, not the heading, and skips
@@ -153,7 +154,7 @@ func TestStateAndRoleCells(t *testing.T) {
 			t.Errorf("stateCell(%s) = %q", s, got)
 		}
 	}
-	if roleCell("leader").text != "★ leader" || roleCell("").text != "-" || roleCell("follower").text != "follower" {
+	if roleCell(roleLeader).style.GetForeground() != leadStyle.GetForeground() || roleCell("").text != "-" || roleCell("server").text != "server" {
 		t.Error("roleCell")
 	}
 	if !strings.Contains(strings.Join(summary(sample().status["a"]), " "), "leader dc1-server-1") {
@@ -196,5 +197,163 @@ func TestLogoAnimates(t *testing.T) {
 func TestStaticLogo(t *testing.T) {
 	if got := ansi.Strip(New(Options{Static: true}).logo()); got != "━━━━━━● parker" {
 		t.Errorf("static logo: %q", got)
+	}
+}
+
+// meshLab is a datacenter with a gateway node and a service with a sidecar.
+func meshLab(ready bool) *fakeClient {
+	yes := true
+	up := func(name string, pid int32) *parkerv1.ProcessStatus {
+		return &parkerv1.ProcessStatus{Name: name, Pid: pid, Alive: true, Ready: &yes}
+	}
+	api := up("api", 6)
+	if !ready {
+		api.Alive = false
+	}
+	return &fakeClient{status: map[string]*parkerv1.StatusResponse{"m": {Lab: "m", Supervised: true, Nodes: []*parkerv1.NodeStatus{
+		{Name: "dc1-server-1", Ips: []string{"10.1.0.10", "10.255.0.10"}, Namespace: true, Role: "leader",
+			Processes: []*parkerv1.ProcessStatus{up("config-entries", 1), up("consul", 2)}},
+		{Name: "dc1-server-2", Ips: []string{"10.1.0.11"}, Namespace: true, Role: "follower",
+			Processes: []*parkerv1.ProcessStatus{up("consul", 3)}},
+		{Name: "dc1-mesh", Ips: []string{"10.1.0.100"}, Namespace: true, Role: "client",
+			Processes: []*parkerv1.ProcessStatus{up("consul", 4), up("mesh-gateway", 5)}},
+		{Name: "dc1-api", Ips: []string{"10.1.0.101"}, Namespace: true, Role: "client",
+			Processes: []*parkerv1.ProcessStatus{api, up("api-sidecar", 7), up("consul", 8)}},
+	}}}}
+}
+
+func nodesModel(t *testing.T, c *fakeClient, height int) Model {
+	t.Helper()
+	m := drive(t, New(Options{Client: c, Lab: "m", Static: true}), tea.WindowSizeMsg{Width: 120, Height: height}, key("r"))
+	return m.(Model)
+}
+
+func rowsOf(m Model) []string {
+	var got []string
+	for _, r := range m.rows {
+		switch {
+		case r.spacer:
+			got = append(got, "")
+		case r.section != "":
+		default:
+			p := r.proc
+			if r.procText != "" {
+				p = r.procText
+			}
+			got = append(got, r.marker+r.node+"/"+p+"="+r.role)
+		}
+	}
+	return got
+}
+
+func TestRolesAndProcessOrder(t *testing.T) {
+	m := nodesModel(t, meshLab(true), 40)
+	want := []string{
+		"▾ dc1-server-1/consul=server ★ leader", "dc1-server-1/config-entries=setup",
+		"  dc1-server-2/consul=server",
+		"▾ dc1-api/consul=client", "dc1-api/api=service", "dc1-api/api-sidecar=sidecar → api",
+		"▾ dc1-mesh/consul=client", "dc1-mesh/mesh-gateway=mesh gateway",
+	}
+	if got := rowsOf(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("rows:\n%s", strings.Join(got, "\n"))
+	}
+	if m.rows[1].ip != "10.1.0.10 +1" {
+		t.Errorf("ip %q", m.rows[1].ip)
+	}
+	if got := procRole(&parkerv1.NodeStatus{}, "ingress-gateway", nil); got != "ingress gateway" {
+		t.Errorf("ingress: %q", got)
+	}
+	if got := nodeRole(&parkerv1.NodeStatus{Name: "dc1-server-3"}); got != "server" {
+		t.Errorf("server with its agent down: %q", got)
+	}
+}
+
+func TestFolding(t *testing.T) {
+	// Room for everything: nothing folds until asked.
+	m := nodesModel(t, meshLab(true), 40)
+	if m.autoFold {
+		t.Fatal("autoFold with room to spare")
+	}
+	// ← on a process row folds its node and selects the summary row.
+	m = drive(t, m, key("j")).(Model) // config-entries
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyLeft}).(Model)
+	r, _ := m.selected()
+	if r.node != "dc1-server-1" || r.procText != "2 processes" || r.stateText != "● 2/2 ready" || r.role != roleLeader {
+		t.Fatalf("folded: %+v", r)
+	}
+	// It stays folded across a refresh.
+	m = drive(t, m, key("r")).(Model)
+	if r, _ := m.selected(); r.marker != "▸ " {
+		t.Fatalf("after refresh: %+v", r)
+	}
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyRight}).(Model)
+	if r, _ := m.selected(); r.marker != "▾ " || r.proc != "consul" {
+		t.Fatalf("unfolded: %+v", r)
+	}
+	// z folds all, then unfolds all.
+	m = drive(t, m, key("z")).(Model)
+	if n := len(rowsOf(m)); n != 4 {
+		t.Errorf("all folded: %q", rowsOf(m))
+	}
+	m = drive(t, m, key("z")).(Model)
+	if n := len(rowsOf(m)); n != 8 {
+		t.Errorf("all unfolded: %q", rowsOf(m))
+	}
+
+	// Too tall for the screen: healthy nodes fold, a node with a dead
+	// process doesn't.
+	m = nodesModel(t, meshLab(false), 14)
+	if !m.autoFold {
+		t.Fatal("no autoFold")
+	}
+	want := []string{"▸ dc1-server-1/2 processes=server ★ leader", "  dc1-server-2/consul=server",
+		"▾ dc1-api/consul=client", "dc1-api/api=service", "dc1-api/api-sidecar=sidecar → api", "▸ dc1-mesh/2 processes=client"}
+	if got := rowsOf(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("auto-folded:\n%s", strings.Join(got, "\n"))
+	}
+	// A filter shows every match.
+	m = drive(t, m, append([]tea.Msg{key("/")}, append(typed("gateway"), key("enter"))...)...).(Model)
+	if got := rowsOf(m); len(got) != 1 || got[0] != "dc1-mesh/mesh-gateway=mesh gateway" {
+		t.Errorf("filtered: %q", got)
+	}
+}
+
+func TestFooterOnBottom(t *testing.T) {
+	for _, v := range []view{viewNodes, viewLogs} {
+		m := nodesModel(t, meshLab(true), 30)
+		m.view = v
+		lines := strings.Split(m.View(), "\n")
+		if len(lines) != 30 || !strings.HasPrefix(lines[29], "╰") {
+			t.Errorf("view %d: %d lines, last %q", v, len(lines), lines[len(lines)-1])
+		}
+	}
+}
+
+func TestColorLog(t *testing.T) {
+	l := "2026-11-19T23:18:49.044Z [ERROR] agent: boom"
+	if got := colorLog(l); ansi.Strip(got) != l {
+		t.Errorf("colorLog changes the text: %q", got)
+	}
+	if colorLog("plain line") != "plain line" {
+		t.Error("plain line")
+	}
+	if loc := logLevel.FindString("x [warning][main] y"); loc != "[warning]" {
+		t.Errorf("envoy level: %q", loc)
+	}
+	if ts := logStamp.FindString(l); ts != "2026-11-19T23:18:49.044Z" {
+		t.Errorf("stamp %q", ts)
+	}
+}
+
+func TestLogoPulse(t *testing.T) {
+	// The pulse runs down the trail and rests, then starts over.
+	m := New(Options{})
+	seen := map[string]bool{}
+	for range pulse {
+		seen[m.logo()] = true
+		m.frame++
+	}
+	if m.logo() != New(Options{}).logo() {
+		t.Error("pulse doesn't repeat")
 	}
 }
