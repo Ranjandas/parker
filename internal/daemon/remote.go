@@ -26,6 +26,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
+	"github.com/Ranjandas/parker/internal/webui"
 )
 
 // StateDir holds the daemon's long-lived files (TLS cert and key, API
@@ -173,37 +174,46 @@ func (t Target) IsRemote() bool { return strings.HasPrefix(t.Host, "https://") }
 
 // Dial returns an API client for the target.
 func (t Target) Dial() (parkerv1connect.ParkerServiceClient, error) {
+	rt, base, err := t.Transport()
+	if err != nil {
+		return nil, err
+	}
+	return parkerv1connect.NewParkerServiceClient(&http.Client{Transport: rt}, base, connect.WithGRPC()), nil
+}
+
+// Transport returns an HTTP transport to the target's API and the base URL
+// to use with it. For a remote daemon it adds the token to every request.
+func (t Target) Transport() (http.RoundTripper, string, error) {
 	switch {
 	case t.Host == "":
-		return Client(SocketPath()), nil
+		return unixTransport(SocketPath()), "http://parker", nil
 	case strings.HasPrefix(t.Host, "unix://"):
-		return Client(strings.TrimPrefix(t.Host, "unix://")), nil
+		return unixTransport(strings.TrimPrefix(t.Host, "unix://")), "http://parker", nil
 	case strings.HasPrefix(t.Host, "https://"):
 	default:
-		return nil, fmt.Errorf("PARKER_HOST %q: want unix:///path or https://host:port", t.Host)
+		return nil, "", fmt.Errorf("PARKER_HOST %q: want unix:///path or https://host:port", t.Host)
 	}
 	u, err := url.Parse(t.Host)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	cfg := &tls.Config{InsecureSkipVerify: t.Insecure} //nolint:gosec // explicit opt-in
 	if t.CAFile != "" {
 		pemBytes, err := os.ReadFile(t.CAFile)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pemBytes) {
-			return nil, fmt.Errorf("%s: no certificates", t.CAFile)
+			return nil, "", fmt.Errorf("%s: no certificates", t.CAFile)
 		}
 		cfg.RootCAs = pool
 	}
 	if t.Token == "" {
-		return nil, errors.New("PARKER_TOKEN is required for a remote daemon (on the daemon host: parker daemon credentials)")
+		return nil, "", errors.New("PARKER_TOKEN is required for a remote daemon (on the daemon host: parker daemon credentials)")
 	}
 	tr := &http.Transport{TLSClientConfig: cfg, ForceAttemptHTTP2: true}
-	hc := &http.Client{Transport: bearer{t.Token, tr}}
-	return parkerv1connect.NewParkerServiceClient(hc, "https://"+u.Host, connect.WithGRPC()), nil
+	return bearer{t.Token, tr}, "https://" + u.Host, nil
 }
 
 type bearer struct {
@@ -232,7 +242,10 @@ func serveTCP(ctx context.Context, addr string, sans []string, s *Server, log fu
 		return nil, nil, err
 	}
 	mux := http.NewServeMux()
-	mux.Handle(parkerv1connect.NewParkerServiceHandler(s, connect.WithInterceptors(tokenAuth{want: []byte("Bearer " + tok)})))
+	path, api := parkerv1connect.NewParkerServiceHandler(s, connect.WithInterceptors(tokenAuth{want: []byte("Bearer " + tok)}))
+	mux.Handle(path, api)
+	// The web UI: browsers sign in with the same token (see package webui).
+	mux.Handle("/", webui.New(webui.Options{API: api, Token: tok, Where: addr, Version: Version}))
 	srv := &http.Server{
 		Handler:           mux,
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}},
@@ -241,7 +254,7 @@ func serveTCP(ctx context.Context, addr string, sans []string, s *Server, log fu
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ServeTLS(ln, "", "") }()
-	log("remote API on https://%s (TLS cert %s, sha256 %s); token in %s",
+	log("remote API and web UI on https://%s (TLS cert %s, sha256 %s); token in %s",
 		ln.Addr(), CertPath(), Fingerprint(cert), TokenPath())
 	return srv, errc, nil
 }

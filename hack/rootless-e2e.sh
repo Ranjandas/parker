@@ -163,6 +163,25 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --proxy "http://127.0.0.1:1080" ht
 kill $pp $pf
 echo ok
 
+echo "--- web UI through parker ui (local socket)"
+$P ui "$F" --no-open --listen 127.0.0.1:18080 >/run/parker/ui.out 2>&1 </dev/null &
+up=$!
+for _ in $(seq 50); do grep -q '^open: ' /run/parker/ui.out && break; sleep 0.1; done
+link=$(sed -n 's/^open: //p' /run/parker/ui.out)
+tok=$(echo "$link" | sed -n 's/.*[#&]token=\([0-9a-f]*\).*/\1/p')
+[ -n "$tok" ] || { echo "no sign-in link: $(cat /run/parker/ui.out)"; exit 1; }
+curl -sf http://127.0.0.1:18080/ | grep app.js >/dev/null
+jar=/run/parker/ui.jar
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/ListLabs)
+[ "$code" = 401 ] || { echo "UI API without a session: $code"; exit 1; }
+curl -sf -c $jar -H 'Content-Type: application/json' -d "{\"token\":\"$tok\"}" http://127.0.0.1:18080/ui/session
+curl -sf -b $jar -H 'Content-Type: application/json' -d "{\"lab\":\"$lab\"}" \
+  http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Status | grep "\"$first\"" >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' -b $jar -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Exec)
+[ "$code" = 404 ] || { echo "UI allowed Exec: $code"; exit 1; }
+kill $up; wait $up 2>/dev/null || true
+echo ok
+
 echo "--- down, twice"
 $P down "$F"
 $P down "$F"
@@ -183,6 +202,13 @@ $P status "$F" | grep ready >/dev/null
 $P exec -T "$F" "$first" -- consul members </dev/null | grep alive >/dev/null
 out=$(PARKER_TOKEN=wrong $P status "$F" 2>&1 || true)
 case "$out" in *"wrong parker token"*) echo "wrong token rejected" ;; *) echo "wrong token accepted: $out"; exit 1 ;; esac
+echo "--- web UI on the daemon's TLS listener"
+jar=/run/parker/ui-remote.jar
+curl -sf --cacert "$PARKER_TLS_CA" https://127.0.0.1:7443/ | grep app.js >/dev/null
+curl -sf --cacert "$PARKER_TLS_CA" -c $jar -H 'Content-Type: application/json' -d "{\"token\":\"$PARKER_TOKEN\"}" https://127.0.0.1:7443/ui/session
+curl -sf --cacert "$PARKER_TLS_CA" -b $jar -H 'Content-Type: application/json' -d '{}' \
+  https://127.0.0.1:7443/ui/api/parker.v1.ParkerService/ListLabs | grep '"labs"' >/dev/null
+echo ok
 $P down "$F"
 $P daemon stop
 unset PARKER_HOST PARKER_TOKEN PARKER_TLS_CA

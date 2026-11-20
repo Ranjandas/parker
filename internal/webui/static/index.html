@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Parker</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog id="confirm"><form method="dialog">
+  <h3 id="cf-title"></h3>
+  <p id="cf-body"></p>
+  <label id="cf-extra" hidden><input type="checkbox" id="cf-check"> <span id="cf-check-label"></span></label>
+  <div class="row"><button class="btn" value="cancel">Cancel</button><button class="btn danger solid" value="ok" id="cf-ok"></button></div>
+</form></dialog>
+<script src="app.js"></script>
+</body>
+</html>
