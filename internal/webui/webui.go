@@ -9,11 +9,13 @@
 package webui
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -62,6 +64,9 @@ type Options struct {
 	Where string
 	// Version of the daemon or client serving the UI.
 	Version string
+	// Up brings a lab up for the builder, writing progress to w. Nil: the
+	// builder can't start labs.
+	Up func(ctx context.Context, low *spec.File, w io.Writer) error
 }
 
 // Handler serves the UI and its API gateway.
@@ -104,6 +109,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/schema+json")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(spec.Schema)
+	case strings.HasPrefix(r.URL.Path, buildPrefix):
+		h.build(w, r)
 	case strings.HasPrefix(r.URL.Path, Prefix+"/"):
 		h.api(w, r)
 	default:

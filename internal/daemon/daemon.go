@@ -137,19 +137,27 @@ func (s *Server) Up(ctx context.Context, req *connect.Request[parkerv1.UpRequest
 	if err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	w := streamWriter(stream)
+	defer w.Flush()
+	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense}, w); err != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return nil
+}
+
+// UpLab brings a lab up under this daemon's supervision, as Up does, with
+// progress to log. The web UI's builder uses it when the daemon serves
+// the UI itself.
+func (s *Server) UpLab(ctx context.Context, low *spec.File, o lab.Options, log io.Writer) error {
 	l := s.labLock(low.Name)
 	l.Lock()
 	defer l.Unlock()
 
 	s.stopSupervising(low.Name)
-	w := streamWriter(stream)
-	defer w.Flush()
-	h, err := lab.Up(ctx, low, lab.Options{
-		Log: w, KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, Life: s.life,
-		License: req.Msg.ConsulLicense,
-	})
+	o.Log, o.Life = log, s.life
+	h, err := lab.Up(ctx, low, o)
 	if err != nil {
-		return connect.NewError(connect.CodeFailedPrecondition, err)
+		return err
 	}
 	s.mu.Lock()
 	s.labs[low.Name] = &labState{h: h}

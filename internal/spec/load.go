@@ -26,6 +26,9 @@ type Layers struct {
 	Overlays []string
 	Vars     map[string]string
 	Sets     []string
+	// Base is the base file's text, when it isn't on disk (the web UI's
+	// builder): the path still places relative imports and file: refs.
+	Base []byte
 }
 
 func (l Layers) empty() bool { return len(l.Overlays) == 0 && len(l.Sets) == 0 }
@@ -59,7 +62,10 @@ func merge(path string, l Layers) ([]byte, bool, error) {
 	// Pass 1: the vars blocks; a later file's value wins, --var over all.
 	vars := map[string]string{}
 	for i, p := range paths {
-		raw, err := os.ReadFile(p)
+		raw, err := l.Base, error(nil)
+		if i > 0 || raw == nil {
+			raw, err = os.ReadFile(p)
+		}
 		if err != nil {
 			return nil, false, err
 		}

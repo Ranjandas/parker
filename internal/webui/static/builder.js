@@ -1,7 +1,13 @@
 // Lab builder (#/build): drag components onto a canvas, link them, and
 // read the lab's YAML as it changes. The model and the YAML writer are in
 // buildmodel.js; this file draws them and handles the edits. The YAML is
-// checked by the daemon's Validate (what `parker validate` does) as you go.
+// checked as `parker validate` checks it as you go (POST /ui/build/check).
+//
+// Two modes. A lab started here is the model, and the YAML is written from
+// it. A file (opened, uploaded, or typed into the YAML pane) is the source
+// of truth: the canvas shows what it merges to, and a canvas edit becomes
+// ops that /ui/build/patch splices into the text, so comments, anchors and
+// key order stay where they are.
 "use strict";
 
 const BI = {
@@ -28,25 +34,67 @@ const PALETTE = [
 ];
 
 const SVC_NAMES = ["web", "api", "billing", "orders", "cart", "search", "auth", "ledger", "inventory", "payments"];
-const BK = "parker-builder";
+const BK = "parker-builder", BKF = "parker-builder-file";
 
 const BL = {
   m: null, sel: "", mode: "select", from: "", pick: null,
   undo: [], redo: [], schema: null, fresh: "",
   y: null, prev: [], val: { seq: 0, busy: false, res: null, err: "" }, vt: null,
+  // file: {text, path, saved, name} when a file is the source; saved is its
+  // text as last opened or saved (null: never saved). chk: the last check.
+  file: null, chk: null, tab: "source", typedAt: 0,
 };
+
+// bpost calls a builder file endpoint (see webui/build.go).
+async function bpost(what, body) {
+  const r = await fetch("/ui/build/" + what, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 401) signedOut();
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return r.json();
+}
 
 // ---------- state ----------
 function bInit() {
   if (BL.m) return;
   try { const s = JSON.parse(localStorage.getItem(BK) || "null"); if (s && s.dcs) BL.m = s; } catch (e) { /* none saved */ }
+  try { const f = JSON.parse(localStorage.getItem(BKF) || "null"); if (f && typeof f.text === "string") BL.file = f; } catch (e) { /* none saved */ }
   if (!BL.m) BL.m = Build.starter("mesh");
   fetch("/ui/schema.json", { credentials: "same-origin" }).then((r) => r.json()).then((s) => { BL.schema = s; if (S.route.view === "build") bInspector(); }).catch(() => {});
 }
-function bSave() { try { localStorage.setItem(BK, JSON.stringify(BL.m)); } catch (e) { /* not saved */ } }
+function bSave() {
+  try {
+    localStorage.setItem(BK, JSON.stringify(BL.m));
+    if (BL.file) localStorage.setItem(BKF, JSON.stringify(BL.file)); else localStorage.removeItem(BKF);
+  } catch (e) { /* not saved */ }
+}
+const bText = () => (BL.file ? BL.file.text : BL.y ? BL.y.text : "");
+const bName = () => (BL.chk && BL.chk.name) || BL.m.name;
+const bDirty = () => !!BL.file && BL.file.saved !== BL.file.text;
+
+// bUseFile makes text the source of truth (opened from path, or uploaded
+// with only a name).
+function bUseFile(text, path, name) {
+  BL.file = { text, path: path || name || "", saved: text, name: name || (path || "").split("/").pop() || "lab.yaml" };
+  BL.undo = []; BL.redo = []; BL.sel = ""; BL.prev = []; BL.chk = null; BL.tab = "source";
+  BL.val = { seq: BL.val.seq, busy: false, res: null, err: "" };
+  BL.m = Build.lab(BL.file.name.replace(/\.ya?ml$/, ""));
+  bSave(); bRender();
+}
+
+// bSetText changes the file's text and checks it again. typing: from the
+// YAML pane itself (leave the textarea alone).
+function bSetText(text, o) {
+  o = o || {};
+  BL.file.text = text;
+  bSave();
+  bPaintYAML(!o.typing);
+  bValidate(o.typing ? 400 : 0);
+}
 
 // bEdit applies an edit, with undo. fn may return a message to toast.
+// With a file, the edit goes into the file's text as ops.
 function bEdit(fn) {
+  if (BL.file) return bEditFile(fn);
   const before = JSON.stringify(BL.m);
   let msg;
   try { msg = fn(BL.m); } catch (e) { BL.m = JSON.parse(before); toast(e.message); return false; }
@@ -55,9 +103,40 @@ function bEdit(fn) {
   bRender();
   return msg;
 }
+function bEditFile(fn) {
+  const src = BL.chk && BL.chk.source;
+  if (!src || BL.val.busy) { toast(src ? "Checking the file; try again in a moment." : "The file doesn't parse; fix it in the YAML pane first."); return false; }
+  if (BL.m.raw) { toast("This is a low-level file (nodes and networks); edit it in the YAML pane."); return false; }
+  const before = JSON.stringify(BL.m);
+  let msg, ops;
+  try { msg = fn(BL.m); ops = Build.diffOps(JSON.parse(before), BL.m, src); } catch (e) { BL.m = JSON.parse(before); toast(e.message); bRender(); return false; }
+  if (msg && msg !== "pick") toast(msg);
+  bRender();
+  if (!ops.length) return msg;
+  const text = BL.file.text;
+  BL.val.busy = true;
+  bpost("patch", { yaml: text, ops }).then((r) => {
+    BL.val.busy = false;
+    if (!BL.file || BL.file.text !== text) return; // typed over meanwhile
+    BL.undo.push({ text }); if (BL.undo.length > 100) BL.undo.shift(); BL.redo = [];
+    bSetText(r.yaml);
+  }).catch((e) => {
+    BL.val.busy = false;
+    BL.m = JSON.parse(before);
+    toast("That edit can't go in the file: " + e.message);
+    bRender();
+  });
+  return msg;
+}
+
 function bHistory(back) {
   const from = back ? BL.undo : BL.redo, to = back ? BL.redo : BL.undo;
   if (!from.length) { toast(back ? "Nothing to undo" : "Nothing to redo"); return; }
+  if (BL.file) {
+    const e = from.pop();
+    if (typeof e === "object" && e) { to.push({ text: BL.file.text }); bSetText(e.text); }
+    return;
+  }
   to.push(JSON.stringify(BL.m));
   BL.m = JSON.parse(from.pop());
   if (!Build.find(BL.m, BL.sel)) BL.sel = "";
@@ -101,13 +180,15 @@ function renderBuild() {
         <div class="card insp" id="binsp"></div>
       </div>
       <div class="yaml">
-        <div class="hd"><b id="byname"></b><span id="bvchip"></span><div style="flex:1"></div><span class="faint" style="font-size:11.5px">read-only</span></div>
-        <div class="code" id="bcode" tabindex="0" aria-label="Generated YAML"></div>
+        <div class="hd"><b id="byname"></b><span id="bvchip"></span><div style="flex:1"></div>
+          <div class="seg" id="btabs"><button data-btab="source" title="The file: edit it here or on the canvas">Source</button><button data-btab="merged" title="Imports and templates applied, vars substituted">Merged</button><button data-btab="expanded" title="The low-level form parker up runs">Expanded</button></div></div>
+        <div class="bfile" id="bfile"></div>
+        <div class="code" id="bcode"><div class="cwrap"><div id="blines"></div><textarea id="bta" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" aria-label="The lab's YAML"></textarea></div></div>
         <div class="val" id="bval"></div>
         <div class="yfoot">
-          <button class="btn sm" data-bact="copy">Copy</button><button class="btn sm" data-bact="download">Download</button>
-          <div class="grow"></div>
-          <button class="btn primary sm" data-bact="up" id="bup" title="Copy the command that brings the lab up">${ICON.term}<span id="bupcmd"></span></button>
+          <button class="btn sm" data-bact="open" title="Open a file by upload or by path">Open…</button><button class="btn sm" data-bact="save" title="See what changed, then save">Save…</button><button class="btn sm" data-bact="download">Download</button><button class="btn sm" data-bact="copy">Copy</button>
+          <div class="yrun"><button class="btn sm" data-bact="down" id="bdown" title="Take the lab down">Down</button>
+          <button class="btn primary sm" data-bact="up" id="bup" title="Bring the lab up and open its dashboard">${ICON.term}<span id="bupcmd"></span></button></div>
         </div>
       </div>
     </div>`;
@@ -167,19 +248,33 @@ function bKind(m, n) {
 function bCard(id, p, ico, cls, name, sub, opts) {
   const o = opts || {};
   const on = BL.sel === id, src = BL.from === id;
-  return `<div class="bn ${on ? "sel" : ""} ${src ? "linksrc" : ""} ${BL.fresh === id ? "new" : ""} ${o.bad ? "bad" : ""}" data-bid="${esc(id)}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px" tabindex="0" role="button" aria-label="${esc(name)}">
-    <div class="ico ${cls}">${ico}</div><div style="min-width:0"><b>${esc(name)}</b><small>${esc(sub)}</small></div>${o.port ? `<span class="port" data-port="${esc(id)}" title="Drag to link"></span>` : ""}</div>`;
+  const og = bOrigin(id);
+  return `<div class="bn ${on ? "sel" : ""} ${src ? "linksrc" : ""} ${BL.fresh === id ? "new" : ""} ${o.bad ? "bad" : ""} ${og === "import" ? "lock" : ""}" data-bid="${esc(id)}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px" tabindex="0" role="button" aria-label="${esc(name)}">
+    <div class="ico ${cls}">${ico}</div><div style="min-width:0"${og ? ` title="${og === "import" ? "From an import: rename or remove it in the module" : "Made from a template: what you set here overrides it"}"` : ""}><b>${og === "import" ? "🔒 " : ""}${esc(name)}</b><small>${esc(sub)}${og ? ` · from ${esc(og === "import" ? "an import" : og.replace(/^template /, ""))}` : ""}</small></div>${o.port ? `<span class="port" data-port="${esc(id)}" title="Drag to link"></span>` : ""}</div>`;
+}
+
+// bOrigin is where a thing comes from when a file is the source: "" (the
+// file), "import", or "template NAME".
+function bOrigin(id) {
+  if (!BL.file || !BL.chk || !BL.chk.source || !id || id === "lab") return "";
+  return Build.origin(BL.m, id.replace(/^srv:/, ""), BL.chk.source);
 }
 
 function bCanvas() {
   const m = BL.m, P = bLayout();
+  if (m.raw) {
+    const world = $("#bworld");
+    world.innerHTML = `<div class="card braw"><h3>A low-level file</h3><p>${esc(bName())} lists nodes and networks itself, with no consul: section, so there's nothing for the canvas to draw. Edit it in the YAML pane; Run brings it up as it is.</p><p class="faint">The Expanded tab shows what parker up runs.</p></div>`;
+    world.style.width = ""; world.style.height = "";
+    return;
+  }
   let h = "";
   const problems = new Set(((BL.val.res && BL.val.res.problems) || []).map((p) => p.id).filter(Boolean));
   for (const d of m.dcs) {
     const r = P.dc[d.id];
     const svcs = d.nodes.filter((n) => n.svc).length;
     h += `<div class="breg ${BL.sel === d.id ? "sel" : ""} ${BL.from === d.id ? "linksrc" : ""} ${problems.has(d.id) ? "bad" : ""}" data-drop="${d.id}:" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px">
-      <div class="lbl" data-bid="${d.id}" tabindex="0" role="button">${esc(d.name)}<span>${d.servers} server${d.servers > 1 ? "s" : ""} · ${svcs} service${svcs !== 1 ? "s" : ""}</span><span class="port dcport" data-port="${d.id}" title="Drag to another datacenter to federate or peer"></span></div>
+      <div class="lbl" data-bid="${d.id}" tabindex="0" role="button">${bOrigin(d.id) === "import" ? '<i class="otag" title="From an import">🔒</i>' : ""}${esc(d.name)}<span>${d.servers} server${d.servers > 1 ? "s" : ""} · ${svcs} service${svcs !== 1 ? "s" : ""}</span><span class="port dcport" data-port="${d.id}" title="Drag to another datacenter to federate or peer"></span></div>
       <div class="drop">Drop to add to ${esc(d.name)}</div></div>`;
     for (const k of Object.keys(P.part)) if (k.startsWith(d.id + ":")) {
       const pr = P.part[k], pid = pr.pid;
@@ -339,6 +434,9 @@ function bInspector() {
       `<div class="hint">Exports follow from the calls: a service called over this peering is exported by its datacenter.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove peering</button></div>`;
   }
+  const og = f && f.t ? bOrigin(BL.sel) : "";
+  if (og === "import") body = body.replace(/<button class="btn sm danger" data-bact="remove">[^<]*<\/button>/, "").replace('id="bf-name"', 'id="bf-name" readonly');
+  if (og) body = `<div class="hint onote">${og === "import" ? "This comes from an import. Rename or remove it in the module; what you change here goes in this file and overrides it." : `Made from ${esc(og)}. What you set here goes on this node and overrides the template.`}</div>` + body;
   el.innerHTML = `<div class="hd"><h3>${title}</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${esc(where)}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">${body}</div>`;
 }
 
@@ -461,59 +559,108 @@ function bHL(line) {
 
 function bYAML() {
   const m = BL.m;
-  const y = Build.toYAML(m);
-  const changed = !BL.y || BL.y.text !== y.text;
-  BL.y = y;
-  $("#byname").textContent = `${m.name}.yaml`;
-  $("#bupcmd").textContent = `parker up ${m.name}.yaml`;
-  if (changed) bValidate();
-  bPaintYAML();
+  if (!BL.file) {
+    const y = Build.toYAML(m);
+    const changed = !BL.y || BL.y.text !== y.text;
+    BL.y = y;
+    if (changed) bValidate();
+  } else if (!BL.chk && !BL.val.busy) bValidate(0);
+  bPaintYAML(true);
 }
 
-function bPaintYAML() {
-  const y = BL.y;
+// bLines is what the YAML pane shows: the tab's text, as lines, and where
+// each path sits in it (the source tab only).
+function bLines() {
+  const c = BL.chk;
+  if (BL.tab !== "source") {
+    const t = (c && (BL.tab === "merged" ? c.merged : c.expanded)) || "";
+    return { text: t, lines: t ? t.replace(/\n$/, "").split("\n") : [], spans: {} };
+  }
+  if (BL.file) return { text: BL.file.text, lines: BL.file.text.replace(/\n$/, "").split("\n"), spans: (c && c.spans) || {} };
+  return { text: BL.y.text, lines: BL.y.lines, spans: BL.y.spans };
+}
+
+// bPaintYAML draws the YAML pane; ta: also set the textarea's text (not
+// while someone types in it).
+function bPaintYAML(ta) {
+  const y = bLines();
+  const src = BL.tab === "source";
   const res = BL.val.res;
-  const errLines = new Set(((res && res.problems) || []).map((p) => p.line).filter(Boolean));
+  const errLines = new Set(src ? ((res && res.problems) || []).map((p) => p.line).filter(Boolean) : []);
   const old = new Map();
   BL.prev.forEach((l) => old.set(l, (old.get(l) || 0) + 1));
-  const added = y.lines.map((l) => { const c = old.get(l) || 0; if (c) { old.set(l, c - 1); return false; } return BL.prev.length > 0; });
+  const added = y.lines.map((l) => { const c = old.get(l) || 0; if (c) { old.set(l, c - 1); return false; } return BL.prev.length > 0 && src; });
   let span = null;
-  if (BL.sel && BL.sel !== "lab") {
+  if (src && BL.sel && BL.sel !== "lab") {
     const p = Build.pathOf(BL.m, BL.sel.replace(/^srv:/, "")) || "";
-    span = y.spans[BL.sel.startsWith("srv:") ? p + ".servers" : p];
+    span = y.spans[BL.sel.startsWith("srv:") ? p + ".servers" : p] || (BL.sel.startsWith("srv:") ? y.spans[p] : null);
   }
-  const code = $("#bcode");
-  if (BL.prev.join("\n") !== y.lines.join("\n") || code.dataset.sel !== BL.sel || code.dataset.err !== [...errLines].join()) {
-    code.innerHTML = y.lines.map((l, i) => {
+  $("#byname").textContent = BL.file ? (BL.file.path || BL.file.name) + (bDirty() ? " •" : "") : `${BL.m.name}.yaml`;
+  $("#byname").title = BL.file ? (bDirty() ? "Changed since it was opened or saved" : "Saved") : "Written from the canvas";
+  $("#bupcmd").textContent = `Run ${bName()}`;
+  $$("#btabs button").forEach((b) => b.classList.toggle("on", b.dataset.btab === BL.tab));
+  bPaintFile();
+  const lines = $("#blines"), area = $("#bta");
+  const key = [BL.tab, BL.sel, [...errLines].join(), span ? span.join() : ""].join("|");
+  if (BL.prev.join("\n") !== y.lines.join("\n") || lines.dataset.key !== key) {
+    lines.innerHTML = y.lines.map((l, i) => {
       const n = i + 1;
       const on = span && n >= span[0] && n <= span[1];
       return `<div class="cl ${added[i] ? "add" : ""} ${errLines.has(n) ? "err" : ""} ${on ? "on" : ""}" data-line="${n}"><span>${bHL(l) || " "}</span></div>`;
-    }).join("");
-    code.dataset.sel = BL.sel; code.dataset.err = [...errLines].join();
-    const first = $(".cl.on", code);
-    if (first && span) { const r = first.getBoundingClientRect(), c = code.getBoundingClientRect(); if (r.top < c.top || r.bottom > c.bottom) first.scrollIntoView({ block: "nearest" }); }
+    }).join("") || `<div class="cl"><span class="faint">${src ? "" : "Shows once the file checks."}</span></div>`;
+    lines.dataset.key = key;
+    const first = $(".cl.on", lines), code = $("#bcode");
+    if (first && span && document.activeElement !== area) { const r = first.getBoundingClientRect(), c = code.getBoundingClientRect(); if (r.top < c.top || r.bottom > c.bottom) first.scrollIntoView({ block: "nearest" }); }
     clearTimeout(BL.addT);
-    BL.addT = setTimeout(() => $$("#bcode .cl.add").forEach((x) => x.classList.remove("add")), 2400);
+    BL.addT = setTimeout(() => $$("#blines .cl.add").forEach((x) => x.classList.remove("add")), 2400);
   }
+  area.hidden = !src;
+  if (ta && src && area.value !== y.text) area.value = y.text;
   BL.prev = y.lines;
   bPaintVal();
 }
 
-function bValidate() {
+// The file bar: what the pane shows, and what the canvas can't change.
+function bPaintFile() {
+  const el = $("#bfile");
+  const notes = [];
+  if (BL.tab !== "source") notes.push(BL.tab === "merged" ? "Merged: imports and templates applied, vars substituted. Read-only; edits go in Source." : "Expanded: the nodes, networks and processes parker up runs. Read-only.");
+  else if (BL.file) {
+    if (BL.m.raw) { /* the canvas says so */ } else if (BL.file.path && !BL.file.path.startsWith("/")) notes.push("Uploaded: relative imports and file: refs don't resolve. Open it by path to use them.");
+    const m = BL.m, locked = [...m.dcs.map((d) => d.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws, ...d.parts].map((x) => x.id))].some((id) => bOrigin(id) === "import");
+    if (locked) notes.push("🔒 marks what an import adds: rename or remove it in the module. Settings you change here override it from this file.");
+  } else notes.push("Written from the canvas. Type here to edit the file itself; the canvas then edits it in place.");
+  el.innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
+  el.hidden = !notes.length;
+}
+
+function bValidate(delay) {
   clearTimeout(BL.vt);
   const seq = ++BL.val.seq;
   BL.val.busy = true;
   BL.vt = setTimeout(async () => {
-    const m = BL.m, y = BL.y;
-    const local = Build.checks(m).map((c) => ({ message: c.message, id: c.id, line: c.id ? Build.lineOf(y.spans, Build.pathOf(m, c.id)) : 0 }));
+    const m = BL.m, text = bText();
+    const local = BL.file ? [] : Build.checks(m).map((c) => ({ message: c.message, id: c.id, line: c.id ? Build.lineOf(BL.y.spans, Build.pathOf(m, c.id)) : 0 }));
     let r = null, err = "";
-    try { r = await call("Validate", { yaml: y.text }); } catch (e) { err = e.message; }
+    try { r = await bpost("check", { yaml: text, path: BL.file ? BL.file.path : "" }); } catch (e) { err = e.message; }
     if (seq !== BL.val.seq) return;
-    const server = ((r && r.errors) || []).map((e) => ({ message: e.message, line: e.line || Build.lineOf(y.spans, e.path || ""), id: e.path ? Build.idOf(m, e.path) : "" }));
+    if (r) {
+      BL.chk = r;
+      // A file's canvas is what it merges to.
+      if (BL.file && r.tree) {
+        BL.m = Build.fromTree(r.tree, BL.m);
+        if (r.name) BL.m.name = r.name;
+        if (BL.sel && BL.sel !== "lab" && !Build.find(BL.m, BL.sel.replace(/^srv:/, ""))) BL.sel = "";
+        bSave();
+      }
+    }
+    const spans = BL.file ? (r && r.spans) || {} : BL.y.spans;
+    const server = ((r && r.problems) || []).map((e) => ({ message: e.message, line: e.line || Build.lineOf(spans, e.path || ""), id: e.path ? Build.idOf(BL.m, e.path) : "" }));
     BL.val = { seq, busy: false, err, res: r ? { ok: r.ok && !local.length, problems: [...local, ...server], warnings: r.warnings || [], nodes: r.nodes || 0, networks: r.networks || 0 } : null };
-    bPaintYAML();
+    bPaintYAML(false);
     bCanvas();
-  }, 280);
+    bInspector();
+  }, delay === undefined ? 280 : delay);
   bPaintVal();
 }
 
@@ -522,7 +669,7 @@ function bPaintVal() {
   let chip, body;
   if (v.err) {
     chip = '<span class="chip warn"><span class="d"></span>Not checked</span>';
-    body = `<div class="row"><span class="st starting"><i></i></span><div>Can't reach the daemon to validate: ${esc(v.err)}</div></div>`;
+    body = `<div class="row"><span class="st starting"><i></i></span><div>Can't check the file: ${esc(v.err)}</div></div>`;
   } else if (!res) {
     chip = '<span class="chip"><span class="d"></span>Checking…</span>';
     body = '<div class="row"><span class="st done"><i></i></span><div>Validating…</div></div>';
@@ -531,14 +678,173 @@ function bPaintVal() {
     body = res.problems.map((p) => `<div class="row prob" data-pline="${p.line || 0}" data-pid="${esc(p.id || "")}" tabindex="0" role="button"><span class="st failing"><i></i></span><div><b style="font-weight:600;white-space:pre-wrap">${esc(p.message)}</b>${p.line ? `<br><code>line ${p.line}</code>` : ""}</div></div>`).join("");
   } else {
     chip = `<span class="chip ok"><span class="d"></span>Valid</span>`;
-    body = `<div class="row"><span class="st ready"><i></i></span><div><b style="font-weight:600">parker validate passed</b><br><code>${res.nodes} node${res.nodes !== 1 ? "s" : ""} on ${res.networks} network${res.networks !== 1 ? "s" : ""} when expanded · ${BL.y.lines.length} lines</code></div></div>`;
+    body = `<div class="row"><span class="st ready"><i></i></span><div><b style="font-weight:600">parker validate passed</b><br><code>${res.nodes} node${res.nodes !== 1 ? "s" : ""} on ${res.networks} network${res.networks !== 1 ? "s" : ""} when expanded · ${bText().replace(/\n$/, "").split("\n").length} lines</code></div></div>`;
   }
   if (res && res.warnings.length) body += res.warnings.map((w) => `<div class="row"><span class="st starting"><i></i></span><div style="white-space:pre-wrap">${esc(w)}</div></div>`).join("");
   if (v.busy && res) chip += ' <span class="faint" style="font-size:11.5px">checking…</span>';
   $("#bvchip").innerHTML = chip;
   $("#bval").innerHTML = body;
   const up = $("#bup");
-  if (up) up.disabled = !res || !res.ok;
+  if (up) up.disabled = !res || !res.ok || v.busy;
+  const dn = $("#bdown");
+  if (dn) dn.disabled = !(S.labs || []).some((l) => l.name === bName() && l.namespaces);
+}
+
+// ---------- open, save, run ----------
+// bDialog shows the builder's dialog with html; returns the element.
+function bDialog(html, cls) {
+  let d = $("#bdlg");
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "bdlg";
+    document.body.appendChild(d);
+    d.addEventListener("click", (e) => { if (e.target === d || e.target.closest("[data-close]")) d.close(); });
+  }
+  d.className = cls || "";
+  d.innerHTML = html;
+  if (!d.open) d.showModal();
+  return d;
+}
+
+function bOpenDialog() {
+  const d = bDialog(`<div class="bd-in">
+    <h3>Open a lab file</h3>
+    <p>The canvas shows what the file merges to. Edits on the canvas go into the file's text, so its comments, anchors and key order stay as they are.</p>
+    <label class="bd-lbl" for="bd-path">Path on the machine serving this page</label>
+    <div class="bd-row"><input id="bd-path" placeholder="~/labs/mesh.yaml" spellcheck="false" autocomplete="off" value="${esc(BL.file && BL.file.path.startsWith("/") ? BL.file.path : "")}"><button class="btn primary sm" id="bd-open">Open</button></div>
+    <div class="hint" id="bd-err"></div>
+    <label class="bd-lbl">Or upload one</label>
+    <div class="bd-row"><input type="file" id="bd-up" accept=".yaml,.yml,application/yaml,text/yaml"></div>
+    <div class="hint">An uploaded file has no folder, so relative imports and file: refs don't resolve. Open by path to use them.</div>
+    <div class="bd-row end"><button class="btn sm" data-close>Cancel</button></div></div>`, "bd-open");
+  const go = async () => {
+    const path = $("#bd-path", d).value.trim();
+    if (!path) return;
+    if (!bLeave()) return;
+    try {
+      const r = await bpost("open", { path });
+      d.close();
+      bUseFile(r.yaml, r.path);
+      toast(`Opened ${r.path}`);
+    } catch (e) { $("#bd-err", d).textContent = e.message; }
+  };
+  $("#bd-open", d).onclick = go;
+  $("#bd-path", d).onkeydown = (e) => { if (e.key === "Enter") go(); };
+  $("#bd-up", d).onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 1 << 20) { $("#bd-err", d).textContent = "That file is over 1 MiB."; return; }
+    if (!bLeave()) return;
+    f.text().then((t) => { d.close(); bUseFile(t, "", f.name); toast(`Opened ${f.name}`); });
+  };
+  setTimeout(() => $("#bd-path", d).focus(), 0);
+}
+
+// bLeave asks before dropping a file's unsaved edits.
+function bLeave() {
+  return !bDirty() || confirm(`${BL.file.path || BL.file.name} has changes that aren't saved. Drop them?`);
+}
+
+// bDiffHTML shows what saving changes: a line diff, unchanged runs folded.
+function bDiffHTML(a, b) {
+  const d = Build.lineDiff(a, b);
+  const keep = d.map((x, i) => x.t !== " " || d.slice(Math.max(0, i - 3), i + 4).some((y) => y.t !== " "));
+  let h = "", skipped = 0, add = 0, del = 0;
+  d.forEach((x, i) => {
+    if (x.t === "+") add++;
+    if (x.t === "-") del++;
+    if (!keep[i]) { skipped++; return; }
+    if (skipped) { h += `<div class="dl fold">⋯ ${skipped} unchanged line${skipped > 1 ? "s" : ""}</div>`; skipped = 0; }
+    h += `<div class="dl ${x.t === "+" ? "add" : x.t === "-" ? "del" : ""}"><i>${x.t === " " ? "" : x.t}</i><span>${bHL(x.s) || " "}</span></div>`;
+  });
+  if (skipped) h += `<div class="dl fold">⋯ ${skipped} unchanged line${skipped > 1 ? "s" : ""}</div>`;
+  return { html: h, add, del };
+}
+
+function bSaveDialog() {
+  const text = bText();
+  const was = BL.file && BL.file.saved !== null ? BL.file.saved : "";
+  const diff = bDiffHTML(was, text);
+  const path = BL.file && BL.file.path.startsWith("/") ? BL.file.path : "";
+  const what = !was ? `A new file, ${text.replace(/\n$/, "").split("\n").length} lines.` : diff.add || diff.del ? `${diff.add} line${diff.add !== 1 ? "s" : ""} added, ${diff.del} removed since it was ${BL.file.path ? "opened or saved" : "uploaded"}.` : "No changes since it was opened or saved.";
+  const d = bDialog(`<div class="bd-in">
+    <h3>Save ${esc(bName())}.yaml</h3>
+    <p>${esc(what)}</p>
+    <div class="bdiff">${diff.html || '<div class="dl fold">Nothing to show.</div>'}</div>
+    <label class="bd-lbl" for="bd-spath">Path on the machine serving this page</label>
+    <div class="bd-row"><input id="bd-spath" placeholder="~/labs/${esc(bName())}.yaml" value="${esc(path)}" spellcheck="false" autocomplete="off"></div>
+    <div class="hint" id="bd-err"></div>
+    <div class="bd-row end"><button class="btn sm" data-close>Cancel</button><button class="btn sm" id="bd-dl">Download instead</button><button class="btn primary sm" id="bd-save">Save</button></div></div>`, "bd-save");
+  $("#bd-dl", d).onclick = () => { bDownload(text); d.close(); };
+  const go = async () => {
+    const p = $("#bd-spath", d).value.trim();
+    if (!p) { $("#bd-err", d).textContent = "Give a path, or download the file instead."; return; }
+    try {
+      const r = await bpost("save", { path: p, yaml: text });
+      if (!BL.file) { BL.file = { text, path: r.path, saved: text, name: r.path.split("/").pop() }; BL.undo = []; BL.redo = []; }
+      else Object.assign(BL.file, { path: r.path, saved: text, name: r.path.split("/").pop() });
+      bSave(); d.close();
+      toast(`Saved ${r.path}`);
+      bPaintYAML(false);
+      bValidate(0);
+    } catch (e) { $("#bd-err", d).textContent = e.message; }
+  };
+  $("#bd-save", d).onclick = go;
+  $("#bd-spath", d).onkeydown = (e) => { if (e.key === "Enter") go(); };
+}
+
+function bDownload(text) {
+  const u = URL.createObjectURL(new Blob([text], { type: "application/yaml" }));
+  const l = document.createElement("a");
+  l.href = u; l.download = BL.file ? BL.file.name : `${BL.m.name}.yaml`;
+  document.body.appendChild(l); l.click(); l.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+
+// bRun brings the lab up, with its progress in the dialog, then opens
+// its dashboard.
+async function bRun() {
+  const name = bName(), text = bText();
+  const d = bDialog(`<div class="bd-in">
+    <h3>Bringing ${esc(name)} up</h3>
+    <pre class="brun" id="bd-log"></pre>
+    <div class="bd-row end"><span class="faint" id="bd-st">Starting…</span><div class="grow"></div><button class="btn sm" data-close id="bd-close">Close</button><a class="btn primary sm" id="bd-dash" href="#/lab/${encodeURIComponent(name)}" hidden>Open the dashboard</a></div></div>`, "bd-run");
+  const log = $("#bd-log", d), st = $("#bd-st", d);
+  const add = (t) => { log.textContent += t; log.scrollTop = log.scrollHeight; };
+  const ctl = new AbortController();
+  d.addEventListener("close", () => ctl.abort(), { once: true });
+  let all = "";
+  try {
+    const r = await fetch("/ui/build/up", { method: "POST", credentials: "same-origin", signal: ctl.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ yaml: text, path: BL.file ? BL.file.path : "" }) });
+    if (r.status === 401) signedOut();
+    if (!r.ok) { add((await r.text()).trim()); st.textContent = "Not started"; return; }
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    for (;;) {
+      const { value, done } = await rd.read();
+      if (done) break;
+      const t = dec.decode(value, { stream: true });
+      all += t; add(t);
+    }
+  } catch (e) {
+    if (ctl.signal.aborted) return;
+    add("\n" + e.message);
+  }
+  if (/\nparker: up \S+\n?$/.test(all)) {
+    st.textContent = `${name} is up.`;
+    $("#bd-dash", d).hidden = false;
+    $("#bd-dash", d).onclick = () => d.close();
+    $("#bd-close", d).textContent = "Stay here";
+    poll();
+    // To the live dashboard, as parker up would leave you at its output.
+    setTimeout(() => { if (d.open && $("#bd-dash", d)) { d.close(); location.hash = `#/lab/${encodeURIComponent(name)}`; } }, 1500);
+  } else st.textContent = "It didn't come up; see above.";
+}
+
+async function bDown() {
+  const name = bName();
+  const r = await confirmDialog({ title: `Take ${name} down?`, body: "Kills every process and removes the lab's namespaces and links. Logs are kept unless you purge.", ok: "Down", check: "Also delete its logs, configs and data (purge)" });
+  if (!r.ok) return;
+  try { await stream("Down", { lab: name, purge: !!r.checked }, () => {}); toast(`${name} is down.`); poll(); } catch (e) { toast(`Down failed: ${e.message}`); }
 }
 
 // ---------- events ----------
@@ -550,6 +856,10 @@ function bBind() {
     if (pk) { const s = bSelDC(); bAdd(pk.dataset.pk, s.dc, s.pid); return; }
     const st = t.closest("[data-starter]");
     if (st) {
+      if (BL.file) {
+        if (!bLeave()) return;
+        BL.file = null; BL.chk = null; BL.undo = []; BL.redo = []; BL.tab = "source";
+      }
       BL.sel = ""; BL.prev = []; BL.mode = "select"; BL.from = "";
       bEdit((m) => { const n = Build.starter(st.dataset.starter); Object.keys(m).forEach((k) => delete m[k]); Object.assign(m, n); return `Started from ${st.textContent}. Undo with Ctrl+Z.`; });
       return;
@@ -564,8 +874,8 @@ function bBind() {
     if (fb) { bField(fb); return; }
     const pr = t.closest("[data-pline]");
     if (pr) { bGoto(+pr.dataset.pline, pr.dataset.pid); return; }
-    const cl = t.closest("#bcode .cl");
-    if (cl) { const id = Build.idOf(BL.m, bPathAt(+cl.dataset.line)); if (id) { BL.sel = id; bRender(); } return; }
+    const tb = t.closest("[data-btab]");
+    if (tb) { BL.tab = tb.dataset.btab; BL.prev = []; bPaintYAML(true); return; }
     const it = t.closest("#bworld [data-bid]");
     if (it) { bClickItem(it.dataset.bid, e); return; }
     const rg = t.closest("#bworld [data-drop]");
@@ -573,6 +883,33 @@ function bBind() {
     if (t.closest("#bworld") && !t.closest(".bpick")) { BL.pick = null; if (BL.mode === "link" && BL.from) { BL.from = ""; } BL.sel = ""; bRender(); }
   });
   root.addEventListener("change", (e) => { if (e.target.matches("input[data-f],select[data-f]")) bField(e.target); });
+  // The YAML pane: typing edits the file (a lab written from the canvas
+  // becomes a file); the caret's line selects what it belongs to.
+  const ta = $("#bta");
+  ta.addEventListener("input", () => {
+    if (!BL.file) {
+      BL.file = { text: BL.y.text, path: "", saved: null, name: `${BL.m.name}.yaml` };
+      BL.undo = []; BL.redo = [];
+      toast("Editing the file now: canvas edits go into its text.");
+    }
+    const now = Date.now();
+    if (now - BL.typedAt > 1200) { BL.undo.push({ text: BL.file.text }); BL.redo = []; }
+    BL.typedAt = now;
+    bSetText(ta.value, { typing: true });
+  });
+  const caret = () => {
+    if (BL.tab !== "source") return;
+    const line = ta.value.slice(0, ta.selectionStart).split("\n").length;
+    const id = Build.idOf(BL.m, bPathAt(line));
+    if (id && id !== BL.sel) { BL.sel = id; bCanvas(); bInspector(); bPaintYAML(false); }
+  };
+  ta.addEventListener("click", caret);
+  ta.addEventListener("keyup", (e) => { if (e.key.startsWith("Arrow") || e.key === "PageUp" || e.key === "PageDown") caret(); });
+  ta.addEventListener("keydown", (e) => {
+    // Two spaces for a tab, as YAML wants.
+    if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); document.execCommand("insertText", false, "  "); }
+    if (e.key === "Escape") ta.blur();
+  });
   root.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.target.matches("input[data-f]")) { e.target.blur(); return; }
     if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-pk],[data-bid],[data-pline]")) { e.preventDefault(); e.target.click(); }
@@ -661,7 +998,6 @@ function bClickItem(id, e) {
 }
 
 function bAct(a) {
-  const y = BL.y;
   switch (a) {
     case "undo": bHistory(true); return;
     case "redo": bHistory(false); return;
@@ -675,16 +1011,12 @@ function bAct(a) {
       bEdit((m) => { Build.remove(m, id); return `Removed ${name}. Undo with Ctrl+Z.`; });
       return;
     }
-    case "copy": bCopy(y.text, `Copied ${BL.m.name}.yaml`); return;
-    case "download": {
-      const u = URL.createObjectURL(new Blob([y.text], { type: "application/yaml" }));
-      const l = document.createElement("a");
-      l.href = u; l.download = `${BL.m.name}.yaml`;
-      document.body.appendChild(l); l.click(); l.remove();
-      setTimeout(() => URL.revokeObjectURL(u), 1000);
-      return;
-    }
-    case "up": bCopy(`parker up ${BL.m.name}.yaml`, `Copied. Save the YAML as ${BL.m.name}.yaml, then run it where the daemon runs.`); return;
+    case "copy": bCopy(bText(), "Copied the YAML"); return;
+    case "download": bDownload(bText()); return;
+    case "open": bOpenDialog(); return;
+    case "save": bSaveDialog(); return;
+    case "up": bRun(); return;
+    case "down": bDown(); return;
   }
 }
 
@@ -695,7 +1027,7 @@ async function bCopy(text, msg) {
 // bPathAt is the deepest path whose span holds a YAML line.
 function bPathAt(line) {
   let best = "", size = Infinity;
-  for (const [p, [a, b]] of Object.entries(BL.y.spans)) if (line >= a && line <= b && b - a < size) { best = p; size = b - a; }
+  for (const [p, [a, b]] of Object.entries(bLines().spans)) if (line >= a && line <= b && b - a < size) { best = p; size = b - a; }
   return best;
 }
 

@@ -215,18 +215,38 @@ func printLines(stream interface {
 	Msg() *parkerv1.LogLine
 	Err() error
 }) error {
+	return writeLines(os.Stdout, stream)
+}
+
+func writeLines(w io.Writer, stream interface {
+	Receive() bool
+	Msg() *parkerv1.LogLine
+	Err() error
+}) error {
 	for stream.Receive() {
-		fmt.Println(stream.Msg().Line)
+		fmt.Fprintln(w, stream.Msg().Line)
 	}
 	return rpcErr(stream.Err())
 }
 
-type upOptions struct{ keepOnFail, noFirewall, noDaemon bool }
+type upOptions struct {
+	keepOnFail, noFirewall, noDaemon bool
+	// out takes progress (stdout when nil); quiet leaves out the
+	// compatibility warnings (the caller has shown them).
+	out   io.Writer
+	quiet bool
+}
 
 // bringUp starts the lab, through the daemon unless noDaemon.
 func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
-	for _, w := range compat.Warnings(low) {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	out := o.out
+	if out == nil {
+		out = os.Stdout
+	}
+	if !o.quiet {
+		for _, w := range compat.Warnings(low) {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
 	}
 	// The license, checked before anything is fetched or started.
 	var targets []string
@@ -243,13 +263,13 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 	// cache is shared. Scenario upgrade targets too, for the same reason.
 	if !target().IsRemote() {
 		for _, pv := range upBinaries(low) {
-			if _, err := fetch.Binary(pv[0], pv[1], os.Stdout); err != nil {
+			if _, err := fetch.Binary(pv[0], pv[1], out); err != nil {
 				return err
 			}
 		}
 	}
 	if o.noDaemon {
-		_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic})
+		_, err := lab.Up(ctx, low, lab.Options{Log: out, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic})
 		return err
 	}
 	c, err := ensureDaemon(ctx)
@@ -266,7 +286,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 	if err != nil {
 		return rpcErr(err)
 	}
-	return printLines(stream)
+	return writeLines(out, stream)
 }
 
 func upCmd() *cobra.Command {
@@ -285,7 +305,7 @@ func upCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
-			if err := bringUp(ctx, low, upOptions{keepOnFail, noFirewall, noDaemon}); err != nil {
+			if err := bringUp(ctx, low, upOptions{keepOnFail: keepOnFail, noFirewall: noFirewall, noDaemon: noDaemon}); err != nil {
 				return err
 			}
 			say("shell: parker exec %s %s -- consul members", args[0], firstNode(low))

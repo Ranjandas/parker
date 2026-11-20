@@ -86,8 +86,11 @@
   function connectOf(m, n) {
     if (!n.svc) return "none";
     if (n.svc.connect) return n.svc.connect;
-    return m.mesh ? "sidecar" : "none";
+    return inherited(m, n);
   }
+  // What a service gets when it says no connect: of its own. A file can
+  // set it for a dc or partition (n.svc.inh); else the lab's mesh setting.
+  const inherited = (m, n) => (n.svc && n.svc.inh) || (m.mesh ? "sidecar" : "none");
 
   // ---------- edits ----------
   // uniqueName picks base, base-2, ... not taken in dc d.
@@ -118,6 +121,7 @@
     if (a.t === "node" && b.t === "node") {
       if (!a.node.svc) throw new Error(`${a.node.name} runs no service, so it can't call anything. Give it a service first.`);
       if (!b.node.svc) throw new Error(`${b.node.name} runs no service to call.`);
+      if (connectOf(m, a.node) === "none") throw new Error(`${a.node.name} is outside the mesh (connect: none), and upstreams go through a sidecar. Set its Connect to sidecar first.`);
       if (a.node.svc.ups.some((u) => u.to === b.node.id)) throw new Error(`${a.node.name} already calls ${b.node.name}.`);
       if (a.node.svc.ups.some((u) => { const f = find(m, u.to); return f && f.node && f.node.name === b.node.name; })) throw new Error(`${a.node.name} already calls a service named ${b.node.name}.`);
       if (a.dc.id !== b.dc.id && (a.dc.parts.length || b.dc.parts.length)) throw new Error("Calls between datacenters don't work with partitions in Parker yet.");
@@ -304,8 +308,8 @@
         if (n.agent === "dataplane") v.agent = "dataplane";
         if (n.svc) {
           const sv = { port: n.svc.port };
-          const want = connectOf(m, n), inherited = m.mesh ? "sidecar" : "none";
-          if (want !== inherited) sv.connect = want;
+          const want = connectOf(m, n);
+          if (want !== inherited(m, n)) sv.connect = want;
           const ups = {};
           for (const c of all.filter((c) => c.src === n)) {
             if (c.r.kind === "local") ups[c.t.name] = c.port;
@@ -471,6 +475,242 @@
     return out;
   }
 
+  // ---------- files ----------
+  // A file someone opened is the source of truth: the canvas shows what it
+  // merges to (imports and templates applied), and a canvas edit becomes
+  // ops (see labfile.Patch) that splice the change into the file's text.
+
+  const dot = (path) => path.reduce((a, k) => (typeof k === "number" ? `${a}[${k}]` : a ? `${a}.${k}` : k), "");
+  const at = (v, path) => { for (const k of path) { if (v === null || typeof v !== "object") return undefined; v = v[k]; } return v; };
+  const has = (v, path) => { for (const k of path) { if (v === null || typeof v !== "object" || !(k in v)) return false; v = v[k]; } return true; };
+  // canon is v as JSON with sorted keys: equal values, equal text.
+  const canon = (v) => JSON.stringify(v, (k, x) => (isMap(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
+  const same = (a, b) => canon(a) === canon(b);
+
+  // segs is a thing's path as keys, the way ops want it.
+  function segs(m, id) {
+    const f = find(m, id);
+    if (!f) return null;
+    if (f.t === "peering") return ["consul", "peering", peeringName(m, f.peering)];
+    const base = ["consul", "datacenters", f.dc.name];
+    if (f.t === "dc") return base;
+    const scope = (pid) => (f.dc.parts.length ? [...base, "partitions", partName(f.dc, pid)] : base);
+    if (f.t === "part") return scope(f.part.id);
+    if (f.t === "node") return [...scope(f.node.part), "nodes", f.node.name];
+    return [...scope(f.gw.part), "gateways", f.gw.name];
+  }
+
+  // fromTree builds the canvas model from a merged file (the tree check
+  // returns). prev is the model it replaces: things at the same path keep
+  // their ids, so a selection survives an edit. A file with no consul:
+  // (the low-level form) gives a model with no datacenters and raw set.
+  function fromTree(t, prev) {
+    t = isMap(t) ? t : {};
+    const ids = new Map();
+    if (prev) {
+      for (const d of prev.dcs) { ids.set(dot(segs(prev, d.id)), d.id); for (const x of [...d.parts, ...d.nodes, ...d.gws]) ids.set(dot(segs(prev, x.id)), x.id); }
+      for (const p of prev.peerings) ids.set(dot(segs(prev, p.id)), p.id);
+    }
+    const keep = (x, path) => { const id = ids.get(dot(path)); if (id) x.id = id; return x; };
+    const m = lab(typeof t.name === "string" ? t.name : "lab");
+    const c = isMap(t.consul) ? t.consul : null;
+    const v = isMap(t.versions) ? t.versions : {};
+    if (v.consul) m.consul = String(v.consul);
+    if (v.envoy) m.envoy = String(v.envoy);
+    if (v["consul-dataplane"]) m.dataplane = String(v["consul-dataplane"]);
+    if (!c) { m.raw = !!(t.nodes || t.networks); m.mesh = false; return m; }
+    const defs = isMap(c.defaults) ? c.defaults : {};
+    const sdOf = (x) => (x && isMap(x.service_defaults) ? x.service_defaults : {});
+    m.tls = !!defs.tls; m.acl = !!defs.acl;
+    m.mesh = !!sdOf(defs).connect && sdOf(defs).connect !== "none";
+    if (isMap(c.federation) && c.federation.mode) m.fed = String(c.federation.mode);
+    const pending = []; // upstreams and routes, resolved once every node exists
+    for (const [dn, dvRaw] of Object.entries(isMap(c.datacenters) ? c.datacenters : {})) {
+      const dv = isMap(dvRaw) ? dvRaw : {};
+      const dpath = ["consul", "datacenters", dn];
+      const d = keep(dc(dn, Number(dv.servers) || 1), dpath);
+      d.ui = !!dv.ui;
+      m.dcs.push(d);
+      const scope = (pid, sv, spath, sds) => {
+        const sd = Object.assign({}, ...sds.map(sdOf), sdOf(sv));
+        for (const [gn, gvRaw] of Object.entries(isMap(sv.gateways) ? sv.gateways : {})) {
+          const gv = isMap(gvRaw) ? gvRaw : {};
+          if (gvRaw === false) continue;
+          const kind = KINDS.includes(gv.kind) ? gv.kind : KINDS.includes(gn) ? gn : "mesh";
+          const g = keep(gw(kind, gn, pid), [...spath, "gateways", gn]);
+          d.gws.push(g);
+          const e = isMap(gv.entry) ? gv.entry : {};
+          const names = kind === "ingress" ? (e.Listeners || []).flatMap((l) => (l && l.Services) || []).map((x) => x && x.Name)
+            : kind === "terminating" ? (e.Services || []).map((x) => x && x.Name) : [];
+          if (kind === "api") for (const ce of Array.isArray(sv.config_entries) ? sv.config_entries : []) {
+            if (ce && ce.Kind === "http-route" && (ce.Parents || []).some((p) => p && p.Name === gn)) for (const r of ce.Rules || []) for (const x of (r && r.Services) || []) names.push(x && x.Name);
+          }
+          pending.push(() => { for (const nm of names) { const n = d.nodes.find((x) => x.name === nm && (x.part || "") === pid); if (n && !g.to.includes(n.id)) g.to.push(n.id); } });
+        }
+        for (const [nn, nvRaw] of Object.entries(isMap(sv.nodes) ? sv.nodes : {})) {
+          const nv = isMap(nvRaw) ? nvRaw : {};
+          const n = keep(node(nn, 0, { part: pid, agent: nv.agent === "dataplane" ? "dataplane" : "client", count: Number(nv.count) || 1 }), [...spath, "nodes", nn]);
+          if (isMap(nv.service)) {
+            const s = nv.service;
+            n.svc = { port: Number(s.port) || 0, connect: typeof s.connect === "string" ? s.connect : "", ups: [] };
+            const inh = typeof sd.connect === "string" ? sd.connect : "";
+            if (inh && inh !== (m.mesh ? sdOf(defs).connect : "none")) n.svc.inh = inh;
+            for (const [un, uv] of Object.entries(isMap(s.upstreams) ? s.upstreams : {})) {
+              const u = isMap(uv) ? uv : { port: uv };
+              pending.push(() => {
+                let td = d, tp = pid;
+                if (u.dc) td = m.dcs.find((x) => x.name === u.dc);
+                else if (u.peer) { const p = m.peerings.find((x) => x.name === u.peer); td = p && dcById(m, p.dialer === d.id ? p.acceptor : p.dialer); }
+                if (!td) return;
+                if (u.partition) tp = ((td.parts.find((x) => x.name === u.partition) || { id: u.partition === "default" ? "" : null }).id);
+                else if (td !== d) tp = "";
+                const t = td.nodes.find((x) => x.name === un && (x.part || "") === tp && x.svc);
+                if (t) n.svc.ups.push({ to: t.id, port: Number(u.port) || 0 });
+              });
+            }
+          }
+          d.nodes.push(n);
+        }
+      };
+      if (isMap(dv.partitions)) {
+        for (const [pn, pvRaw] of Object.entries(dv.partitions)) {
+          const ppath = [...dpath, "partitions", pn];
+          let pid = "";
+          if (pn !== "default") { const p = keep({ id: uid("p"), name: pn }, ppath); d.parts.push(p); pid = p.id; }
+          scope(pid, isMap(pvRaw) ? pvRaw : {}, ppath, [defs, dv]);
+        }
+        if (!("default" in dv.partitions)) scope("", dv, dpath, [defs]);
+      } else scope("", dv, dpath, [defs]);
+    }
+    for (const [pn, pvRaw] of Object.entries(isMap(c.peering) ? c.peering : {})) {
+      const pv = isMap(pvRaw) ? pvRaw : {};
+      const a = m.dcs.find((x) => x.name === pv.acceptor), d = m.dcs.find((x) => x.name === pv.dialer);
+      if (a && d) m.peerings.push(keep({ id: uid("p"), name: pn, acceptor: a.id, dialer: d.id, mesh: !!pv.via_mesh_gateways }, ["consul", "peering", pn]));
+    }
+    pending.forEach((f) => f());
+    return m;
+  }
+
+  // origin says where a thing on the canvas comes from: "" for the file
+  // itself, "import" when only the merged file has it (a module or an
+  // overlay), "template NAME" for a node made from a template.
+  function origin(m, id, src) {
+    const p = segs(m, id);
+    if (!p) return "";
+    if (!has(src, p)) return "import";
+    const v = at(src, p);
+    return isMap(v) && typeof v.from === "string" ? `template ${v.from}` : "";
+  }
+
+  // diffOps turns a canvas edit (model a before, b after) into ops on the
+  // file whose own tree is src. It throws when the edit can't go in the
+  // file: a thing only an import has, or a value set by a ${var}.
+  function diffOps(a, b, src) {
+    src = JSON.parse(JSON.stringify(src === undefined ? {} : src));
+    const ops = [];
+    // How a message names a path: from the datacenter down.
+    const label = (p) => dot(p).replace(/^consul\.datacenters\./, "");
+    const inSrc = (p) => has(src, p);
+    const varAt = (p) => { let v = src; for (const k of p) { if (typeof v === "string") break; if (v === null || typeof v !== "object" || !(k in v)) return ""; v = v[k]; } return typeof v === "string" && v.includes("${") ? v : ""; };
+    const da = toDoc(a), db = toDoc(b);
+    // Renames first, parents before children, so the paths after them line up.
+    const order = (m) => [...m.dcs.map((d) => d.id), ...m.dcs.flatMap((d) => d.parts.map((p) => p.id)), ...m.peerings.map((p) => p.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws].map((x) => x.id))];
+    for (const id of order(b)) {
+      const pa = segs(a, id), pb = segs(b, id);
+      if (!pa || !pb) continue;
+      const from = pa[pa.length - 1], to = pb[pb.length - 1];
+      if (from === to) continue;
+      const path = [...pb.slice(0, -1), from];
+      if (!inSrc(path)) throw new Error(`${from} comes from an import, so rename it there.`);
+      ops.push({ op: "rename", path, key: to });
+      // The same rename in a's doc, keeping its place.
+      const parent = at(da, path.slice(0, -1));
+      if (isMap(parent) && from in parent) {
+        const e = Object.entries(parent).map(([k, v]) => [k === from ? to : k, v]);
+        Object.keys(parent).forEach((k) => delete parent[k]);
+        e.forEach(([k, v]) => { parent[k] = v; });
+      }
+      if (isMap(src)) { const sp = at(src, path.slice(0, -1)); if (isMap(sp) && from in sp) { const e = Object.entries(sp).map(([k, v]) => [k === from ? to : k, v]); Object.keys(sp).forEach((k) => delete sp[k]); e.forEach(([k, v]) => { sp[k] = v; }); } }
+    }
+    const set = (p, v) => {
+      const vr = varAt(p);
+      if (vr) throw new Error(`${label(p)} is set by ${vr} in the file; change the var instead.`);
+      ops.push({ op: "set", path: p, value: v });
+    };
+    const walk = (x, y, p) => {
+      if (same(x, y)) return;
+      if (isMap(x) && isMap(y)) {
+        for (const k of Object.keys(x)) if (!(k in y) && k !== "config_entries") {
+          if (!inSrc([...p, k])) throw new Error(`${k} comes from an import, so remove it there (${label([...p, k])}).`);
+          ops.push({ op: "delete", path: [...p, k] });
+        }
+        for (const [k, v] of Object.entries(y)) if (k !== "config_entries") (k in x ? walk(x[k], v, [...p, k]) : add(v, [...p, k]));
+        return;
+      }
+      set(p, noEntries(y));
+    };
+    // A new map where the file (or an import) has one already adds to it.
+    const add = (v, p) => (isMap(v) && isMap(at(src, p)) ? walk({}, v, p) : set(p, noEntries(v)));
+    const noEntries = (v) => (isMap(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== "config_entries").map(([k, x]) => [k, noEntries(x)])) : v);
+    walk(da, db, []);
+    // Config entries the builder writes (exports, gateway routes, intentions,
+    // proxy-defaults): added and removed by kind and name, and only where
+    // the file's own entry is the one the builder would write.
+    const scopes = (doc) => {
+      const out = [];
+      for (const [dn, dv] of Object.entries(((doc.consul || {}).datacenters) || {})) {
+        if (isMap(dv.partitions)) for (const [pn, pv] of Object.entries(dv.partitions)) out.push([["consul", "datacenters", dn, "partitions", pn], pv]);
+        else out.push([["consul", "datacenters", dn], dv]);
+      }
+      return out;
+    };
+    const old = new Map(scopes(da).map(([p, v]) => [dot(p), v.config_entries || []]));
+    const ek = (e) => `${e.Kind}/${e.Name}`;
+    for (const [p, v] of scopes(db)) {
+      const was = old.get(dot(p)) || [], now = v.config_entries || [];
+      const lp = [...p, "config_entries"];
+      const file = Array.isArray(at(src, lp)) ? at(src, lp) : [];
+      const removes = [], sets = [], appends = [];
+      for (const e of was) {
+        const n = now.find((x) => ek(x) === ek(e));
+        const i = file.findIndex((x) => same(x, e));
+        if (!n && i >= 0) removes.push(i);
+        else if (n && !same(n, e) && i >= 0) sets.push([i, n]);
+      }
+      for (const e of now) if (!was.some((x) => ek(x) === ek(e)) && !file.some((x) => isMap(x) && ek(x) === ek(e))) appends.push(e);
+      for (const [i, n] of sets) ops.push({ op: "set", path: [...lp, i], value: n });
+      for (const i of removes.sort((x, y) => y - x)) ops.push({ op: "remove", path: [...lp, i] });
+      for (const e of appends) ops.push({ op: "append", path: lp, value: e });
+    }
+    return ops;
+  }
+
+  // ---------- diff ----------
+  // lineDiff compares two texts line by line (LCS): [{t: " "|"-"|"+", s}].
+  function lineDiff(a, b) {
+    const x = a.split("\n"), y = b.split("\n");
+    let i0 = 0;
+    while (i0 < x.length && i0 < y.length && x[i0] === y[i0]) i0++;
+    let e = 0;
+    while (e < x.length - i0 && e < y.length - i0 && x[x.length - 1 - e] === y[y.length - 1 - e]) e++;
+    const X = x.slice(i0, x.length - e), Y = y.slice(i0, y.length - e);
+    const out = x.slice(0, i0).map((s) => ({ t: " ", s }));
+    if (X.length * Y.length > 4e6) {
+      X.forEach((s) => out.push({ t: "-", s })); Y.forEach((s) => out.push({ t: "+", s }));
+    } else {
+      const L = Array.from({ length: X.length + 1 }, () => new Uint32Array(Y.length + 1));
+      for (let i = X.length - 1; i >= 0; i--) for (let j = Y.length - 1; j >= 0; j--) L[i][j] = X[i] === Y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+      let i = 0, j = 0;
+      while (i < X.length || j < Y.length) {
+        if (i < X.length && j < Y.length && X[i] === Y[j]) { out.push({ t: " ", s: X[i] }); i++; j++; }
+        else if (i < X.length && (j >= Y.length || L[i + 1][j] >= L[i][j + 1])) out.push({ t: "-", s: X[i++] });
+        else out.push({ t: "+", s: Y[j++] });
+      }
+    }
+    x.slice(x.length - e).forEach((s) => out.push({ t: " ", s }));
+    return out;
+  }
+
   // ---------- starters ----------
   function starter(name) {
     const m = lab(name);
@@ -524,7 +764,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { VERSIONS, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, peeringName, peeringOf, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent };
+  const api = { VERSIONS, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, peeringName, peeringOf, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);
