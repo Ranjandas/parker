@@ -23,6 +23,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -83,10 +84,16 @@ const (
 	inputCommand
 )
 
-// row is one line of the nodes table: a process on a node.
+// row is one line of the nodes table: a process on a node, a folded
+// node's summary, or a datacenter heading.
 type row struct {
 	node, ip, proc, pid, state, restarts, role string
 	section                                    string // a datacenter heading, not a process
+	spacer                                     bool   // a blank line between datacenters
+	// A node with several processes has a fold marker; folded, its one
+	// row sums them up: procText and stateText replace proc and state
+	// (proc stays its first process, for logs).
+	marker, procText, stateText string
 }
 
 func (r row) fields() []string {
@@ -100,7 +107,7 @@ func (r row) matches(f string) bool {
 // cells styles r for the grid. cont marks a further process of the node
 // above, whose NODE and IP stay blank so the node reads as one group.
 func (r row) cells(cont bool) []cell {
-	node, ip := cell{text: r.node, style: titleStyle}, cell{text: r.ip, style: plain}
+	node, ip := cell{text: r.marker + r.node, style: titleStyle}, cell{text: r.ip, style: plain}
 	if cont {
 		node, ip = cell{}, cell{}
 	}
@@ -109,7 +116,14 @@ func (r row) cells(cont bool) []cell {
 	if r.restarts != "0" {
 		restarts = cell{text: r.restarts, style: warnStyle}
 	}
-	return []cell{node, ip, {text: r.proc, style: plain}, pid, stateCell(r.state), restarts, roleCell(r.role)}
+	proc, state := cell{text: r.proc, style: plain}, stateCell(r.state)
+	if r.procText != "" {
+		proc = cell{text: r.procText, style: mutedStyle}
+	}
+	if r.stateText != "" {
+		state.text = r.stateText
+	}
+	return []cell{node, ip, proc, pid, state, restarts, roleCell(r.role)}
 }
 
 // Model is the Bubble Tea model.
@@ -127,6 +141,11 @@ type Model struct {
 	nodeTable grid
 	filter    string // nodes view filter
 	dc        string // :dc prefix filter
+	// fold is each node folded or unfolded by hand; other nodes fold when
+	// the lab overflows the screen (autoFold), unless something's wrong
+	// on them.
+	fold     map[string]bool
+	autoFold bool
 
 	input     textinput.Model
 	inputMode inputMode
@@ -201,6 +220,7 @@ func New(o Options) Model {
 		labTable:  newGrid(column{title: "LAB", flex: true}, column{title: "NAMESPACES"}, column{title: "SUPERVISED"}),
 		nodeTable: newGrid(nodeColumns...),
 		input:     ti,
+		fold:      map[string]bool{},
 		follow:    true,
 		vp:        viewport.New(80, 20),
 		width:     80,
@@ -348,82 +368,325 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) resize() {
-	h := max(m.height-8, 3) // header and footer boxes (3 lines each), table header and rule
-	m.labTable.SetSize(m.width, h)
-	m.nodeTable.SetSize(m.width, h)
+	h := m.bodyHeight()
+	m.labTable.SetSize(m.width, h-2) // less the table's header and rule
+	m.nodeTable.SetSize(m.width, h-2)
 	m.vp.Width, m.vp.Height = m.width, h
-	if m.view == viewLogs {
+	if m.view == viewLogs || m.view == viewRun {
 		m.renderLog()
 	}
+	m.applyRows() // auto-folding depends on the height
 }
 
 func (m Model) openLab(name string) (tea.Model, tea.Cmd) {
 	m.lab, m.view, m.status, m.filter, m.dc = name, viewNodes, nil, "", ""
+	m.fold = map[string]bool{}
 	m.nodeTable.SetRows(nil)
 	return m, m.refresh()
 }
 
 // applyRows flattens the status into table rows and applies the filters.
 // Nodes are grouped by datacenter (a heading row each), servers first,
-// then clients, then nodes without an agent.
+// then clients, then nodes without an agent. The selection stays on the
+// same process (or its node) when rows come and go.
 func (m *Model) applyRows() {
+	sel, hadSel := m.selected()
 	m.rows = m.rows[:0]
 	if m.status == nil {
 		m.nodeTable.SetRows(nil)
 		return
 	}
 	var groups []nodeGroup
+	lines := 0
 	for _, g := range groupNodes(m.status.Nodes) {
 		if m.dc != "" && g.dc != m.dc {
 			continue
 		}
-		var rows []row
+		var nodes []*parkerv1.NodeStatus
 		for _, n := range g.nodes {
-			rows = append(rows, m.nodeRows(n)...)
+			if k := len(m.procRows(n)); k > 0 {
+				nodes = append(nodes, n)
+				lines += k
+			}
 		}
-		if len(rows) > 0 {
+		if len(nodes) > 0 {
+			g.nodes = nodes
 			groups = append(groups, g)
-			g.rows = rows
-			groups[len(groups)-1] = g
 		}
 	}
-	for _, g := range groups {
-		if m.dc == "" && (g.dc != "" || len(groups) > 1) {
+	headings := m.dc == "" && len(groups) > 0 && (groups[0].dc != "" || len(groups) > 1)
+	if headings {
+		lines += 2*len(groups) - 1
+	}
+	m.autoFold = lines > m.nodeTable.height
+	for i, g := range groups {
+		if headings {
+			if i > 0 {
+				m.rows = append(m.rows, row{spacer: true})
+			}
 			m.rows = append(m.rows, row{section: g.title()})
 		}
-		m.rows = append(m.rows, g.rows...)
+		for _, n := range g.nodes {
+			m.rows = append(m.rows, m.nodeRows(n)...)
+		}
+	}
+	if !slices.ContainsFunc(m.rows, func(r row) bool { return r.marker == "▾ " || r.marker == "▸ " }) {
+		for i := range m.rows {
+			m.rows[i].marker = "" // nothing folds: no gutter
+		}
 	}
 	cells := make([][]cell, len(m.rows))
 	for i, r := range m.rows {
-		if r.section != "" {
+		switch {
+		case r.spacer:
+			cells[i] = sectionRow("")
+		case r.section != "":
 			cells[i] = sectionRow(r.section)
-			continue
+		default:
+			cells[i] = r.cells(i > 0 && m.rows[i-1].node == r.node)
 		}
-		cells[i] = r.cells(i > 0 && m.rows[i-1].node == r.node)
 	}
 	m.nodeTable.SetRows(cells)
+	if hadSel {
+		m.selectRow(sel.node, sel.proc)
+	}
 }
 
-// nodeRows is a node's processes as rows, after the filter.
-func (m *Model) nodeRows(n *parkerv1.NodeStatus) []row {
-	ip := strings.Join(n.Ips, ",")
+// selectRow moves the cursor to node's process proc, else to the node.
+func (m *Model) selectRow(node, proc string) {
+	at := -1
+	for i, r := range m.rows {
+		if r.node != node || r.section != "" || r.spacer {
+			continue
+		}
+		if r.proc == proc {
+			at = i
+			break
+		}
+		if at < 0 {
+			at = i
+		}
+	}
+	if at >= 0 {
+		m.nodeTable.SetCursor(at)
+	}
+}
+
+// procRows is a node's processes as rows, in display order (the agent,
+// gateways, each service then its sidecar, setup jobs), after the filter.
+func (m *Model) procRows(n *parkerv1.NodeStatus) []row {
+	ip := "-"
+	if len(n.Ips) > 0 {
+		ip = n.Ips[0]
+	}
+	if len(n.Ips) > 1 {
+		ip += fmt.Sprintf(" +%d", len(n.Ips)-1) // the rest are in describe
+	}
 	if !n.Namespace {
 		ip += " (no netns)"
 	}
-	var out []row
+	names := map[string]bool{}
 	for _, p := range n.Processes {
-		r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: "-"}
+		names[p.Name] = true
+	}
+	procs := slices.Clone(n.Processes)
+	slices.SortStableFunc(procs, func(a, b *parkerv1.ProcessStatus) int {
+		ka, kb := procOrder(a.Name), procOrder(b.Name)
+		if ka.rank != kb.rank {
+			return ka.rank - kb.rank
+		}
+		if c := strings.Compare(ka.base, kb.base); c != 0 {
+			return c
+		}
+		return ka.sub - kb.sub
+	})
+	var out []row
+	for _, p := range procs {
+		r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: procRole(n, p.Name, names)}
 		if p.Pid > 0 {
 			r.pid = strconv.Itoa(int(p.Pid))
-		}
-		if p.Name == "consul" && n.Role != "" {
-			r.role = n.Role
 		}
 		if m.filter == "" || r.matches(m.filter) {
 			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// nodeRows is a node's rows: its processes, or one summary row when it's
+// folded.
+func (m *Model) nodeRows(n *parkerv1.NodeStatus) []row {
+	rows := m.procRows(n)
+	if len(rows) < 2 {
+		for i := range rows {
+			rows[i].marker = "  " // line up with the fold markers
+		}
+		return rows
+	}
+	marker := "▾ "
+	if !m.folded(n.Name, rows) {
+		rows[0].marker = marker
+		return rows
+	}
+	worst, ok, restarts := "ready", 0, 0
+	for _, r := range rows {
+		if stateRank[r.state] > stateRank[worst] {
+			worst = r.state
+		}
+		if r.state == "ready" || r.state == "running" {
+			ok++
+		}
+		k, _ := strconv.Atoi(r.restarts)
+		restarts += k
+	}
+	count := ok
+	if worst != "ready" && worst != "running" {
+		count = 0
+		for _, r := range rows {
+			if r.state == worst {
+				count++
+			}
+		}
+	}
+	mark, _, _ := strings.Cut(stateCell(worst).text, " ")
+	return []row{{
+		node: n.Name, ip: rows[0].ip, proc: rows[0].proc, pid: "", state: worst, restarts: strconv.Itoa(restarts),
+		role: nodeRole(n), marker: "▸ ", procText: plural(len(rows), "process"),
+		stateText: fmt.Sprintf("%s %d/%d %s", mark, count, len(rows), worst),
+	}}
+}
+
+// stateRank orders states from fine to worst, for a folded node's state.
+var stateRank = map[string]int{"ready": 0, "running": 1, "starting": 2, "paused": 3, "stopped": 4, "dead": 5}
+
+// folded says whether a node shows as one row: as folded by hand, else
+// when the lab overflows the screen and all is well on the node. Filtering
+// unfolds everything, so matches show.
+func (m *Model) folded(node string, rows []row) bool {
+	if m.filter != "" {
+		return false
+	}
+	if f, ok := m.fold[node]; ok {
+		return f
+	}
+	if !m.autoFold {
+		return false
+	}
+	for _, r := range rows {
+		if r.state != "ready" && r.state != "running" {
+			return false
+		}
+	}
+	return true
+}
+
+// setFold folds or unfolds the selected node (toggles when fold is nil)
+// and keeps it selected.
+func (m *Model) setFold(fold *bool) {
+	r, ok := m.selected()
+	if !ok || !m.isFoldable(r.node) {
+		return
+	}
+	want := r.marker != "▸ " // expanded: fold it
+	if fold != nil {
+		want = *fold
+	}
+	m.fold[r.node] = want
+	m.applyRows()
+	m.selectRow(r.node, "") // the node's first row
+}
+
+// isFoldable: the node has more than one process showing.
+func (m *Model) isFoldable(node string) bool {
+	for _, n := range m.status.GetNodes() {
+		if n.Name == node {
+			return len(m.procRows(n)) > 1
+		}
+	}
+	return false
+}
+
+// toggleAll folds every node, or unfolds them all when none is unfolded.
+func (m *Model) toggleAll() {
+	anyOpen := false
+	for _, r := range m.rows {
+		if r.marker == "▾ " {
+			anyOpen = true
+		}
+	}
+	for _, n := range m.status.GetNodes() {
+		m.fold[n.Name] = anyOpen
+	}
+	sel, _ := m.selected()
+	m.applyRows()
+	m.selectRow(sel.node, "")
+}
+
+// Roles a consul process shows for its server.
+const (
+	roleLeader   = "server ★ leader"
+	roleNoLeader = "server (no leader)"
+)
+
+// nodeRole is what a node's agent is: server (and whether it leads),
+// client, or "-" with no agent.
+func nodeRole(n *parkerv1.NodeStatus) string {
+	switch n.Role {
+	case "leader":
+		return roleLeader
+	case "no-leader":
+		return roleNoLeader
+	case "follower":
+		return "server"
+	case "client":
+		return "client"
+	}
+	if kind(n) == 0 {
+		return "server" // agent down
+	}
+	return "-"
+}
+
+var gatewayKinds = []string{"mesh", "ingress", "terminating", "api"}
+
+// procRole is what a process is on its node: the agent's role, a gateway
+// of some kind, a service, its sidecar, or a one-shot setup job.
+func procRole(n *parkerv1.NodeStatus, name string, names map[string]bool) string {
+	switch {
+	case name == "consul":
+		return nodeRole(n)
+	case name == expand.ConfigEntries || name == expand.ACLSetup || strings.HasPrefix(name, "peering-"):
+		return "setup"
+	case strings.HasSuffix(name, expand.SidecarSuffix):
+		return "sidecar → " + strings.TrimSuffix(name, expand.SidecarSuffix)
+	case names[name+expand.SidecarSuffix]:
+		return "service"
+	}
+	if k, ok := strings.CutSuffix(name, "-gateway"); ok && slices.Contains(gatewayKinds, k) {
+		return k + " gateway"
+	}
+	return "-"
+}
+
+type procKey struct {
+	rank, sub int
+	base      string
+}
+
+// procOrder sorts a node's processes: the agent, gateways, services each
+// followed by its sidecar, then setup jobs.
+func procOrder(name string) procKey {
+	switch {
+	case name == "consul":
+		return procKey{rank: 0}
+	case strings.HasSuffix(name, "-gateway"):
+		return procKey{rank: 1, base: name}
+	case name == expand.ConfigEntries || name == expand.ACLSetup || strings.HasPrefix(name, "peering-"):
+		return procKey{rank: 3, base: name}
+	case strings.HasSuffix(name, expand.SidecarSuffix):
+		return procKey{rank: 2, base: strings.TrimSuffix(name, expand.SidecarSuffix), sub: 1}
+	}
+	return procKey{rank: 2, base: name}
 }
 
 // nodeGroup is a datacenter's nodes in display order.
@@ -451,6 +714,9 @@ func (g nodeGroup) title() string {
 func plural(n int, s string) string {
 	if n == 1 {
 		return "1 " + s
+	}
+	if strings.HasSuffix(s, "s") {
+		return strconv.Itoa(n) + " " + s + "es"
 	}
 	return strconv.Itoa(n) + " " + s + "s"
 }
@@ -551,7 +817,7 @@ func ProcState(p *parkerv1.ProcessStatus) string {
 
 func (m Model) selected() (row, bool) {
 	c := m.nodeTable.Cursor()
-	if c < 0 || c >= len(m.rows) || m.rows[c].section != "" {
+	if c < 0 || c >= len(m.rows) || m.rows[c].section != "" || m.rows[c].spacer {
 		return row{}, false
 	}
 	return m.rows[c], true
@@ -632,6 +898,20 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			return m, m.refresh()
+		case "right":
+			f := false
+			m.setFold(&f)
+			return m, nil
+		case "left":
+			f := true
+			m.setFold(&f)
+			return m, nil
+		case " ", "space":
+			m.setFold(nil)
+			return m, nil
+		case "z":
+			m.toggleAll()
+			return m, nil
 		case "K", "R", "S", "P", "x", "H":
 			return m.hotkey(k.String())
 		}
@@ -1039,6 +1319,7 @@ func (m *Model) renderLog() {
 		if f != "" && !strings.Contains(strings.ToLower(l), f) {
 			continue
 		}
+		l = colorLog(l)
 		if m.wrap {
 			l = ansi.Hardwrap(l, max(m.width, 10), true)
 		} else {
@@ -1056,25 +1337,41 @@ func (m *Model) renderLog() {
 // ---------------------------------------------------------------- view
 
 func (m Model) View() string {
-	var b strings.Builder
-	b.WriteString(box(m.logo(), m.header(), m.width, ruleStyle))
-	b.WriteByte('\n')
+	var body string
 	switch m.view {
 	case viewLabs:
 		if len(m.labs) == 0 && m.err == nil {
-			b.WriteString(mutedStyle.Render("no labs yet: parker up FILE"))
+			body = mutedStyle.Render(" no labs yet: parker up FILE")
 		} else {
-			b.WriteString(m.labTable.View())
+			body = m.labTable.View()
 		}
 	case viewNodes:
-		b.WriteString(m.nodeTable.View())
+		body = m.nodeTable.View()
 	case viewLogs, viewDescribe, viewRun:
-		b.WriteString(m.vp.View())
+		body = m.vp.View()
 	}
-	b.WriteByte('\n')
 	foot, border := m.footer()
-	b.WriteString(box("", foot, m.width, border))
-	return b.String()
+	// A blank line either side of the body, which is padded (or cut) to
+	// its height so the footer always sits on the bottom line.
+	return box(m.logo(), m.header(), m.width, ruleStyle) + "\n\n" +
+		fitLines(body, m.bodyHeight()) + "\n\n" +
+		box("", foot, m.width, border)
+}
+
+// bodyHeight is the lines between the header and footer boxes (3 lines
+// each) and the blank line inside each.
+func (m Model) bodyHeight() int { return max(m.height-8, 3) }
+
+// fitLines pads s with empty lines, or cuts it, to exactly n lines.
+func fitLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	for len(lines) < n {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // header is the breadcrumbs and what the view shows, with the daemon's
@@ -1210,7 +1507,7 @@ func (m Model) footer() (string, lipgloss.Style) {
 	case viewLabs:
 		keys = [][2]string{{"enter", "open"}, {":", "command"}, {"q", "quit"}}
 	case viewNodes:
-		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
+		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"←/→", "fold"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
 			{"P", "pause"}, {"x", "partition"}, {"H", "heal"}, {"/", "filter"}, {":", "command"}, {"esc", "back"}}
 	case viewLogs:
 		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"/", "filter"}, {"g/G", "top/end"}, {"esc", "back"}}
@@ -1224,4 +1521,38 @@ func (m Model) footer() (string, lipgloss.Style) {
 		parts[i] = keyStyle.Render(k[0]) + " " + mutedStyle.Render(k[1])
 	}
 	return strings.Join(parts, "  "), ruleStyle
+}
+
+// logStamp and logLevel find a log line's leading timestamp and its
+// [LEVEL] tag (Consul's format, Envoy's lower case too).
+var (
+	logStamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?`)
+	logLevel = regexp.MustCompile(`(?i)\[(error|err|warn|warning|info|debug|trace)\]`)
+)
+
+// colorLog mutes a log line's timestamp and colors its level: errors red,
+// warnings gold, debug and trace muted.
+func colorLog(l string) string {
+	if strings.Contains(l, "\x1b") {
+		return l // already colored
+	}
+	ts := logStamp.FindString(l)
+	rest := l[len(ts):]
+	if loc := logLevel.FindStringIndex(rest); loc != nil {
+		tag := rest[loc[0]:loc[1]]
+		st := plain
+		switch strings.ToLower(tag[1:2]) {
+		case "e":
+			st = errStyle
+		case "w":
+			st = warnStyle
+		case "d", "t":
+			st = mutedStyle
+		}
+		rest = rest[:loc[0]] + st.Render(tag) + rest[loc[1]:]
+	}
+	if ts != "" {
+		ts = mutedStyle.Render(ts)
+	}
+	return ts + rest
 }
