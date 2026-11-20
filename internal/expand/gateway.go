@@ -39,6 +39,9 @@ type gatewayEntry struct {
 	label     string
 	entry     spec.ConfigEntry
 	partition string // written into this partition ("" for the default)
+	// merge folds Services into an exported-services entry the user
+	// wrote in the same partition (Consul keeps one per partition).
+	merge bool
 }
 
 // gatewayNodes resolves each datacenter's gateways (sorted by node name)

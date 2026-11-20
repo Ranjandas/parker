@@ -508,7 +508,8 @@ agent token. Partitions can reuse a node name, as Consul allows: nodes
 outside the default partition expand to `<dc>-<partition>-<name>`, so
 `billing-1` above is `dc1-team-a-billing-1` (and `billing-1` to Consul).
 `dc1/team-a/billing-1` or `billing-1.team-a.dc1.<lab>.parker` name it. Partitions and namespaces need an
-Enterprise pin, and can't be combined with federation or peering yet. See
+Enterprise pin, and can't be combined with federation yet; partitions in
+different datacenters can peer (see `consul.peering` below). See
 [examples/partitions.yaml](examples/partitions.yaml): frontend calls
 team-a's billing and fails over to team-b's when team-a's is stopped.
 `make e2e-ent` runs it too.
@@ -562,7 +563,19 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   `exports` writes the exported-services entry. `via_mesh_gateways: true`
   sends the control plane through the gateways; without it the servers
   join the wan and the token names their wan gRPC addresses (see
-  `examples/peering.yaml`)
+  `examples/peering.yaml`). A side can be an admin partition,
+  `dc2/team-b` (Enterprise): the token and the peering are made in that
+  partition, which needs its own mesh gateway for service traffic, and
+  `exports: { dc2/team-b: [payments/billing] }` writes that partition's
+  exported-services entry (merged into one you wrote there; the namespace
+  is inferred when the service runs in just one). Mesh gateways always
+  register in their partition's default namespace. With
+  `via_mesh_gateways` the control plane goes through each datacenter's
+  default-partition gateway, since Consul only allows
+  PeerThroughMeshGateways there, so that partition needs one too. Two
+  partitions of one datacenter can't peer: export to the other partition
+  with `Consumers: [{ Partition: ... }]` instead (see
+  `examples/peering-partitions.yaml`, run by `make e2e-ent`)
 - `acl: true` (under `consul.defaults` or a dc): ACLs with default deny
   plus gossip encryption. Parker generates the management token, an agent
   token and the gossip key; `parker exec` (and the TUI shell) sets

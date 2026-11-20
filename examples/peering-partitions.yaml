@@ -1,0 +1,80 @@
+# Cluster peering between admin partitions (Consul Enterprise; needs a
+# license, see examples/enterprise.yaml). dc2's team-b partition exports
+# payments/billing to dc1's team-a partition over the billing peering;
+# frontend in team-a calls it through the peer.
+#
+# Each side's partition has its own mesh gateway for service traffic, and
+# Parker registers gateways in their partition's default namespace, where
+# Consul looks for them. via_mesh_gateways sends the peering's control
+# plane through each datacenter's default-partition gateway (Consul only
+# allows PeerThroughMeshGateways there), so the default partitions get one
+# too.
+#
+# Two partitions of the same datacenter can't peer: export the services
+# with an exported-services entry instead (examples/partitions.yaml).
+#
+# Not in the CI suite: hack/ent-e2e.sh runs it where a license is.
+parker: v1alpha1
+versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  peering:
+    billing:
+      acceptor: dc2/team-b
+      dialer: dc1/team-a
+      via_mesh_gateways: true
+      exports: { dc2/team-b: [payments/billing] }
+  datacenters:
+    dc1:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        team-a:
+          gateways: { mesh: true }
+          nodes:
+            frontend:
+              service:
+                port: 8080
+                upstreams: { billing: { port: 9091, peer: billing, namespace: payments } }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+    dc2:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        team-b:
+          service_defaults: { namespace: payments }
+          gateways: { mesh: true }
+          nodes:
+            billing: { service: { port: 9000 } }
+          config_entries:
+            - Kind: service-intentions
+              Name: billing
+              Namespace: payments
+              Sources: [{ Name: frontend, Peer: billing, Action: allow }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the peering is active on both sides
+      assert:
+        exec: { on: dc1/server-1, run: "consul peering read -partition team-a -name billing", output: ACTIVE }
+        within: 60s
+    - assert:
+        exec: { on: dc2/server-1, run: "consul peering read -partition team-b -name billing", output: ACTIVE }
+        within: 30s
+    - name: team-a sees billing imported from dc2's team-b
+      assert:
+        exec: { on: dc1/server-1, run: "curl -sf -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" 'http://127.0.0.1:8500/v1/health/service/billing?peer=billing&partition=team-a&ns=payments'", output: '"Service":"billing"' }
+        within: 60s
+    - name: frontend in dc1/team-a reaches billing in dc2/team-b over the peering
+      assert:
+        exec: { on: dc1/team-a/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: billing }
+        within: 90s

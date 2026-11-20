@@ -59,3 +59,17 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.link(f, web.id, api.id);
   write("wan-acl", f);
 }
+
+// Peering between partitions of two datacenters, linked partition to
+// partition on the canvas, with ACLs.
+{
+  const m = B.lab("peering-partitions"); m.acl = true;
+  const d1 = B.dc("dc1", 1), d2 = B.dc("dc2", 1); m.dcs.push(d1, d2);
+  const pa = { id: "pa", name: "team-a" }, pb = { id: "pb", name: "team-b" };
+  d1.parts.push(pa); d2.parts.push(pb);
+  const fe = B.node("frontend", 8080, { part: pa.id }), bi = B.node("billing", 9000, { part: pb.id });
+  d1.nodes.push(fe); d2.nodes.push(bi);
+  B.link(m, pa.id, pb.id);
+  B.link(m, fe.id, bi.id);
+  write("peering-partitions", m);
+}

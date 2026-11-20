@@ -15,5 +15,6 @@ e2e-rootless: build
 e2e-ent: build
 	hack/ent-e2e.sh
 	hack/ent-e2e.sh examples/partitions.yaml
+	hack/ent-e2e.sh examples/peering-partitions.yaml
 proto:
 	buf generate

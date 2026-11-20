@@ -550,29 +550,35 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 		}
 		for _, p := range peers {
-			if p.acceptor != dcName && p.dialer != dcName {
+			if p.acceptor.dc != dcName && p.dialer.dc != dcName {
 				continue
+			}
+			here := p.dialer
+			if p.acceptor.dc == dcName {
+				here = p.acceptor
 			}
 			s1 := out.Nodes[dcName+"-server-1"]
 			deps := map[string]*spec.Dep{}
 			for _, r := range serverRefs {
 				deps[r] = &spec.Dep{Condition: "ready"}
 			}
-			maps.Copy(deps, aclDeps)
+			maps.Copy(deps, setupDeps)
 			if _, ok := s1.Processes[ConfigEntries]; ok {
 				deps[dcName+"-server-1/"+ConfigEntries] = &spec.Dep{Condition: "ready"}
 			}
 			if p.via {
 				// The token carries the acceptor's gateway addresses and
-				// the dialer reaches them through its own gateway.
+				// the dialer reaches them through its own gateway: the
+				// default partition's, where the servers are.
 				for _, g := range gws[dcName] {
-					if g.kind == "mesh" && g.wan {
-						deps[dcName+"-"+g.name+"/"+g.process()] = &spec.Dep{Condition: "ready"}
+					if g.kind == "mesh" && g.wan && partitionName(g.partition) == "" {
+						deps[spec.NodeKey(dcName, g.partition, g.name)+"/"+g.process()] = &spec.Dep{Condition: "ready"}
 						break
 					}
 				}
 			}
-			if p.acceptor == dcName {
+			env := tenantEnv(apiEnv(token, tls), here.part, "")
+			if p.acceptor.dc == dcName {
 				var external []string
 				if !p.via {
 					port := GRPCPort
@@ -583,10 +589,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						external = append(external, fmt.Sprintf("%s:%d", ip, port))
 					}
 				}
-				s1.Processes[p.tokenProcess()] = p.tokenProc(deps, apiEnv(token, tls), external)
+				s1.Processes[p.tokenProcess()] = p.tokenProc(deps, env, external)
 			} else {
-				deps[p.acceptor+"-server-1/"+p.tokenProcess()] = &spec.Dep{Condition: "ready"}
-				s1.Processes[p.establishProcess()] = p.establishProc(deps, apiEnv(token, tls))
+				deps[p.acceptor.dc+"-server-1/"+p.tokenProcess()] = &spec.Dep{Condition: "ready"}
+				s1.Processes[p.establishProcess()] = p.establishProc(deps, env)
 			}
 		}
 
@@ -701,7 +707,13 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				if isGW {
 					g := gw
 					g.name = name
-					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(token, tls), part, ""), tls)
+					// Gateways register in their partition's default
+					// namespace: Consul looks for mesh gateways there.
+					gwNS := ""
+					if c.UsesTenancy() {
+						gwNS = spec.DefaultNamespace
+					}
+					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(token, tls), part, gwNS), tls)
 					if meshFed && dcName != primary && gwWANIP != "" {
 						// Ready once the primary reaches this datacenter,
 						// which goes through this gateway: ask a primary
@@ -1097,8 +1109,33 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 		}
 		return nil
 	}
+	// Generated exported-services entries fold into one the user wrote in
+	// the same partition: Consul keeps one per partition.
+	merged := map[int]bool{}
+	mergeInto := func(e spec.ConfigEntry, src *spec.EntrySource, label, partition string) (spec.ConfigEntry, error) {
+		if e["Kind"] != "exported-services" {
+			return e, nil
+		}
+		for i, g := range gen {
+			if !g.merge || g.partition != partition || merged[i] {
+				continue
+			}
+			if src != nil && src.HCL != "" {
+				return nil, fmt.Errorf("%s: consul.peering exports go into this partition's exported-services entry, which Parker can't merge into an HCL file; list them in the file's Services, or write the entry in YAML", label)
+			}
+			e = maps.Clone(e)
+			e["Services"] = mergeExports(e["Services"], g.entry["Services"])
+			merged[i] = true
+		}
+		return e, nil
+	}
 	for i, e := range dc.ConfigEntries {
-		if err := add(e, source(dc.EntrySources, i), dc.EntryLabel(dcName, i), ""); err != nil {
+		src, label := source(dc.EntrySources, i), dc.EntryLabel(dcName, i)
+		e, err := mergeInto(e, src, label, "")
+		if err != nil {
+			return err
+		}
+		if err := add(e, src, label, ""); err != nil {
 			return err
 		}
 	}
@@ -1109,7 +1146,12 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 			continue
 		}
 		for i, e := range part.ConfigEntries {
-			if err := add(e, source(part.EntrySources, i), part.EntryLabel(dcName, pn, i), partitionName(pn)); err != nil {
+			src, label := source(part.EntrySources, i), part.EntryLabel(dcName, pn, i)
+			e, err := mergeInto(e, src, label, partitionName(pn))
+			if err != nil {
+				return err
+			}
+			if err := add(e, src, label, partitionName(pn)); err != nil {
 				return err
 			}
 		}
@@ -1117,6 +1159,9 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 	// Gateways' own entries last: their listeners need the protocols that
 	// service-defaults in config_entries set.
 	for i, g := range gen {
+		if merged[i] {
+			continue
+		}
 		name := fmt.Sprintf("gateway-entry-%d.json", i)
 		srv.Files[name] = mustJSON(g.entry)
 		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: g.label, Partition: g.partition})
@@ -1134,6 +1179,41 @@ func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, 
 		ReadyWhen: &spec.Ready{Log: ConfigEntriesReadyLine, Timeout: "60s"},
 	}
 	return nil
+}
+
+// mergeExports adds the generated exported services to the user's,
+// appending consumers to a service (by name and namespace) listed in both.
+func mergeExports(user, gen any) []any {
+	key := func(v any) string {
+		m, _ := v.(map[string]any)
+		ns, _ := m["Namespace"].(string)
+		if ns == spec.DefaultNamespace {
+			ns = ""
+		}
+		name, _ := m["Name"].(string)
+		return ns + "/" + name
+	}
+	us, _ := user.([]any)
+	out := make([]any, 0, len(us))
+	at := map[string]int{}
+	for _, u := range us {
+		if m, ok := u.(map[string]any); ok {
+			u = maps.Clone(m)
+			at[key(u)] = len(out)
+		}
+		out = append(out, u)
+	}
+	gs, _ := gen.([]any)
+	for _, g := range gs {
+		if i, ok := at[key(g)]; ok {
+			m := out[i].(map[string]any)
+			cs, _ := m["Consumers"].([]any)
+			m["Consumers"] = append(slices.Clone(cs), g.(map[string]any)["Consumers"].([]any)...)
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
 }
 
 // Mesh: a service with connect: sidecar (or tproxy) gets a sidecar proxy

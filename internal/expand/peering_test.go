@@ -117,7 +117,7 @@ func TestPeeringErrors(t *testing.T) {
 		}, "can't also be federated"},
 		{"same dc", func(f *spec.File) { f.Consul.Peering["dc1-dc2"].Dialer = "dc2" }, "acceptor and dialer are both dc2"},
 		{"unknown dc", func(f *spec.File) { f.Consul.Peering["dc1-dc2"].Acceptor = "dc9" }, `acceptor: no datacenter "dc9"`},
-		{"partition", func(f *spec.File) { f.Consul.Peering["dc1-dc2"].Dialer = "dc1/web" }, "partitions (dc1/web) are not supported yet"},
+		{"partition", func(f *spec.File) { f.Consul.Peering["dc1-dc2"].Dialer = "dc1/web" }, `no partition "web" in dc1`},
 		{"no dialer", func(f *spec.File) { f.Consul.Peering["dc1-dc2"].Dialer = "" }, "dialer: required"},
 		{"exports elsewhere", func(f *spec.File) {
 			f.Consul.Datacenters["dc3"] = &spec.Datacenter{Servers: spec.Servers{Count: 1}}
