@@ -1,0 +1,74 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up namespaces.yaml
+parker: v1alpha1
+name: namespaces
+versions: { consul: 2.1.0+ent, envoy: 1.39.1 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  peering:
+    dc1-part-a-dc2-part-b:
+      acceptor: dc2/part-b
+      dialer: dc1/part-a
+      via_mesh_gateways: true
+      exports: { dc2/part-b: [payments/billing] }
+  datacenters:
+    dc1:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        part-a:
+          gateways:
+            terminating:
+              namespace: app
+              entry: { Services: [{ Name: legacy }] }
+            mesh: true
+          nodes:
+            web:
+              service:
+                port: 8080
+                namespace: app
+                upstreams:
+                  api: { port: 9091, namespace: backend }
+                  legacy: 9092
+                  billing:
+                    port: 9093
+                    peer: dc1-part-a-dc2-part-b
+                    namespace: payments
+            api:
+              service: { port: 9090, namespace: backend }
+            legacy:
+              service: { port: 7070, connect: none, namespace: app }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+            - Kind: service-intentions
+              Name: api
+              Namespace: backend
+              Sources: [{ Name: web, Namespace: app, Action: allow }]
+            - Kind: service-intentions
+              Name: legacy
+              Namespace: app
+              Sources: [{ Name: web, Action: allow }]
+    dc2:
+      servers: 1
+      partitions:
+        default:
+          gateways: { mesh: true }
+        part-b:
+          gateways: { mesh: true }
+          nodes:
+            billing:
+              service: { port: 9000, namespace: payments }
+          config_entries:
+            - Kind: service-intentions
+              Name: billing
+              Namespace: payments
+              Sources:
+                - Name: web
+                  Namespace: app
+                  Peer: dc1-part-a-dc2-part-b
+                  Action: allow
