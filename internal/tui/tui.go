@@ -624,7 +624,7 @@ func (m *Model) toggleAll() {
 
 // Roles a consul process shows for its server.
 const (
-	roleLeader   = "server ★ leader"
+	roleLeader   = "server ★"
 	roleNoLeader = "server (no leader)"
 )
 
