@@ -21,3 +21,4 @@ hack/e2e/peering-secure.yaml
 examples/dataplane.yaml
 hack/e2e/dataplane-secure.yaml
 hack/e2e/fake-chain.yaml
+examples/fake-chain.yaml

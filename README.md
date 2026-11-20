@@ -522,7 +522,7 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   servers don't ask dataplanes for a client certificate) and logs in with
   the agent token under ACLs. Dataplane nodes can't use `connect: tproxy`
   yet (see `examples/dataplane.yaml`)
-- `run: fake-service`: built-in fake service (`parker fake-service`). It answers with its name, node, dc and version, and on each request calls its upstreams (by default the service's `upstreams:`, through its sidecar), nesting their answers under `upstream_calls` with the time each hop took. `fake: { message, version, upstreams, workers, upstream_failure }` configures it; nicholasjackson/fake-service's env vars (`MESSAGE`, `UPSTREAM_URIS`, ...) work too (see `hack/e2e/fake-chain.yaml`)
+- `run: fake-service`: built-in fake service (`parker fake-service`). It answers with its name, node, dc and version, and on each request calls its upstreams (by default the service's `upstreams:`, through its sidecar), nesting their answers under `upstream_calls` with the time each hop took. The `fake:` block sets the message, version, upstreams, latency, error and rate-limit faults, health and ready codes, and `protocol: http|grpc|tcp`; nicholasjackson/fake-service's env vars (`MESSAGE`, `UPSTREAM_URIS`, ...) work too. `parker fake` changes faults while it runs, `parker call` prints a request's path as a tree, and the fake serves its own page with fault controls at `/ui`. See [docs/fake-service.md](docs/fake-service.md) and the failover demo in [`examples/fake-chain.yaml`](examples/fake-chain.yaml).
 - Several datacenters, each on its own LAN (`10.<n>.0.0/24` by default);
   `primary: true` picks the primary (default: first by name)
 - `consul.federation: { mode: wan }`: servers also join a generated `wan`
