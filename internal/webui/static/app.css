@@ -538,3 +538,22 @@ svg.edges .bpill{pointer-events:auto;cursor:pointer}
 .wfb{height:7px;background:var(--sunken);border-radius:4px;position:relative;overflow:hidden}
 .wfb i{position:absolute;top:0;bottom:0;background:var(--accent);border-radius:4px}
 .wfr .mono{font-size:11px;color:var(--muted)}
+/* Builder scenario */
+.stepbtns{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.stepbtns .sep{width:1px;height:18px;background:var(--line-2);margin:0 2px}
+.bsteps{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.bstep{border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.bstep.open{border-color:var(--accent-line)}
+.bstep .sh{display:flex;align-items:center;gap:4px;padding:4px 6px}
+.bstep .sn{width:20px;text-align:center;color:var(--muted);font-size:11px}
+.bstep .st{display:block;flex:1;min-width:0;text-align:left;background:none;border:0;padding:4px;cursor:pointer;color:var(--ink)}
+.bstep .st b{display:block !important;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bstep .st small{display:block !important;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bstep .x{background:none;border:0;color:var(--muted);cursor:pointer;padding:2px 5px;border-radius:5px}
+.bstep .x:hover:not([disabled]){background:var(--accent-soft);color:var(--ink)}
+.bstep .x[disabled]{opacity:.3;cursor:default}
+.bstep .sb{display:flex;flex-direction:column;gap:6px;padding:4px 10px 10px 30px}
+.bstep .sf{display:grid;grid-template-columns:132px 1fr;gap:8px;align-items:center;font-size:11.5px;color:var(--muted)}
+.bstep .sf span{overflow:hidden;text-overflow:ellipsis}
+.bmenu{min-width:230px}
+.bmenu small{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

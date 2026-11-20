@@ -37,3 +37,12 @@ consul:
         terminating:
           entry: { Services: [{ Name: api }] }
         mesh: true
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: web reaches api
+      assert: { call: { on: dc1/web, reaches: api }, within: 60s }
+    - stop: dc1/terminating
+    - start: dc1/terminating
+    - assert: { consul: { dc: dc1, service_healthy: api }, within: 60s }

@@ -106,5 +106,8 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.link(m, t1.id, api.id); B.link(m, t2.id, api.id);
   B.joinDCs(m, d1.id, d2.id, "peering");
   B.link(m, web.id, api.id);
+  // A scenario made from the canvas: stop dc1's gateway, check, start it.
+  for (const [id, kind] of [[d1.id, "wait"], [d2.id, "wait"], [web.id, "call"], [t1.id, "stop"], [t1.id, "start"], [api.id, "healthy"]]) B.addStep(m, B.stepFor(m, id, kind));
+  B.nameStep(m.scenario.steps[2], "web reaches api");
   write("externals", m);
 }
