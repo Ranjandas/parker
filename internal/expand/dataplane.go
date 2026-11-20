@@ -81,7 +81,7 @@ func dataplaneEntries(node, ip, dc, part string, meta map[string]string, name st
 	s.Service = DataplaneService{ID: name, Name: name, Port: svc.Port, Address: ip, Namespace: ns}
 	if svc.Port > 0 && svc.Check != "none" {
 		s.Probe = fmt.Sprintf("%s:%d", ip, svc.Port)
-		if isFake(svc) && (svc.Check == "" || svc.Check == "http") {
+		if isFake(svc) && fakeProtocol(svc) != "tcp" && svc.Check != "tcp" && svc.Check != "none" {
 			s.Probe = fmt.Sprintf("http://%s:%d%s", ip, svc.Port, healthPath(svc))
 		}
 	}

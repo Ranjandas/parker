@@ -59,6 +59,7 @@ type Response struct {
 type Server struct {
 	cfg    *Config
 	client *http.Client
+	h2c    *http.Client
 	ips    []string
 	log    *log.Logger
 	// now is time.Now outside tests.
@@ -77,6 +78,7 @@ func New(cfg *Config) *Server {
 	return &Server{
 		cfg:     cfg,
 		client:  &http.Client{Timeout: cfg.ClientTimeout},
+		h2c:     h2cClient(cfg.ClientTimeout),
 		ips:     localIPs(),
 		log:     log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
 		now:     time.Now,
@@ -117,18 +119,30 @@ func (s *Server) SetFaults(f Faults) {
 }
 
 // Handler serves the fake service's HTTP API.
+// In grpc mode the same port also serves FakeService.Handle and the gRPC
+// health check, over HTTP/2 without TLS.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.serve)
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/ready", s.ready)
+	if s.cfg.Protocol == "grpc" {
+		s.grpcHandlers(mux)
+	}
 	return mux
 }
 
 // ListenAndServe serves on cfg.Port until the process ends.
 func (s *Server) ListenAndServe() error {
-	fmt.Printf("fake-service %s listening on :%d (upstreams: %s)\n", s.cfg.Name, s.cfg.Port, strings.Join(s.cfg.Upstreams, ", "))
-	return http.ListenAndServe(fmt.Sprintf(":%d", s.cfg.Port), s.Handler())
+	fmt.Printf("fake-service %s (%s) listening on :%d (upstreams: %s)\n", s.cfg.Name, s.cfg.Protocol, s.cfg.Port, strings.Join(s.cfg.Upstreams, ", "))
+	addr := fmt.Sprintf(":%d", s.cfg.Port)
+	if s.cfg.Protocol == "tcp" {
+		return s.serveTCP(addr)
+	}
+	srv := &http.Server{Addr: addr, Handler: s.Handler(), Protocols: new(http.Protocols)}
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
+	return srv.ListenAndServe()
 }
 
 // Serve is ListenAndServe for a config built from the environment, with
@@ -148,6 +162,15 @@ func Serve(name, dc string, port int, control string) error {
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	resp, id := s.handle(r, "HTTP")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(HeaderRequestID, id)
+	w.WriteHeader(resp.Code)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handle answers one request (HTTP or gRPC): faults, then upstreams.
+func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 	start := s.now()
 	id := r.Header.Get(HeaderRequestID)
 	if id == "" {
@@ -155,44 +178,35 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := &Response{
 		Name: s.cfg.Name, Node: s.cfg.Node, DC: s.cfg.DC, Version: s.cfg.Version,
-		URI: r.URL.RequestURI(), Type: "HTTP", IPAddresses: s.ips, From: r.RemoteAddr,
+		URI: r.URL.RequestURI(), Type: typ, IPAddresses: s.ips, From: r.RemoteAddr,
 		Body: body(s.cfg.Message), Code: http.StatusOK,
 	}
 	var trail []string
 	if t := r.Header.Get(HeaderTrail); t != "" {
 		trail = strings.Split(t, ",")
 	}
-	if !s.inject(r, resp) {
-		s.reply(w, r, resp, start, id)
-		return
-	}
-	switch {
-	case len(s.cfg.Upstreams) == 0:
-	case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
-		// Answer, but don't go round again.
-		resp.Cycle = true
-	default:
-		resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","), r.Header.Get(HeaderFault))
-		for _, u := range s.cfg.Upstreams {
-			if up := resp.UpstreamCalls[u]; up.Code < 0 || up.Code >= 400 {
-				if !s.cfg.IgnoreUpstreamErrors {
-					resp.Code = http.StatusInternalServerError
-					resp.Error = "upstream " + u + " failed"
+	if s.inject(r, resp) {
+		switch {
+		case len(s.cfg.Upstreams) == 0:
+		case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
+			// Answer, but don't go round again.
+			resp.Cycle = true
+		default:
+			resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","), r.Header.Get(HeaderFault))
+			for _, u := range s.cfg.Upstreams {
+				if up := resp.UpstreamCalls[u]; up.Code < 0 || up.Code >= 400 {
+					if !s.cfg.IgnoreUpstreamErrors {
+						resp.Code = http.StatusInternalServerError
+						resp.Error = "upstream " + u + " failed"
+					}
+					break
 				}
-				break
 			}
 		}
 	}
-	s.reply(w, r, resp, start, id)
-}
-
-func (s *Server) reply(w http.ResponseWriter, r *http.Request, resp *Response, start time.Time, id string) {
 	s.finish(resp, start)
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set(HeaderRequestID, id)
-	w.WriteHeader(resp.Code)
-	_ = json.NewEncoder(w).Encode(resp)
-	s.log.Printf("request id=%s path=%s from=%s code=%d duration=%s", id, resp.URI, r.RemoteAddr, resp.Code, resp.Duration)
+	s.log.Printf("request id=%s type=%s path=%s from=%s code=%d duration=%s", id, typ, resp.URI, r.RemoteAddr, resp.Code, resp.Duration)
+	return resp, id
 }
 
 // inject applies the request's faults: the rate limit, then an injected
@@ -291,15 +305,23 @@ func (s *Server) call(ctx context.Context, uri, id, trail, fault string) *Respon
 		s.finish(r, start)
 		return r
 	}
+	hdr := http.Header{}
+	hdr.Set(HeaderRequestID, id)
+	hdr.Set(HeaderTrail, trail)
+	if fault != "" {
+		hdr.Set(HeaderFault, fault)
+	}
+	switch {
+	case strings.HasPrefix(uri, "grpc://"):
+		return s.callGRPC(ctx, uri, hdr)
+	case strings.HasPrefix(uri, "tcp://"):
+		return s.callTCP(ctx, uri)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return fail(-1, err.Error())
 	}
-	req.Header.Set(HeaderRequestID, id)
-	req.Header.Set(HeaderTrail, trail)
-	if fault != "" {
-		req.Header.Set(HeaderFault, fault)
-	}
+	req.Header = hdr
 	res, err := s.client.Do(req)
 	if err != nil {
 		return fail(-1, err.Error())

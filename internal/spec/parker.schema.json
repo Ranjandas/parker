@@ -375,6 +375,15 @@
     },
     "Fake": {
       "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "http",
+            "grpc",
+            "tcp"
+          ],
+          "description": "Protocol is http (default); grpc, which also serves fake-service's\nFakeService.Handle and the gRPC health check on the same port (h2c),\nwith check: grpc by default; or tcp, a line echo server that greets\nwith its name, node and dc, with check: tcp."
+        },
         "message": {
           "type": "string",
           "description": "Message is the body of every response (MESSAGE)."
@@ -1095,9 +1104,10 @@
           "enum": [
             "http",
             "tcp",
+            "grpc",
             "none"
           ],
-          "description": "Check is the health check: http, tcp or none."
+          "description": "Check is the health check: http, tcp, grpc or none."
         },
         "register": {
           "type": "object",

@@ -141,3 +141,68 @@ func TestFakeHealthAndReadiness(t *testing.T) {
 		t.Error("command service waits on /ready")
 	}
 }
+
+func TestFakeProtocols(t *testing.T) {
+	lab := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, fake: { protocol: tcp }", 1)
+	lab = strings.Replace(lab, "port: 9090, fake: {", "port: 9090, fake: { protocol: grpc,", 1)
+	low, err := Expand(loadText(t, lab))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// tcp: a TCP check, and up waits on the port, not /ready.
+	db := low.Nodes["dc1-db"]
+	reg := agentConfig(t, db)["services"].([]any)[0].(map[string]any)
+	if c := reg["check"].(map[string]any)["tcp"]; c != "127.0.0.1:7000" {
+		t.Errorf("tcp check = %v", reg["check"])
+	}
+	if r := db.Processes["db"].ReadyWhen; r.HTTP != nil || r.Port != 7000 {
+		t.Errorf("tcp ready_when = %+v", r)
+	}
+	if f := fakeEnv(t, db.Processes["db"]); f.Protocol != "tcp" {
+		t.Errorf("db fake = %+v", f)
+	}
+	// grpc: the gRPC health check, and /ready still works.
+	api := low.Nodes["dc1-api"]
+	reg = agentConfig(t, api)["services"].([]any)[0].(map[string]any)
+	if c := reg["check"].(map[string]any)["grpc"]; c != "127.0.0.1:9090" {
+		t.Errorf("grpc check = %v", reg["check"])
+	}
+	if r := api.Processes["api"].ReadyWhen; r.HTTP == nil {
+		t.Errorf("grpc ready_when = %+v", r)
+	}
+	// A grpc fake in the mesh gets service-defaults protocol: grpc...
+	srv := low.Nodes["dc1-server-1"]
+	if e := srv.Files["gateway-entry-0.json"]; !strings.Contains(e, `"api"`) || !strings.Contains(e, `"grpc"`) {
+		t.Errorf("entry = %q (files %v)", e, srv.Files)
+	}
+	// ...unless the lab's config_entries set service-defaults for it.
+	own := strings.Replace(lab, "      servers: 1\n", "      servers: 1\n      config_entries: [{ Kind: service-defaults, Name: api, Protocol: http2 }]\n", 1)
+	low, err = Expand(loadText(t, own))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := low.Nodes["dc1-server-1"].Files["gateway-entry-0.json"]; ok {
+		t.Errorf("the lab's own service-defaults should win, got %q", e)
+	}
+	for bad, want := range map[string]string{
+		"check: http, fake: { protocol: tcp }": "can't reach a fake with protocol: tcp",
+		"check: grpc":                          "check: grpc needs fake.protocol: grpc",
+		"fake: { protocol: udp }":              "protocol",
+	} {
+		lab := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, fake: { version: v1 }, "+bad, 1)
+		if strings.Contains(bad, "fake:") {
+			lab = strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, "+bad, 1)
+		}
+		p := filepath.Join(t.TempDir(), "lab.yaml")
+		if err := os.WriteFile(p, []byte(lab), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f, err := spec.Load(p, nil)
+		if err == nil {
+			_, err = Expand(f)
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", bad, err, want)
+		}
+	}
+}

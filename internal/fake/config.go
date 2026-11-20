@@ -35,6 +35,9 @@ type Config struct {
 	IgnoreUpstreamErrors bool
 	// ClientTimeout bounds each upstream call.
 	ClientTimeout time.Duration
+	// Protocol is http (default), grpc (HTTP plus gRPC on the same port)
+	// or tcp (a line echo server).
+	Protocol string
 	// Faults are the faults injected at start (they can change later).
 	Faults Faults
 	// Seed for the random draws; 0 is a new one each start.
@@ -55,7 +58,7 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		getenv = os.Getenv
 	}
 	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second,
-		Faults: DefaultFaults(), RequestFaults: true, ReadyCode: 200, ReadyFailureCode: 503}
+		Protocol: "http", Faults: DefaultFaults(), RequestFaults: true, ReadyCode: 200, ReadyFailureCode: 503}
 	if v := getenv("NAME"); v != "" && name == "" {
 		c.Name = v
 	}
@@ -133,6 +136,13 @@ func (c *Config) apply(f *spec.Fake) error {
 	}
 	if f.Workers > 0 {
 		c.Workers = f.Workers
+	}
+	switch f.Protocol {
+	case "":
+	case "http", "grpc", "tcp":
+		c.Protocol = f.Protocol
+	default:
+		return fmt.Errorf("protocol: want http, grpc or tcp, got %q", f.Protocol)
 	}
 	if f.Seed != 0 {
 		c.Seed = f.Seed
