@@ -121,6 +121,14 @@ func (f *fakeLab) Upgrade(_ context.Context, node, product, version string) erro
 	return nil
 }
 
+func (f *fakeLab) Fake(_ context.Context, node string, st *spec.FakeStep) ([]string, error) {
+	f.log = append(f.log, "fake "+node)
+	if node == f.procFail {
+		return nil, errors.New("no control socket")
+	}
+	return []string{node + "/api: health 503"}, nil
+}
+
 func parse(t *testing.T, y string) *spec.Scenario {
 	t.Helper()
 	var sc spec.Scenario
@@ -369,6 +377,39 @@ func TestUpgradeStep(t *testing.T) {
 		t.Errorf("Upgrades = %+v", ups)
 	}
 	if got := Selectors(parse(t, "steps:\n  - upgrade: { on: dc1/servers, to: 1.2.3 }\n")); !slices.Equal(got, []string{"dc1/servers"}) {
+		t.Errorf("Selectors = %v", got)
+	}
+}
+
+func TestFakeStep(t *testing.T) {
+	sc := parse(t, "steps:\n  - fake: { on: dc1/web, health: { code: 503 }, errors: { rate: 0.5 } }\n  - fake: { on: dc1/leader, reset: true }\n")
+	f := &fakeLab{clk: &fakeClock{}}
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := []string{"fake dc1-web-1", "fake dc1-web-2", "fake dc1-server-1"}; !slices.Equal(f.log, want) {
+		t.Errorf("log = %v", f.log)
+	}
+	for _, w := range []string{"step 1: fake dc1/web: health 503, errors 50%", "dc1-web-2/api: health 503", "step 2: fake dc1/leader: reset"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+	f = &fakeLab{clk: &fakeClock{}, procFail: "dc1-web-1"}
+	if _, err := run(t, parse(t, "steps:\n  - fake: { on: dc1/web }\n"), f); err == nil || !strings.Contains(err.Error(), "dc1-web-1: no control socket") {
+		t.Errorf("err = %v", err)
+	}
+	for bad, want := range map[string]string{
+		"fake: { health: { code: 503 } }":                       "needs on:",
+		"fake: { on: dc1, reset: true, health: { code: 503 } }": "takes no other changes",
+		"fake: { on: dc1, errors: { rate: 5 } }":                "errors.rate",
+	} {
+		if err := Validate(parse(t, "steps:\n  - "+bad+"\n")); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	if got := Selectors(parse(t, "steps:\n  - fake: { on: dc1/api }\n")); !slices.Equal(got, []string{"dc1/api"}) {
 		t.Errorf("Selectors = %v", got)
 	}
 }

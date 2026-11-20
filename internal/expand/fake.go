@@ -113,7 +113,9 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		if out.Errors != nil {
 			e = *out.Errors
 		}
-		e.Rate = cmp.Or(b.Errors.Rate, e.Rate)
+		if b.Errors.Rate != nil {
+			e.Rate = b.Errors.Rate
+		}
 		e.Code = cmp.Or(b.Errors.Code, e.Code)
 		e.Type = cmp.Or(b.Errors.Type, e.Type)
 		e.Delay = cmp.Or(b.Errors.Delay, e.Delay)
@@ -124,7 +126,9 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		if out.RateLimit != nil {
 			r = *out.RateLimit
 		}
-		r.RPS = cmp.Or(b.RateLimit.RPS, r.RPS)
+		if b.RateLimit.RPS != nil {
+			r.RPS = b.RateLimit.RPS
+		}
 		r.Code = cmp.Or(b.RateLimit.Code, r.Code)
 		out.RateLimit = &r
 	}
