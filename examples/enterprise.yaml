@@ -1,0 +1,17 @@
+# Consul Enterprise: the "+ent" build of the same version. It needs a
+# license: Parker reads license.file (below, commented out), else the file
+# at CONSUL_LICENSE_PATH, else CONSUL_LICENSE. The license only reaches the
+# agents (CONSUL_LICENSE_PATH to a 0600 copy in the lab's run dir, removed
+# by `parker down`); it never shows in `parker expand`, state or logs.
+#
+# Not in the CI suite (no license there): run hack/ent-e2e.sh where you
+# have one.
+parker: v1alpha1
+versions: { consul: 1.22.7+ent }
+# license: { file: ~/consul.hclic }   # or relative to this file
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web: { service: { port: 8080 } }

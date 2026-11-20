@@ -1,12 +1,15 @@
 package lab
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -423,5 +426,16 @@ func TestExecEnvAddsCachedPins(t *testing.T) {
 	path, _ := ExecEnv(low, "box", nil, nil)
 	if path != dir+":/usr/bin" {
 		t.Errorf("path %q: want the cached envoy only (nomad isn't cached, nothing fetched)", path)
+	}
+}
+
+func TestUpNeedsLicense(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("labs are Linux only")
+	}
+	low := &spec.File{Name: "ent", Versions: map[string]string{"consul": "1.22.7+ent"}}
+	_, err := Up(context.Background(), low, Options{Log: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "versions.consul is 1.22.7+ent needs a Consul Enterprise license") {
+		t.Errorf("Up without a license: %v", err)
 	}
 }

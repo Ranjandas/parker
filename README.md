@@ -297,6 +297,22 @@ laptop$ ssh -N -L /tmp/parker.sock:/run/parker/parker.sock root@vm &
 laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 ```
 
+## Consul Enterprise
+
+Pin an Enterprise build with `+ent` (`versions: { consul: 1.22.7+ent }`)
+and give Parker a license. It looks, in order, at `license: { file: PATH }`
+in the lab file (absolute, `~/...`, or relative to the file), then the file
+at `CONSUL_LICENSE_PATH`, then `CONSUL_LICENSE` itself. `parker up` stops
+before fetching or starting anything when a lab needs a license and has
+none, and says which pin needs it.
+
+The license only reaches the agents. The client reads it and sends it with
+`up` (over TLS to a remote daemon); the daemon writes it to one `0600` file
+in the lab's run dir, hands agents its path as `CONSUL_LICENSE_PATH`, and
+removes it on `down` or when `up` fails. It never goes into `parker expand`
+output, the saved topology, `describe` or logs. See
+[examples/enterprise.yaml](examples/enterprise.yaml).
+
 ## Supported so far
 
 - `consul.defaults` / dc-level `agents`, `server`, `client` (`config`
@@ -383,6 +399,7 @@ $ go test ./...
 $ make cover                                   # unit test coverage
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
 $ make e2e-rootless                            # rootless mode as a normal user
+$ CONSUL_LICENSE_PATH=~/consul.hclic make e2e-ent   # Enterprise; skips without a license
 $ go generate ./internal/spec                  # regenerate the JSON Schema after changing internal/spec
 $ goreleaser release --snapshot --clean       # release build into dist/ (tags v* release from CI)
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
@@ -400,4 +417,6 @@ unprivileged user holds `CAP_NET_ADMIN` over a throwaway network stack.
 lab as its own parallel job. On a PR it runs only the labs the change
 touches (`hack/e2eplan` maps paths to labs: docs and unit-test-only changes
 run none, core code runs them all). Every push to main and a nightly run
-cover the whole suite. New labs go in `suite.txt`.
+cover the whole suite. New labs go in `suite.txt`. Enterprise labs need a license,
+so they aren't in the suite: `make e2e-ent` (`hack/ent-e2e.sh`) runs them
+where one is, and skips cleanly where there's none.

@@ -38,6 +38,9 @@ type Options struct {
 	Lab    string
 	RunDir string // the lab's run directory
 	Log    io.Writer
+	// LicensePath, when set, is the Consul Enterprise license file; every
+	// process gets it as CONSUL_LICENSE_PATH.
+	LicensePath string
 	// Life bounds supervision after Run returns: restart policies apply
 	// until it is done or Handle.Stop is called. Nil means Background.
 	Life context.Context
@@ -275,6 +278,9 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 		p.mu.Unlock()
 	}
 	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
+	if o.LicensePath != "" {
+		env = append(env, "CONSUL_LICENSE_PATH="+o.LicensePath)
+	}
 	for k, v := range p.spec.Env {
 		env = append(env, k+"="+vars.Replace(v))
 	}

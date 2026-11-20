@@ -5,6 +5,7 @@ package lab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -18,6 +19,7 @@ import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/Ranjandas/parker/internal/fetch"
+	"github.com/Ranjandas/parker/internal/license"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -51,6 +53,10 @@ type Options struct {
 	NoFirewall    bool
 	// Life bounds supervision (restart policies) after Up returns.
 	Life context.Context
+	// License is the Consul Enterprise license, for labs that need one
+	// (see license.Needed). It's written to the run dir, 0600, and nowhere
+	// else.
+	License []byte
 }
 
 // Up recreates the lab from its expanded topology and returns when every
@@ -62,6 +68,9 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	say := func(format string, a ...any) { fmt.Fprintf(o.Log, format+"\n", a...) }
 	name := low.Name
 	t0 := time.Now()
+	if why := license.Needed(low); len(why) > 0 && len(o.License) == 0 {
+		return nil, fmt.Errorf("%s needs a Consul Enterprise license, and none came with the request: set CONSUL_LICENSE_PATH or CONSUL_LICENSE where you run parker up", strings.Join(why, ", "))
+	}
 	if err := netsetup.CheckSubnets(name, low); err != nil {
 		return nil, err
 	}
@@ -83,6 +92,13 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+	licPath := ""
+	if len(o.License) > 0 {
+		licPath = license.Path(dir)
+		if err := license.Write(dir, o.License); err != nil {
+			return nil, err
+		}
+	}
 	if w := spaceWarning(dir, low); w != "" {
 		say("%s", w)
 	}
@@ -92,20 +108,24 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	say("network: %d networks, %d nodes", len(low.Networks), len(low.Nodes))
 	if err := netsetup.Up(name, low); err != nil {
 		_ = netsetup.Down(name, func(string, ...any) {})
+		_ = license.Remove(dir)
 		return nil, PrivHint(err)
 	}
 	if err := allowForwarding(name, low, o.NoFirewall, say); err != nil {
 		_ = netsetup.Down(name, func(string, ...any) {})
+		_ = license.Remove(dir)
 		return nil, err
 	}
-	h, err := supervisor.Run(ctx, low, supervisor.Options{Lab: name, RunDir: dir, Log: o.Log, Life: o.Life})
+	h, err := supervisor.Run(ctx, low, supervisor.Options{Lab: name, RunDir: dir, Log: o.Log, Life: o.Life, LicensePath: licPath})
 	if err != nil {
+		err = errors.New(license.Redact(err.Error(), o.License))
 		err = spaceHint(dir, err)
 		for _, hint := range netsetup.FirewallHints() {
 			err = fmt.Errorf("%w\nhint: %s", err, hint)
 		}
 		if !o.KeepOnFailure {
 			_ = netsetup.Down(name, func(string, ...any) {})
+			_ = license.Remove(dir)
 			return nil, fmt.Errorf("%w\n(lab torn down; rerun with --keep-on-failure to inspect it)", err)
 		}
 		return nil, fmt.Errorf("%w\n(lab left running; logs in %s; `parker down %s` to clean up)", err, dir, name)
@@ -120,7 +140,10 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 
 // Down removes everything the lab created. Logs are kept.
 func Down(name string, log io.Writer) error {
-	return PrivHint(netsetup.Down(name, func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) }))
+	if err := PrivHint(netsetup.Down(name, func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) })); err != nil {
+		return err
+	}
+	return license.Remove(RunDir(name)) // the logs stay; the license doesn't
 }
 
 // LoadTopology reads the expanded topology saved by Up.

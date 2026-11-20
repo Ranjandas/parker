@@ -145,6 +145,7 @@ func (s *Server) Up(ctx context.Context, req *connect.Request[parkerv1.UpRequest
 	defer w.Flush()
 	h, err := lab.Up(ctx, low, lab.Options{
 		Log: w, KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, Life: s.life,
+		License: req.Msg.ConsulLicense,
 	})
 	if err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)

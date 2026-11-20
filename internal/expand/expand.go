@@ -100,6 +100,7 @@ func Expand(in *spec.File) (*spec.File, error) {
 		Parker:   in.Parker,
 		Name:     in.Name,
 		Versions: maps.Clone(in.Versions),
+		License:  in.License, // a path only; the license itself never lands here
 		Networks: map[string]*spec.Network{},
 		Nodes:    map[string]*spec.RawNode{},
 	}

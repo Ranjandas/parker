@@ -117,7 +117,11 @@ type UpRequest struct {
 	// Leave the lab running if a readiness check fails.
 	KeepOnFailure bool `protobuf:"varint,2,opt,name=keep_on_failure,json=keepOnFailure,proto3" json:"keep_on_failure,omitempty"`
 	// Don't add iptables rules; report them instead.
-	NoFirewall    bool `protobuf:"varint,3,opt,name=no_firewall,json=noFirewall,proto3" json:"no_firewall,omitempty"`
+	NoFirewall bool `protobuf:"varint,3,opt,name=no_firewall,json=noFirewall,proto3" json:"no_firewall,omitempty"`
+	// Consul Enterprise license the client resolved (CONSUL_LICENSE,
+	// CONSUL_LICENSE_PATH or license.file). The daemon writes it to the lab's
+	// run dir (0600) for the agents and never logs or stores it elsewhere.
+	ConsulLicense []byte `protobuf:"bytes,4,opt,name=consul_license,json=consulLicense,proto3" json:"consul_license,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,6 +175,13 @@ func (x *UpRequest) GetNoFirewall() bool {
 		return x.NoFirewall
 	}
 	return false
+}
+
+func (x *UpRequest) GetConsulLicense() []byte {
+	if x != nil {
+		return x.ConsulLicense
+	}
+	return nil
 }
 
 type LogLine struct {
@@ -1672,12 +1683,13 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x0eVersionRequest\"=\n" +
 	"\x0fVersionResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\x05R\x03pid\"y\n" +
+	"\x03pid\x18\x02 \x01(\x05R\x03pid\"\xa0\x01\n" +
 	"\tUpRequest\x12#\n" +
 	"\rtopology_yaml\x18\x01 \x01(\fR\ftopologyYaml\x12&\n" +
 	"\x0fkeep_on_failure\x18\x02 \x01(\bR\rkeepOnFailure\x12\x1f\n" +
 	"\vno_firewall\x18\x03 \x01(\bR\n" +
-	"noFirewall\"\x1d\n" +
+	"noFirewall\x12%\n" +
+	"\x0econsul_license\x18\x04 \x01(\fR\rconsulLicense\"\x1d\n" +
 	"\aLogLine\x12\x12\n" +
 	"\x04line\x18\x01 \x01(\tR\x04line\"\x1f\n" +
 	"\vDownRequest\x12\x10\n" +

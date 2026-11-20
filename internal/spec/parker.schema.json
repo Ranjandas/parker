@@ -421,6 +421,20 @@
       "type": "object",
       "description": "Inheritable holds the settings that flow down the tree."
     },
+    "License": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File is the license file: absolute, ~/..., or relative to this file."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "description": "License points at a Consul Enterprise license file."
+    },
     "Network": {
       "properties": {
         "subnet": {
@@ -947,6 +961,10 @@
       },
       "type": "object",
       "description": "Versions of the binaries to fetch, e.g. {consul: 1.22.7}. Add \"+ent\"\nfor Enterprise builds."
+    },
+    "license": {
+      "$ref": "#/$defs/License",
+      "description": "License is the Consul Enterprise license for \"+ent\" versions. Without\nit Parker reads CONSUL_LICENSE_PATH, then CONSUL_LICENSE. The license\ngoes to the agents only; it never appears in expand output or logs."
     },
     "vars": {
       "type": "object",
