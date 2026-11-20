@@ -273,6 +273,24 @@ type Consul struct {
 	// on both sides, e.g. dc1-dc2). Needs Consul 1.14+ and a mesh gateway
 	// on each side (in the side's partition) for service traffic.
 	Peering map[string]*Peering `yaml:"peering,omitempty"`
+	// External services run outside Consul, keyed by service name: one
+	// node, on the LAN of every datacenter that registers it, with no
+	// agent. Each place under in: registers it in its catalog on an
+	// external node (node meta external-node) whose health Parker probes
+	// from server-1, as consul-esm would. Reach it from the mesh through a
+	// terminating gateway.
+	External map[string]*External `yaml:"external,omitempty"`
+}
+
+// External is a service outside Consul, registered in the catalog.
+type External struct {
+	// Service is what runs: port, run (fake-service or a command), fake,
+	// env, check and namespace. It takes consul.defaults.service_defaults
+	// but stays out of the mesh: connect and upstreams don't apply.
+	Service *Service `yaml:"service"`
+	// In lists where it is registered: a datacenter (dc1) or an admin
+	// partition of one (dc1/part-a).
+	In []string `yaml:"in"`
 }
 
 // Peering is one cluster peering between two datacenters, or between
@@ -354,6 +372,10 @@ type Gateway struct {
 	// WAN attaches a mesh gateway to the wan network too. Default: on when
 	// the datacenters are federated or peered.
 	WAN *bool `yaml:"wan,omitempty"`
+	// Namespace the gateway registers in (Consul Enterprise), for
+	// terminating, ingress and API gateways; Parker creates it. Mesh
+	// gateways always sit in their partition's default namespace.
+	Namespace string `yaml:"namespace,omitempty"`
 }
 
 // GatewayKinds are the gateway kinds, with their config entry kinds.
@@ -584,7 +606,69 @@ func (c *Consul) Namespaces(dc *Datacenter) []string {
 			}
 		}
 	}
+	for _, pg := range dc.AllGateways() {
+		if g := pg.Gateway; g != nil && g.Namespace != "" && g.Namespace != DefaultNamespace {
+			part := pg.Partition
+			if part == DefaultPartition {
+				part = ""
+			}
+			seen[part+"/"+g.Namespace] = true
+		}
+	}
+	for _, x := range c.ExternalsIn(dc) {
+		if ns := x.Namespace; ns != "" && ns != DefaultNamespace {
+			seen[x.Partition+"/"+ns] = true
+		}
+	}
 	return slices.Sorted(maps.Keys(seen))
+}
+
+// PlacedExternal is an external service as one datacenter registers it.
+type PlacedExternal struct {
+	Name      string
+	External  *External
+	Partition string // "" for the default partition
+	Namespace string // from the service or consul.defaults.service_defaults
+}
+
+// ExternalsIn lists the external services dc registers, by name then
+// partition. Places under in: that don't parse are left out (expand
+// reports them).
+func (c *Consul) ExternalsIn(dc *Datacenter) []PlacedExternal {
+	if c == nil || dc == nil {
+		return nil
+	}
+	dcName := ""
+	for n, d := range c.Datacenters {
+		if d == dc {
+			dcName = n
+		}
+	}
+	var out []PlacedExternal
+	for _, name := range slices.Sorted(maps.Keys(c.External)) {
+		x := c.External[name]
+		if x == nil {
+			continue
+		}
+		ns := ""
+		if c.Defaults != nil && c.Defaults.ServiceDefaults != nil {
+			ns = c.Defaults.ServiceDefaults.Namespace
+		}
+		if x.Service != nil && x.Service.Namespace != "" {
+			ns = x.Service.Namespace
+		}
+		for _, where := range x.In {
+			d, part, _ := strings.Cut(where, "/")
+			if d != dcName {
+				continue
+			}
+			if part == DefaultPartition {
+				part = ""
+			}
+			out = append(out, PlacedExternal{Name: name, External: x, Partition: part, Namespace: ns})
+		}
+	}
+	return out
 }
 
 // DefaultNamespace is the namespace every partition has.

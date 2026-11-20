@@ -262,6 +262,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	if err != nil {
 		return err
 	}
+	exts, err := externalServices(c)
+	if err != nil {
+		return err
+	}
 	gws, gwEntries, err := gatewayNodes(c, dcNames, primary)
 	if err != nil {
 		return err
@@ -708,9 +712,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					g := gw
 					g.name = name
 					// Gateways register in their partition's default
-					// namespace: Consul looks for mesh gateways there.
-					gwNS := ""
-					if c.UsesTenancy() {
+					// namespace (Consul looks for mesh gateways there)
+					// unless they set namespace:.
+					gwNS := g.namespace
+					if gwNS == "" && c.UsesTenancy() {
 						gwNS = spec.DefaultNamespace
 					}
 					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(token, tls), part, gwNS), tls)
@@ -829,9 +834,19 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				}
 				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services)),
 					Partition: placed.Partition, Namespaces: nodeNamespaces(c, dc, placed.Part, services)}
+				if isGW && gw.namespace != "" {
+					rn.Labels.Namespaces = []string{gw.namespace}
+				}
 				out.Nodes[key] = rn
 			}
 		}
+		// External services: on this dc's LAN from the top of the subnet
+		// down, registered by the same process as dataplane services.
+		extEntries, err := exts.place(dcName, pfx, clientOff)
+		if err != nil {
+			return err
+		}
+		dpEntries = append(dpEntries, extEntries...)
 		if len(dpEntries) > 0 {
 			deps := map[string]*spec.Dep{}
 			for _, r := range serverRefs {
@@ -843,7 +858,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			s1.Processes[DataplaneHealth] = dataplaneHealthProcess(deps, apiEnv(token, tls))
 		}
 	}
-	return nil
+	return exts.nodes(out)
 }
 
 // expandService returns the agent service registration and, when the

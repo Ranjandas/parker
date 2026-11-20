@@ -175,9 +175,6 @@ func structFields(t reflect.Type) map[string]reflect.Type {
 
 // hint suggests a near-miss key at this level, else where the key belongs.
 func hint(k string, t reflect.Type) string {
-	if t == reflect.TypeFor[Gateway]() && k == "namespace" {
-		return "gateways always run in their partition's default namespace; Consul needs a mesh gateway there"
-	}
 	if where := keyIndex()[k]; len(where) > 0 {
 		if len(where) > 3 {
 			where = where[:3]

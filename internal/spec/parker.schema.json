@@ -127,6 +127,13 @@
           },
           "type": "object",
           "description": "Peering connects datacenters (or admin partitions in different\ndatacenters) as cluster peers, keyed by peering name (the peer's name\non both sides, e.g. dc1-dc2). Needs Consul 1.14+ and a mesh gateway\non each side (in the side's partition) for service traffic."
+        },
+        "external": {
+          "additionalProperties": {
+            "$ref": "#/$defs/External"
+          },
+          "type": "object",
+          "description": "External services run outside Consul, keyed by service name: one\nnode, on the LAN of every datacenter that registers it, with no\nagent. Each place under in: registers it in its catalog on an\nexternal node (node meta external-node) whose health Parker probes\nfrom server-1, as consul-esm would. Reach it from the mesh through a\nterminating gateway."
         }
       },
       "additionalProperties": false,
@@ -418,6 +425,28 @@
         "on",
         "run"
       ]
+    },
+    "External": {
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/Service",
+          "description": "Service is what runs: port, run (fake-service or a command), fake,\nenv, check and namespace. It takes consul.defaults.service_defaults\nbut stays out of the mesh: connect and upstreams don't apply."
+        },
+        "in": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "In lists where it is registered: a datacenter (dc1) or an admin\npartition of one (dc1/part-a)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "service",
+        "in"
+      ],
+      "description": "External is a service outside Consul, registered in the catalog."
     },
     "Fake": {
       "properties": {

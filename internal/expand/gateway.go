@@ -21,6 +21,7 @@ type gatewayNode struct {
 	kind      string
 	count     int
 	wan       bool
+	namespace string // "" for the partition's default namespace
 }
 
 func (g gatewayNode) process() string { return g.kind + "-gateway" }
@@ -88,6 +89,10 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 				errs = append(errs, fmt.Errorf("%s: entry: mesh gateways have no config entry of their own; set MeshGateway in proxy-defaults under config_entries", where))
 				continue
 			}
+			if kind == "mesh" && g.Namespace != "" && g.Namespace != spec.DefaultNamespace {
+				errs = append(errs, fmt.Errorf("%s: namespace: mesh gateways sit in their partition's default namespace", where))
+				continue
+			}
 			if nodeNames[placed.Partition+"/"+group] {
 				errs = append(errs, fmt.Errorf("%s: a node is already named %s", where, group))
 				continue
@@ -108,6 +113,9 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 					name = group + "-" + strconv.Itoa(k+1)
 				}
 				gn = gatewayNode{group: group, partition: placed.Partition, name: name, kind: kind, count: g.Count, wan: wan}
+				if g.Namespace != spec.DefaultNamespace {
+					gn.namespace = g.Namespace
+				}
 				out[dcName] = append(out[dcName], gn)
 			}
 			if entryKind != "" {
@@ -116,6 +124,9 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 					e[k] = v
 				}
 				e["Kind"], e["Name"] = entryKind, gn.service()
+				if gn.namespace != "" {
+					e["Namespace"] = gn.namespace
+				}
 				entries[dcName] = append(entries[dcName], gatewayEntry{label: where + ".entry", entry: e, partition: partitionName(placed.Partition)})
 			}
 		}

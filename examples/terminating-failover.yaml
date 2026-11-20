@@ -1,0 +1,100 @@
+# Failover between terminating gateways over a cluster peering. api is an
+# external service: one fake outside Consul, on both datacenters' LANs,
+# registered in each catalog on an external node and reached from the mesh
+# through that datacenter's terminating gateway. dc1 and dc2 are peered
+# and dc2 exports api to dc1. A service-resolver in dc1 fails api over to
+# the peer, so when dc1's terminating gateway is down web's calls go
+# dc1 mesh gateway -> dc2 mesh gateway -> dc2 terminating gateway -> api.
+#
+# api answers with the caller's address, which is the terminating gateway
+# that forwarded the call: 10.1.0.x is dc1's, 10.2.0.x is dc2's.
+#
+#   parker run examples/terminating-failover.yaml
+#
+# examples/terminating-failover-partitions.yaml is the same lab between
+# admin partitions and namespaces (Consul Enterprise).
+parker: v1alpha1
+name: tgw-failover
+versions: { consul: 2.1.0, envoy: 1.39.1 }
+consul:
+  defaults:
+    acl: true
+    tls: true
+    service_defaults: { run: fake-service }
+  external:
+    api:
+      service: { port: 9000, fake: { facts: false } }
+      in: [dc1, dc2]
+  peering:
+    dc1-dc2:
+      acceptor: dc2
+      dialer: dc1
+      exports: { dc2: [api] }
+  datacenters:
+    dc1:
+      subnet: 10.1.0.0/24
+      servers: 3
+      gateways:
+        mesh: true
+        terminating: { entry: { Services: [{ Name: api }] } }
+      nodes:
+        web:
+          service: { port: 8080, connect: sidecar, upstreams: { api: 9091 } }
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+        - Kind: service-resolver
+          Name: api
+          ConnectTimeout: 2s
+          Failover:
+            "*": { Targets: [{ Peer: dc1-dc2 }] }
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Action: allow }]
+    dc2:
+      subnet: 10.2.0.0/24
+      servers: 3
+      gateways:
+        mesh: true
+        terminating: { entry: { Services: [{ Name: api }] } }
+      config_entries:
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Peer: dc1-dc2, Action: allow }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the peering is active
+      assert:
+        exec: { on: dc1/server-1, run: "consul peering read -name dc1-dc2", output: ACTIVE }
+        within: 60s
+    - name: api is registered on an external node in dc1
+      assert:
+        exec: { on: dc1/server-1, run: "consul catalog nodes -node-meta external-node=true", output: api }
+        within: 30s
+    - name: web reaches api through dc1's terminating gateway
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.1.0.' }
+        within: 90s
+    - name: dc1 sees api imported from dc2
+      assert:
+        exec:
+          on: dc1/server-1
+          run: 'curl -sf --cacert "$CONSUL_CACERT" -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" "$CONSUL_HTTP_ADDR/v1/health/service/api?peer=dc1-dc2"'
+          output: '"Service":"api"'
+        within: 60s
+    - name: dc1's terminating gateway goes down
+      stop: dc1/terminating
+    - name: web fails over to api through dc2's terminating gateway
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.2.0.' }
+        within: 90s
+    - name: dc1's terminating gateway comes back
+      start: dc1/terminating
+    - name: web is back on dc1's terminating gateway
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.1.0.' }
+        within: 90s

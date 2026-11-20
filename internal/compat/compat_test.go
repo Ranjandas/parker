@@ -22,6 +22,8 @@ func TestMinor(t *testing.T) {
 func TestCheckEnvoy(t *testing.T) {
 	for _, c := range []struct{ consul, envoy, want string }{
 		{"1.22.7", "1.35.9", ""},
+		{"2.1.0+ent", "1.39.1", ""},
+		{"2.1.0", "1.35.12", "envoy 1.35.12 is not supported by consul 2.1.0, which supports envoy 1.39, 1.38, 1.37, 1.36"},
 		{"1.22.7+ent", "1.32.12", ""},
 		{"1.22.7", "1.38.7", "envoy 1.38.7 is not supported by consul 1.22.7, which supports envoy 1.35, 1.34, 1.33, 1.32"},
 		{"1.19.2", "1.30.1", "supports envoy 1.29, 1.28, 1.27, 1.26"},

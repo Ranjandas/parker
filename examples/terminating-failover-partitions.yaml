@@ -1,0 +1,119 @@
+# examples/terminating-failover.yaml between admin partitions and
+# namespaces (Consul Enterprise; needs a license, see
+# examples/enterprise.yaml).
+#
+# dc1's part-a peers with dc2's part-b. In each partition web, the
+# terminating gateway and the external service api sit in the app
+# namespace; the mesh gateways sit in the partition's default namespace,
+# where Consul wants them. api is one fake outside Consul, registered in
+# both partitions on an external node (no consul-esm). dc2/part-b exports
+# app/api to dc1/part-a, and dc1's service-resolver fails api over to that
+# peer: when dc1's terminating gateway is down, web's calls go
+# dc1/part-a mesh gateway -> dc2/part-b mesh gateway -> dc2's terminating
+# gateway -> api.
+#
+# api answers with the caller's address, which is the terminating gateway
+# that forwarded the call: 10.1.0.x is dc1's, 10.2.0.x is dc2's.
+#
+# A failover target names the peer and the namespace; Consul refuses
+# Partition next to Peer (the peering already picks the partition).
+#
+# Not in the CI suite: hack/ent-e2e.sh runs it where a license is.
+#
+#   CONSUL_LICENSE_PATH=~/consul.hclic hack/ent-e2e.sh examples/terminating-failover-partitions.yaml
+parker: v1alpha1
+name: tgw-failover-ent
+versions: { consul: 2.1.0+ent, envoy: 1.39.1 }
+consul:
+  defaults:
+    acl: true
+    tls: true
+    service_defaults: { run: fake-service, namespace: app }
+  external:
+    api:
+      service: { port: 9000, fake: { facts: false } }
+      in: [dc1/part-a, dc2/part-b]
+  peering:
+    dc1-dc2:
+      acceptor: dc2/part-b
+      dialer: dc1/part-a
+      exports: { dc2/part-b: [app/api] }
+  datacenters:
+    dc1:
+      subnet: 10.1.0.0/24
+      servers: 3
+      partitions:
+        part-a:
+          gateways:
+            mesh: true
+            terminating:
+              namespace: app
+              entry: { Services: [{ Name: api, Namespace: app }] }
+          nodes:
+            web:
+              service: { port: 8080, connect: sidecar, upstreams: { api: 9091 } }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+            - Kind: service-resolver
+              Name: api
+              Namespace: app
+              ConnectTimeout: 2s
+              Failover:
+                "*": { Targets: [{ Peer: dc1-dc2, Namespace: app }] }
+            - Kind: service-intentions
+              Name: api
+              Namespace: app
+              Sources: [{ Name: web, Namespace: app, Action: allow }]
+    dc2:
+      subnet: 10.2.0.0/24
+      servers: 3
+      partitions:
+        part-b:
+          gateways:
+            mesh: true
+            terminating:
+              namespace: app
+              entry: { Services: [{ Name: api, Namespace: app }] }
+          config_entries:
+            - Kind: service-intentions
+              Name: api
+              Namespace: app
+              Sources: [{ Name: web, Namespace: app, Peer: dc1-dc2, Action: allow }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the peering is active
+      assert:
+        exec: { on: dc1/server-1, run: "consul peering read -partition part-a -name dc1-dc2", output: ACTIVE }
+        within: 60s
+    - name: api is registered on an external node in dc1/part-a
+      assert:
+        exec: { on: dc1/server-1, run: "consul catalog nodes -partition part-a -node-meta external-node=true", output: api }
+        within: 30s
+    - name: web reaches api through dc1's terminating gateway
+      assert:
+        exec: { on: dc1/part-a/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.1.0.' }
+        within: 90s
+    - name: dc1/part-a sees app/api imported from dc2/part-b
+      assert:
+        exec:
+          on: dc1/server-1
+          run: 'curl -sf --cacert "$CONSUL_CACERT" -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" "$CONSUL_HTTP_ADDR/v1/health/service/api?peer=dc1-dc2&partition=part-a&ns=app"'
+          output: '"Service":"api"'
+        within: 60s
+    - name: dc1's terminating gateway goes down
+      stop: dc1/part-a/terminating
+    - name: web fails over to api through dc2's terminating gateway
+      assert:
+        exec: { on: dc1/part-a/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.2.0.' }
+        within: 90s
+    - name: dc1's terminating gateway comes back
+      start: dc1/part-a/terminating
+    - name: web is back on dc1's terminating gateway
+      assert:
+        exec: { on: dc1/part-a/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"from":"10.1.0.' }
+        within: 90s

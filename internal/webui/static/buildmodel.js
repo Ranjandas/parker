@@ -27,7 +27,8 @@
   // node: {id, name, part, agent, count, svc}
   //   part: a part id, "" for the default partition
   //   agent: "client" | "dataplane"
-  //   svc: null (a bare client) or {port, connect, ups: [{to, port}]}
+  //   svc: null (a bare client) or {port, connect, ups: [{to, port}]},
+  //        held: ports of upstreams the canvas doesn't show
   //     connect: "" (from service_defaults) | "none" | "sidecar" | "tproxy"
   //     to: the called node's id
   // gw: {id, name, kind, part, to: [node ids]}
@@ -119,11 +120,11 @@
   }
   function nextPort(m, from) {
     const used = new Set();
-    m.dcs.forEach((d) => d.nodes.forEach((n) => { if (n.svc) { used.add(n.svc.port); n.svc.ups.forEach((u) => used.add(u.port)); } }));
+    m.dcs.forEach((d) => d.nodes.forEach((n) => { if (n.svc) { used.add(n.svc.port); n.svc.ups.forEach((u) => used.add(u.port)); (n.svc.held || []).forEach((p) => used.add(p)); } }));
     for (let p = from; ; p++) if (!used.has(p)) return p;
   }
   function nextUpPort(n) {
-    const used = new Set([n.svc.port, ...n.svc.ups.map((u) => u.port)]);
+    const used = new Set([n.svc.port, ...n.svc.ups.map((u) => u.port), ...(n.svc.held || [])]);
     for (let p = 9091; ; p++) if (!used.has(p)) return p;
   }
 
@@ -643,6 +644,9 @@
                 else if (td !== d && !u.peer) tp = "";
                 const t = td.nodes.find((x) => x.name === un && (x.part || "") === tp && x.svc);
                 if (t) n.svc.ups.push({ to: t.id, port: Number(u.port) || 0 });
+                // An upstream to something the canvas doesn't show (an
+                // external service) stays in the file; keep its port taken.
+                else (n.svc.held = n.svc.held || []).push(Number(u.port) || 0);
               });
             }
           }
