@@ -151,10 +151,9 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		}
 		return none(filter(func(n string, l *spec.NodeLabels) bool { return l.DC == dc && l.Role == "server" && n != leader }), nil)
 	}
-	if one := inDC(func(l *spec.NodeLabels) bool { return l.Name == what }); len(one) > 0 {
-		return one, nil
-	}
-	return none(inDC(func(l *spec.NodeLabels) bool { return l.Group == what }), nil)
+	// A node or a node group. Without a partition this spans them all, so
+	// dc1/billing is every billing node in every partition.
+	return none(inDC(func(l *spec.NodeLabels) bool { return l.Name == what || l.Group == what }), nil)
 }
 
 // One resolves a selector that must name exactly one node.

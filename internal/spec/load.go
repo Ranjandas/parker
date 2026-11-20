@@ -173,19 +173,11 @@ func (f *File) Validate() error {
 					add("%s.servers.overrides.%s: keys are server names like server-2", p, o)
 				}
 			}
-			seen := map[string]string{}
 			for _, placed := range dc.AllNodes() {
 				nn, n := placed.Name, placed.Node
 				np := p + ".nodes." + nn
 				if placed.Part != nil {
 					np = p + ".partitions." + placed.Partition + ".nodes." + nn
-				}
-				if other, dup := seen[nn]; dup {
-					add("%s: %s is already a node in partition %s; node names are unique across a datacenter's partitions", np, nn, other)
-				}
-				seen[nn] = placed.Partition
-				if seen[nn] == "" {
-					seen[nn] = DefaultPartition
 				}
 				if !nameRe.MatchString(nn) {
 					add("%s: invalid node name", np)

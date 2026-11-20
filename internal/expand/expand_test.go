@@ -532,10 +532,15 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Billing joins team-a; frontend stays in the default partition.
-	b1 := low.Nodes["dc1-billing-1"]
-	if b1 == nil || b1.Labels.Partition != "team-a" || !slices.Equal(b1.Labels.Namespaces, []string{"payments"}) {
-		t.Fatalf("dc1-billing-1: %+v", b1)
+	// billing sits in team-a and team-b under the same name; frontend
+	// stays in the default partition.
+	b1 := low.Nodes["dc1-team-a-billing-1"]
+	if b1 == nil || b1.Labels.Partition != "team-a" || b1.Labels.Name != "billing-1" || !slices.Equal(b1.Labels.Namespaces, []string{"payments"}) {
+		t.Fatalf("dc1-team-a-billing-1: %+v", b1)
+	}
+	bb := low.Nodes["dc1-team-b-billing"]
+	if bb == nil || bb.Labels.Partition != "team-b" || bb.Labels.Name != "billing" || agentConfig(t, bb)["node_name"] != "billing" {
+		t.Fatalf("dc1-team-b-billing: %+v", bb)
 	}
 	cfg := agentConfig(t, b1)
 	if cfg["partition"] != "team-a" {
@@ -564,12 +569,16 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if b1.Processes["billing"] == nil {
 		t.Error("billing's service_defaults run: gave no process")
 	}
-	// The mesh gateway sits in team-a.
-	gw := low.Nodes["dc1-mesh"]
+	// Each partition has its own mesh gateway, all named mesh.
+	gw := low.Nodes["dc1-team-a-mesh"]
 	if gw == nil || gw.Labels.Partition != "team-a" || agentConfig(t, gw)["partition"] != "team-a" ||
 		gw.Processes["mesh-gateway"].Env["CONSUL_PARTITION"] != "team-a" {
-		t.Fatalf("dc1-mesh: %+v", gw)
+		t.Fatalf("dc1-team-a-mesh: %+v", gw)
 	}
+	if low.Nodes["dc1-mesh"] == nil || low.Nodes["dc1-team-b-mesh"] == nil {
+		t.Error("default or team-b mesh gateway missing")
+	}
+	tokB := agentConfig(t, bb)["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
 
 	// The tenancy job creates team-a and both payments namespaces, and the
 	// token team-a's agents use, before any client starts.
@@ -579,9 +588,9 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := TenancySpec{
-		Partitions:  []string{"team-a"},
-		Namespaces:  []NamespaceRef{{Partition: "team-a", Name: "payments"}},
-		AgentTokens: []AgentToken{{Partition: "team-a", SecretID: tok.(string)}},
+		Partitions:  []string{"team-a", "team-b"},
+		Namespaces:  []NamespaceRef{{Partition: "team-a", Name: "payments"}, {Partition: "team-b", Name: "payments"}},
+		AgentTokens: []AgentToken{{Partition: "team-a", SecretID: tok.(string)}, {Partition: "team-b", SecretID: tokB.(string)}},
 	}
 	if !reflect.DeepEqual(ten, want) {
 		t.Errorf("tenancy %+v\nwant %+v", ten, want)
@@ -590,7 +599,7 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if p == nil || p.DependsOn["dc1-server-1/"+ACLSetup] == nil {
 		t.Fatalf("tenancy process: %+v", p)
 	}
-	for _, n := range []string{"dc1-billing-1", "dc1-frontend", "dc1-mesh"} {
+	for _, n := range []string{"dc1-team-a-billing-1", "dc1-team-b-billing", "dc1-frontend", "dc1-mesh"} {
 		if d := low.Nodes[n].Processes["consul"].DependsOn["dc1-server-1/"+Tenancy]; d == nil || d.Condition != "ready" {
 			t.Errorf("%s doesn't wait for tenancy", n)
 		}
@@ -603,15 +612,24 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if err := json.Unmarshal([]byte(s1.Files[ConfigEntriesManifest]), &refs); err != nil {
 		t.Fatal(err)
 	}
-	if len(refs) != 2 || refs[0].Partition != "team-a" || !strings.Contains(refs[0].Label, "partitions.team-a.config_entries[0]") {
+	if len(refs) != 8 || refs[1].Partition != "team-a" || !strings.Contains(refs[1].Label, "partitions.team-a.config_entries[0]") ||
+		refs[7].Partition != "team-b" {
 		t.Errorf("entries: %+v", refs)
 	}
 	if s1.Processes[ConfigEntries].DependsOn["dc1-server-1/"+Tenancy] == nil {
 		t.Error("config entries don't wait for tenancy")
 	}
 	// Selectors see partitions and namespaces.
-	if got, err := selector.Resolve(low, "part:team-a", nil); err != nil || strings.Join(got, " ") != "dc1-billing-1 dc1-billing-2 dc1-mesh" {
-		t.Errorf("part:team-a = %v %v", got, err)
+	for sel, want := range map[string]string{
+		"part:team-a":          "dc1-team-a-billing-1 dc1-team-a-billing-2 dc1-team-a-mesh",
+		"dc1/billing":          "dc1-team-a-billing-1 dc1-team-a-billing-2 dc1-team-b-billing",
+		"dc1/team-b/billing":   "dc1-team-b-billing",
+		"dc1/team-a/billing-2": "dc1-team-a-billing-2",
+		"dc1/default/frontend": "dc1-frontend",
+	} {
+		if got, err := selector.Resolve(low, sel, nil); err != nil || strings.Join(got, " ") != want {
+			t.Errorf("%s = %v %v, want %s", sel, got, err, want)
+		}
 	}
 }
 
@@ -621,5 +639,11 @@ func TestPartitionChecks(t *testing.T) {
 	dc.Partitions["team-a"].Gateways = map[string]*spec.Gateway{"billing": {Kind: "mesh"}}
 	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "partitions.team-a.gateways.billing: a node is already named billing") {
 		t.Errorf("gateway named like a node: %v", err)
+	}
+	f = load(t, "../../examples/partitions.yaml")
+	dc = f.Consul.Datacenters["dc1"]
+	dc.Partitions["default"].Nodes["team-b-billing"] = &spec.Node{}
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "two nodes expand to dc1-team-b-billing") {
+		t.Errorf("expanded name clash: %v", err)
 	}
 }

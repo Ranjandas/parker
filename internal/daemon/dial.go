@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,38 +54,56 @@ func ResolveAddress(address, scopeLab string) (string, error) {
 	if parts[len(parts)-1] == "parker" {
 		parts = parts[:len(parts)-1]
 	}
-	var node, labName, part string
+	// node is an expanded name; a dc-qualified form matches by labels, so
+	// it finds a node in any partition (dc, partition and name can all hold
+	// hyphens, so the expanded name can't be split back).
+	var node, labName, dc, part, short string
 	switch len(parts) {
 	case 1:
 		node, labName = parts[0], scopeLab
 	case 2:
 		node, labName = parts[0], parts[1]
 	case 3:
-		node, labName = parts[1]+"-"+parts[0], parts[2]
+		short, dc, labName = parts[0], parts[1], parts[2]
 	case 4: // <name>.<partition>.<dc>.<lab>, like the dc/partition/name selector
-		node, part, labName = parts[2]+"-"+parts[0], parts[1], parts[3]
+		short, part, dc, labName = parts[0], parts[1], parts[2], parts[3]
 	default:
 		return "", fmt.Errorf("%q: want <node>.<lab>.parker, <name>.<dc>.<lab>.parker or <name>.<partition>.<dc>.<lab>.parker", host)
 	}
-	var found []string
-	for ln, low := range labs {
+	type hit struct{ key, addr string }
+	var found []hit
+	for _, ln := range slices.Sorted(maps.Keys(labs)) {
 		if labName != "" && ln != labName {
 			continue
 		}
-		if n, ok := low.Nodes[node]; ok && (part == "" || nodePartition(n) == part) {
+		low := labs[ln]
+		for _, key := range slices.Sorted(maps.Keys(low.Nodes)) {
+			n := low.Nodes[key]
+			match := key == node
+			if dc != "" {
+				l := n.Labels
+				match = l != nil && l.DC == dc && l.Name == short && (part == "" || nodePartition(n) == part)
+			}
+			if !match {
+				continue
+			}
 			for _, ip := range lab.NodeIPs(n) {
-				found = append(found, net.JoinHostPort(ip, port))
+				found = append(found, hit{key + "." + ln, net.JoinHostPort(ip, port)})
 				break
 			}
 		}
 	}
 	switch len(found) {
 	case 0:
-		return "", fmt.Errorf("no node %q in %s", node, labOrAll(labName))
+		return "", fmt.Errorf("no node %q in %s", host, labOrAll(labName))
 	case 1:
-		return found[0], nil
+		return found[0].addr, nil
 	}
-	return "", fmt.Errorf("node %q is in several labs; use %s.<lab>.parker", node, node)
+	var keys []string
+	for _, h := range found {
+		keys = append(keys, h.key+".parker")
+	}
+	return "", fmt.Errorf("%q matches several nodes (%s); name one", host, strings.Join(keys, ", "))
 }
 
 func labOrAll(l string) string {

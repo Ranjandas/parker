@@ -414,6 +414,16 @@ type Partition struct {
 // DefaultPartition is the partition every Consul cluster has.
 const DefaultPartition = "default"
 
+// NodeKey is a node's expanded name: dc1-web-1, or dc1-team-a-billing-1
+// inside a partition other than the default one. Consul scopes node names
+// to a partition, so the same name can sit in two partitions.
+func NodeKey(dc, partition, name string) string {
+	if partition != "" && partition != DefaultPartition {
+		return dc + "-" + partition + "-" + name
+	}
+	return dc + "-" + name
+}
+
 // PlacedNode is a node of a datacenter with the partition it's in (""
 // for nodes: directly under the dc).
 type PlacedNode struct {

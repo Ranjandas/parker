@@ -55,22 +55,16 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 	for _, dcName := range dcNames {
 		dc := c.Datacenters[dcName]
 		wanMesh := false
-		nodeNames := map[string]bool{}
+		nodeNames := map[string]bool{} // by partition/name
 		for _, n := range dc.AllNodes() {
-			nodeNames[n.Name] = true
+			nodeNames[n.Partition+"/"+n.Name] = true
 		}
-		seen := map[string]bool{}
 		for _, placed := range dc.AllGateways() {
 			group, g := placed.Name, placed.Gateway
 			where := fmt.Sprintf("consul.datacenters.%s.gateways.%s", dcName, group)
 			if placed.Partition != "" {
 				where = fmt.Sprintf("consul.datacenters.%s.partitions.%s.gateways.%s", dcName, placed.Partition, group)
 			}
-			if seen[group] {
-				errs = append(errs, fmt.Errorf("%s: another partition already has a gateway named %s; gateway names are unique across a datacenter's partitions", where, group))
-				continue
-			}
-			seen[group] = true
 			if g == nil {
 				g = &spec.Gateway{}
 			}
@@ -91,7 +85,7 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 				errs = append(errs, fmt.Errorf("%s: entry: mesh gateways have no config entry of their own; set MeshGateway in proxy-defaults under config_entries", where))
 				continue
 			}
-			if nodeNames[group] {
+			if nodeNames[placed.Partition+"/"+group] {
 				errs = append(errs, fmt.Errorf("%s: a node is already named %s", where, group))
 				continue
 			}

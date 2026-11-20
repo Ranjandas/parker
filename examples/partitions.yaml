@@ -1,8 +1,13 @@
 # Admin partitions and namespaces (Consul Enterprise; needs a license, see
-# examples/enterprise.yaml). Parker creates team-a and the payments
-# namespaces, joins billing's agents to team-a, and writes team-a's config
-# entries into it. Nodes in the default partition go under
-# partitions.default (or straight under the dc when there are no others).
+# examples/enterprise.yaml). Parker creates team-a, team-b and their
+# payments namespaces, joins each billing's agents to its partition, and
+# writes each partition's config entries into it. Nodes in the default
+# partition go under partitions.default (or straight under the dc when
+# there are no others).
+#
+# billing runs in both team-a and team-b under the same name; they expand
+# to dc1-team-a-billing-1 and dc1-team-b-billing-1. frontend calls
+# team-a's billing and fails over to team-b's when team-a's is down.
 #
 # Not in the CI suite: hack/ent-e2e.sh runs it where a license is.
 parker: v1alpha1
@@ -14,6 +19,7 @@ consul:
       servers: 3
       partitions:
         default:
+          gateways: { mesh: true }
           nodes:
             frontend:
               service:
@@ -21,36 +27,67 @@ consul:
                 run: fake-service
                 connect: sidecar
                 upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
+          config_entries:
+            - &local-gateways { Kind: proxy-defaults, Name: global, MeshGateway: { Mode: local } }
         team-a:
-          service_defaults: { run: fake-service, connect: sidecar, namespace: payments }
+          service_defaults: &billing-defaults { run: fake-service, connect: sidecar, namespace: payments }
           gateways: { mesh: true }
           nodes:
             billing: { count: 2, service: { port: 9000 } }
           config_entries:
-            # frontend in the default partition may call billing.
-            - Kind: exported-services
+            - *local-gateways
+            - &export-billing
+              Kind: exported-services
               Name: team-a
               Services:
                 - Name: billing
                   Namespace: payments
                   Consumers: [{ Partition: default }]
-            - Kind: service-intentions
+            - &allow-frontend
+              Kind: service-intentions
               Name: billing
               Namespace: payments
               Sources: [{ Name: frontend, Partition: default, Action: allow }]
+            # When team-a's billing has no healthy instance, use team-b's.
+            - Kind: service-resolver
+              Name: billing
+              Namespace: payments
+              ConnectTimeout: 2s
+              Failover:
+                "*": { Targets: [{ Partition: team-b, Namespace: payments }] }
+        team-b:
+          service_defaults: *billing-defaults
+          gateways: { mesh: true }
+          nodes:
+            billing: { service: { port: 9000 } }
+          config_entries:
+            - *local-gateways
+            - { <<: *export-billing, Name: team-b }
+            - *allow-frontend
 
 scenario:
   steps:
     - wait: dc1 ready
-    - name: team-a and its payments namespace exist
+    - name: both partitions and their payments namespaces exist
       assert:
-        exec: { on: dc1/server-1, run: "consul namespace list -partition team-a", output: payments }
+        exec: { on: dc1/server-1, run: "consul namespace list -partition team-a && consul namespace list -partition team-b", output: payments }
         within: 60s
-    - name: billing's agents joined team-a
+    - name: billing runs in both partitions
       assert:
-        exec: { on: dc1/server-1, run: "consul members -partition team-a", output: billing-2 }
+        exec: { on: dc1/server-1, run: "consul members -partition team-b", output: billing }
         within: 60s
-    - name: frontend reaches billing across partitions, through the mesh gateway
+    - name: frontend reaches team-a's billing through the mesh gateways
       assert:
-        exec: { on: dc1/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: billing }
+        exec: { on: dc1/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: team-a-billing }
+        within: 90s
+    - name: take team-a's billing down
+      stop: dc1/team-a/billing
+    - name: frontend fails over to team-b's billing
+      assert:
+        exec: { on: dc1/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: team-b-billing }
+        within: 90s
+    - start: dc1/team-a/billing
+    - name: and back to team-a's once it is healthy
+      assert:
+        exec: { on: dc1/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: team-a-billing }
         within: 90s

@@ -186,9 +186,12 @@ func TestResolveAddress(t *testing.T) {
 
 func TestResolvePartitionNames(t *testing.T) {
 	dir := fakeLab(t)
-	part := topo + `  dc1-billing-1:
+	part := topo + `  dc1-team-a-billing-1:
     networks: { lan: { ip: 10.77.0.12 } }
     labels: { dc: dc1, name: billing-1, role: client, partition: team-a }
+  dc1-team-b-billing-1:
+    networks: { lan: { ip: 10.77.0.14 } }
+    labels: { dc: dc1, name: billing-1, role: client, partition: team-b }
   dc1-web-1:
     networks: { lan: { ip: 10.77.0.13 } }
     labels: { dc: dc1, name: web-1, role: client }
@@ -196,12 +199,13 @@ func TestResolvePartitionNames(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, lab.TopologyFile), []byte(part), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Partitioned nodes keep their dc-unique name; the partition form
-	// mirrors the dc1/team-a/billing-1 selector.
+	// The same name in two partitions: the partition form, mirroring the
+	// dc1/team-a/billing-1 selector, or the expanded name picks one.
 	for in, want := range map[string]string{
-		"billing-1.dc1.t.parker:80":        "10.77.0.12:80",
-		"dc1-billing-1.t.parker:80":        "10.77.0.12:80",
 		"billing-1.team-a.dc1.t.parker:80": "10.77.0.12:80",
+		"billing-1.team-b.dc1.t.parker:80": "10.77.0.14:80",
+		"dc1-team-a-billing-1.t.parker:80": "10.77.0.12:80",
+		"web-1.dc1.t.parker:80":            "10.77.0.13:80",
 		"web-1.default.dc1.t.parker:80":    "10.77.0.13:80",
 	} {
 		got, err := ResolveAddress(in, "")
@@ -213,5 +217,9 @@ func TestResolvePartitionNames(t *testing.T) {
 		if _, err := ResolveAddress(bad, ""); err == nil {
 			t.Errorf("%s: want refusal", bad)
 		}
+	}
+	if _, err := ResolveAddress("billing-1.dc1.t.parker:80", ""); err == nil ||
+		!strings.Contains(err.Error(), "dc1-team-a-billing-1.t.parker, dc1-team-b-billing-1.t.parker") {
+		t.Errorf("ambiguous short name: %v", err)
 	}
 }

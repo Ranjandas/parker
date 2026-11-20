@@ -570,17 +570,19 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 
 		clientOff := 100
 		nodes := dc.AllNodes()
-		gwOf := map[string]gatewayNode{}
+		gwOf := map[string]gatewayNode{} // by partition/group
 		for _, g := range gws[dcName] {
-			if _, ok := gwOf[g.group]; !ok {
+			if _, ok := gwOf[g.partition+"/"+g.group]; !ok {
 				nodes = append(nodes, spec.PlacedNode{Name: g.group, Node: &spec.Node{Count: g.count}, Partition: g.partition, Part: dc.Partitions[g.partition]})
 			}
-			gwOf[g.group] = g
+			gwOf[g.partition+"/"+g.group] = g
 		}
-		slices.SortFunc(nodes, func(a, b spec.PlacedNode) int { return strings.Compare(a.Name, b.Name) })
+		slices.SortFunc(nodes, func(a, b spec.PlacedNode) int {
+			return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
+		})
 		for _, placed := range nodes {
 			nodeName, node, part := placed.Name, placed.Node, partitionName(placed.Partition)
-			gw, isGW := gwOf[nodeName]
+			gw, isGW := gwOf[placed.Partition+"/"+nodeName]
 			if node == nil {
 				node = &spec.Node{}
 			}
@@ -597,7 +599,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				}
 				ip := ipAt(clientOff)
 				clientOff++
-				key := dcName + "-" + name
+				key := spec.NodeKey(dcName, placed.Partition, name)
+				if _, clash := out.Nodes[key]; clash {
+					return fmt.Errorf("consul.datacenters.%s: two nodes expand to %s (rename one, e.g. a default-partition node named like <partition>-<node>)", dcName, key)
+				}
 				rn := &spec.RawNode{
 					Networks:  map[string]*spec.Attachment{lan: {IP: ip}},
 					Files:     map[string]string{},

@@ -158,12 +158,6 @@ func TestValidate(t *testing.T) {
 			dc := f.Consul.Datacenters["dc1"]
 			dc.Partitions, dc.Nodes = map[string]*Partition{"Team_A": {}}, nil
 		}, "partition names are lowercase"},
-		{"partition node twice", func(f *File) {
-			f.Versions["consul"] = "1.22.7+ent"
-			dc := f.Consul.Datacenters["dc1"]
-			dc.Partitions = map[string]*Partition{"default": {Nodes: dc.Nodes}, "team-a": {Nodes: map[string]*Node{"web": {}}}}
-			dc.Nodes = nil
-		}, "node names are unique across a datacenter's partitions"},
 		{"partitions need ent", func(f *File) {
 			dc := f.Consul.Datacenters["dc1"]
 			dc.Partitions, dc.Nodes = map[string]*Partition{"team-a": {Nodes: dc.Nodes}}, nil
