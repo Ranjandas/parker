@@ -8,6 +8,8 @@ before:
   hooks:
     - go mod download
     - sh -c "go run ./cmd/parker schema > parker.schema.json"
+    # The packages install parker into /usr/bin, so their unit points there.
+    - sh -c "mkdir -p build/pkg && sed 's|/usr/local/bin/parker|/usr/bin/parker|' contrib/systemd/parker.service > build/pkg/parker.service"
 
 builds:
   - id: parker
@@ -39,6 +41,32 @@ archives:
     files:
       - README.md
       - contrib/systemd/parker.service
+
+# .deb and .rpm packages for Linux, attached to the release next to the
+# archives (and covered by SHA256SUMS). They install /usr/bin/parker and
+# the systemd unit; enable it with `sudo systemctl enable --now parker`.
+nfpms:
+  - id: packages
+    ids: [parker]
+    package_name: parker
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [deb, rpm]
+    vendor: Parker
+    homepage: https://ranjandas.github.io/parker/
+    maintainer: Parker maintainers <https://github.com/Ranjandas/parker/issues>
+    description: |-
+      Consul labs at probe speed.
+      Describe a Consul topology in YAML; Parker runs it in seconds with
+      Linux network namespaces, no containers or images.
+    bindir: /usr/bin
+    section: devel
+    contents:
+      - src: build/pkg/parker.service
+        dst: /usr/lib/systemd/system/parker.service
+        file_info: { mode: 0644 }
+      - src: README.md
+        dst: /usr/share/doc/parker/README.md
+        file_info: { mode: 0644 }
 
 checksum:
   name_template: SHA256SUMS

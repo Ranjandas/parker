@@ -62,6 +62,15 @@ $ tar xzf parker_${V}_linux_$ARCH.tar.gz && sudo install -m 0755 parker /usr/loc
 $ parker version
 ```
 
+Releases after v0.9.0 also attach `.deb` and `.rpm` packages, which install
+`/usr/bin/parker` and the systemd unit:
+
+```console
+$ sudo apt install ./parker_${V}_linux_$ARCH.deb      # Debian, Ubuntu
+$ sudo dnf install ./parker_${V}_linux_$ARCH.rpm      # Fedora, RHEL
+$ sudo systemctl enable --now parker                  # optional: keep the daemon running
+```
+
 To keep the daemon running across reboots, install the systemd unit from the
 archive (`contrib/systemd/parker.service`):
 
