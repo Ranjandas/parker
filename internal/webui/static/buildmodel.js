@@ -25,7 +25,10 @@
   // lab: {name, consul, envoy, dataplane, mesh, tls, acl, fed, dcs, peerings}
   //   mesh: services get sidecars (service_defaults connect: sidecar)
   //   fed: "" | "wan" | "mesh-gateways"
-  // dc: {id, name, servers, ui, parts: [{id, name}], nodes, gws}
+  // dc: {id, name, servers, ui, parts: [{id, name}], nodes, gws, ces}
+  //   ces: part id ("" the default) -> the user's own config entries, as
+  //        written (Consul casing, or {file: path}); one with the Kind,
+  //        Namespace and Name of an entry the canvas makes wins over it
   // node: {id, name, part, agent, count, svc}
   //   part: a part id, "" for the default partition
   //   agent: "client" | "dataplane"
@@ -780,8 +783,81 @@
       }
       for (const e of allow.values()) entries.push(Object.assign({ Kind: "service-intentions", Name: e.t.name }, nsOf(e.t) ? { Namespace: nsOf(e.t) } : {}, { Sources: e.srcs }));
     }
-    if (entries.length) body.config_entries = entries;
+    // The user's own entries, after the canvas's; theirs win.
+    const own = ((d.ces || {})[s.id] || []);
+    const all2 = [...entries.filter((e) => !own.some((o) => entryKey(o) === entryKey(e))), ...own];
+    if (all2.length) body.config_entries = all2;
     return body;
+  }
+
+  // ---------- config entries ----------
+  // entryKey names an entry: Kind/Namespace/Name, or file:path.
+  const entryKey = (e) => (isMap(e) && typeof e.file === "string" ? `file:${e.file}` : isMap(e) ? `${e.Kind}/${normNs(e.Namespace)}/${e.Name}` : "");
+  // entries lists side (d, part id)'s config entries: what the canvas
+  // makes ({e, why, over: overridden by the user's}) and the user's own.
+  function entries(m, d, pid) {
+    const own = ((d.ces || {})[pid || ""] || []);
+    const save = d.ces; d.ces = {};
+    const gen = (scopeBody(m, d, { id: pid || "", name: partName(d, pid) }, calls(m, true)).config_entries || []);
+    d.ces = save;
+    const why = (e) => ({
+      "proxy-defaults": "calls leave through mesh gateways (local mode)",
+      "service-defaults": `a gateway routes HTTP to ${e.Name}`,
+      "exported-services": "calls from other partitions",
+      "http-route": `API gateway ${((e.Parents || [])[0] || {}).Name || ""}`,
+      "service-intentions": `calls to ${e.Name}, with ACLs on`,
+      "service-resolver": `${e.Name} fails over`,
+    }[e.Kind] || "the canvas");
+    return { gen: gen.map((e) => ({ e, why: why(e), over: own.some((o) => entryKey(o) === entryKey(e)) })), own };
+  }
+  // ENTRY_KEYS are the top-level fields Consul takes for each kind, to
+  // catch a misspelling before Consul does.
+  const BASE = ["Kind", "Name", "Namespace", "Partition", "Meta"];
+  const ENTRY_KEYS = {
+    "service-defaults": ["Protocol", "Mode", "TransparentProxy", "MutualTLSMode", "UpstreamConfig", "Destination", "MaxInboundConnections", "LocalConnectTimeoutMs", "LocalRequestTimeoutMs", "BalanceInboundConnections", "MeshGateway", "ExternalSNI", "Expose", "EnvoyExtensions", "RateLimits"],
+    "proxy-defaults": ["Config", "Mode", "TransparentProxy", "MutualTLSMode", "MeshGateway", "Expose", "AccessLogs", "EnvoyExtensions", "FailoverPolicy", "PrioritizeByLocality"],
+    "service-resolver": ["ConnectTimeout", "RequestTimeout", "DefaultSubset", "Subsets", "Redirect", "Failover", "LoadBalancer", "PrioritizeByLocality"],
+    "service-router": ["Routes"],
+    "service-splitter": ["Splits"],
+    "service-intentions": ["Sources", "JWT"],
+    "exported-services": ["Services"],
+    "mesh": ["TransparentProxy", "AllowEnablingPermissiveMutualTLS", "ValidateClusters", "TLS", "HTTP", "Peering"],
+    "ingress-gateway": ["TLS", "Defaults", "Listeners"],
+    "terminating-gateway": ["Services"],
+    "api-gateway": ["Listeners"],
+    "http-route": ["Parents", "Rules", "Hostnames"],
+    "tcp-route": ["Parents", "Services"],
+    "inline-certificate": ["Certificate", "PrivateKey"],
+    "file-system-certificate": ["Certificate", "PrivateKey"],
+    "jwt-provider": ["JSONWebKeySet", "Issuer", "Audiences", "Locations", "Forwarding", "ClockSkewSeconds", "CacheConfig"],
+    "sameness-group": ["DefaultForFailover", "IncludeLocal", "Members"],
+    "control-plane-request-limit": ["Mode", "ReadRate", "WriteRate", "KV", "ACL", "Catalog", "ConfigEntry", "ConnectCA", "Coordinate", "DiscoveryChain", "Health", "Intention", "Internal", "PreparedQuery", "Session", "Txn"],
+  };
+  // entryNotes are problems with an entry the user typed: [message].
+  function entryNotes(e) {
+    if (!isMap(e)) return ["An entry is a map: Kind, Name and its fields, or file: PATH."];
+    if ("file" in e) return Object.keys(e).length === 1 && typeof e.file === "string" ? [] : ["file: takes a path (.hcl or .json, relative to the lab file) and no other keys."];
+    const out = [];
+    if (typeof e.Kind !== "string") out.push("Kind: missing (service-defaults, service-resolver, ...). Fields use Consul's casing.");
+    else if (!ENTRY_KEYS[e.Kind]) out.push(`Kind: ${e.Kind} isn't a config entry kind Parker knows; check the spelling.`);
+    if (typeof e.Name !== "string" && e.Kind !== "mesh") out.push("Name: missing.");
+    const known = e.Kind && ENTRY_KEYS[e.Kind];
+    if (known) for (const k of Object.keys(e)) if (!BASE.includes(k) && !known.includes(k)) out.push(`${k}: a ${e.Kind} has no such field${/^[a-z]/.test(k) ? " (fields use Consul's casing, e.g. " + k[0].toUpperCase() + k.slice(1).replace(/_(.)/g, (x, c) => c.toUpperCase()) + ")" : ""}.`);
+    return out;
+  }
+  // setEntry adds the user's entry e to side (d, pid), or replaces their
+  // entry at index i. It returns what it did.
+  function setEntry(d, pid, e, i) {
+    d.ces = d.ces || {};
+    const l = (d.ces[pid || ""] = d.ces[pid || ""] || []);
+    if (l.some((o, j) => j !== i && entryKey(o) === entryKey(e))) throw new Error(`There's a ${entryKey(e)} here already; edit that one.`);
+    if (i === undefined || i < 0) l.push(e); else l[i] = e;
+    return `${i === undefined || i < 0 ? "Added" : "Saved"} ${e.file ? "file: " + e.file : `${e.Kind} ${e.Name || ""}`.trim()}.`;
+  }
+  function removeEntry(d, pid, i) {
+    const l = (d.ces || {})[pid || ""] || [];
+    l.splice(i, 1);
+    if (!l.length && d.ces) delete d.ces[pid || ""];
   }
 
   // Keys whose value is always written as a block, like the examples.
@@ -993,6 +1069,7 @@
     if (isMap(c.federation) && c.federation.mode) m.fed = String(c.federation.mode);
     const pending = []; // upstreams and routes, resolved once every node exists
     const resolvers = []; // failover candidates: {d, pid, ce}
+    const fileEntries = []; // each side's entries: {d, pid, list}
     for (const [dn, dvRaw] of Object.entries(isMap(c.datacenters) ? c.datacenters : {})) {
       const dv = isMap(dvRaw) ? dvRaw : {};
       const dpath = ["consul", "datacenters", dn];
@@ -1024,6 +1101,7 @@
             }
           });
         }
+        if (Array.isArray(sv.config_entries)) fileEntries.push({ d, pid, list: JSON.parse(JSON.stringify(sv.config_entries)) });
         // Service-resolvers the builder would write: failovers.
         for (const ce of Array.isArray(sv.config_entries) ? sv.config_entries : []) {
           const fo = isMap(ce) && ce.Kind === "service-resolver" && isMap(ce.Failover) ? ce.Failover["*"] : null;
@@ -1136,6 +1214,12 @@
       const fo = { id: uid("f"), svc, dc: d.id, part: pid, to, timeout: typeof ce.ConnectTimeout === "string" ? ce.ConnectTimeout : "" };
       if (same(to.map((t) => foTarget(m, fo, t)), ce.Failover["*"].Targets)) m.fails.push(fo);
     }
+    // The file's entries that aren't the canvas's own are the user's.
+    for (const { d, pid, list } of fileEntries) {
+      const gen = entries(m, d, pid).gen.map((x) => x.e);
+      const own = list.filter((e) => !gen.some((g) => same(g, e)));
+      if (own.length) (d.ces = d.ces || {})[pid] = own;
+    }
     return m;
   }
 
@@ -1213,7 +1297,7 @@
       return out;
     };
     const old = new Map(scopes(da).map(([p, v]) => [dot(p), v.config_entries || []]));
-    const ek = (e) => `${e.Kind}/${normNs(e.Namespace)}/${e.Name}`;
+    const ek = entryKey;
     for (const [p, v] of scopes(db)) {
       const was = old.get(dot(p)) || [], now = v.config_entries || [];
       const lp = [...p, "config_entries"];
@@ -1312,7 +1396,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

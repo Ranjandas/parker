@@ -438,10 +438,12 @@ function bInspector() {
     body = fld("Name", txt("name", d.name), "", "bf-name") +
       fld("Servers", stepper("servers", d.servers), sdoc("Datacenter", "servers"), "", d.servers % 2 ? "" : "An even number of servers can't break a tie; use 1, 3 or 5.") +
       fld("Web UI", seg("ui", yes, d.ui), sdoc("Datacenter", "ui")) +
+      bEntries(d, "", d.parts.length ? "Entries (default)" : "") +
       `<div class="row-btns"><button class="btn sm" data-bact="linkfrom">${BI.peer}Federate or peer…</button><button class="btn sm danger" data-bact="remove">Remove ${esc(d.name)}</button></div>`;
   } else if (f.t === "part") {
     title = `Partition · ${esc(f.part.name)}`; where = f.dc.name;
     body = fld("Name", txt("name", f.part.name), "", "bf-name") + `<div class="hint">${esc(sdoc("Datacenter", "partitions"))} Calls between partitions get exports and local mesh gateways.</div>` +
+      bEntries(f.dc, f.part.id) +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove partition</button></div>`;
   } else if (f.t === "node") {
     const n = f.node;
@@ -526,6 +528,69 @@ function bFailFld(id, dcId, part, label) {
   const pick = left.length ? `<select data-f="foadd" data-sk="${k}" aria-label="Fail over to"><option value="">+ Fail over to…</option>${left.map((t) => `<option value="${t.dc}:${t.part}">${esc(Build.sideName(m, t.dc, t.part))}</option>`).join("")}</select>` : "";
   if (!rows && !pick) return "";
   return `<div class="fld" style="align-items:start"><label title="A service-resolver: when every instance here is unhealthy, calls go to the next target">${label || "Fails over to"}</label><div class="ups">${rows || ""}${pick}${fo ? `<label class="sf inl"><span>ConnectTimeout</span><input data-f="fotimeout" data-fo="${fo.id}" value="${esc(fo.timeout || "")}" placeholder="Consul's default (5s)" spellcheck="false"></label>` : ""}<div class="hint doc">Each target gets the service exported and its callers allowed, as a call there would.</div></div></div>`;
+}
+
+// ---------- config entries ----------
+const ENTRY_DOCS = "https://developer.hashicorp.com/consul/docs/connect/config-entries/";
+const ceName = (e) => (e && e.file ? `file: ${e.file}` : e ? `${e.Kind || "?"}${e.Namespace ? ` ${e.Namespace}/` : " "}${e.Name || ""}` : "");
+// bEntries is a side's Config entries field: the canvas's, then the
+// user's own.
+function bEntries(d, pid, label) {
+  const { gen, own } = Build.entries(BL.m, d, pid);
+  const sk = `${d.id}:${pid || ""}`;
+  const g = gen.map((x, i) => `<div class="up ce gen ${x.over ? "over" : ""}"><span title="${esc(ceName(x.e))}: ${x.over ? "overridden by yours" : `from the canvas: ${esc(x.why)}`}">${esc(ceName(x.e))} <i>${x.over ? "overridden by yours" : `from the canvas: ${esc(x.why)}`}</i></span>${x.over ? "" : `<button class="x" data-f="ceover" data-sk="${sk}" data-i="${i}" title="Write your own ${esc(x.e.Kind)} for ${esc(x.e.Name || "")}; it replaces this one">Override</button>`}</div>`).join("");
+  const o = own.map((e, i) => `<div class="up ce"><span title="${esc(ceName(e))}">${esc(ceName(e))}</span><button class="x" data-f="ceedit" data-sk="${sk}" data-i="${i}" title="Edit">Edit</button><button class="x" data-f="cerm" data-sk="${sk}" data-i="${i}" title="Remove">✕</button></div>`).join("");
+  return `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Datacenter", "config_entries"))}">${label || "Config entries"}</label><div class="ups">${g}${o}${g || o ? "" : '<span class="hint">None yet.</span>'}<button class="btn sm" data-f="ceadd" data-sk="${sk}">+ Add an entry</button><div class="hint doc">The canvas writes the entries its calls, gateways and failovers need. Anything else goes here, as Consul's YAML; yours win over the canvas's for the same kind and name.</div></div></div>`;
+}
+// ceYAML writes an entry as block YAML for the editor.
+function ceYAML(v, ind) {
+  ind = ind || "";
+  const isMap = (x) => x && typeof x === "object" && !Array.isArray(x);
+  const flow = (x) => Array.isArray(x) ? `[${x.map(flow).join(", ")}]` : isMap(x) ? `{ ${Object.entries(x).map(([k, y]) => `${k}: ${flow(y)}`).join(", ")} }` : sc(x);
+  const sc = (x) => (typeof x === "string" && !/^[A-Za-z0-9_./*+-][A-Za-z0-9_./*+ -]*$/.test(x)) || /^(true|false|null|\d.*)$/.test(String(x)) && typeof x === "string" ? JSON.stringify(x) : String(x);
+  return Object.entries(v).map(([k, x]) => {
+    if (!x || typeof x !== "object" || ind.length + k.length + flow(x).length < 70) return `${ind}${k}: ${flow(x)}`;
+    if (isMap(x)) return `${ind}${k}:\n${ceYAML(x, ind + "  ")}`;
+    return `${ind}${k}:\n${x.map((y) => isMap(y) && Object.keys(y).length ? ind + "  - " + ceYAML(y, ind + "    ").slice(ind.length + 4) : `${ind}  - ${flow(y)}`).join("\n")}`;
+  }).join("\n");
+}
+const CE_TEMPLATES = {
+  "service-defaults": { Kind: "service-defaults", Name: "web", Protocol: "http" },
+  "service-resolver": { Kind: "service-resolver", Name: "api", ConnectTimeout: "5s", Subsets: { v1: { Filter: "Service.Meta.version == v1" } } },
+  "service-router": { Kind: "service-router", Name: "api", Routes: [{ Match: { HTTP: { PathPrefix: "/admin" } }, Destination: { Service: "admin" } }] },
+  "service-splitter": { Kind: "service-splitter", Name: "api", Splits: [{ Weight: 90, ServiceSubset: "v1" }, { Weight: 10, ServiceSubset: "v2" }] },
+  "mesh": { Kind: "mesh", TransparentProxy: { MeshDestinationsOnly: true } },
+  "file": { file: "entries/my-entry.hcl" },
+};
+// bEntryDialog edits the user's entry i of side sk (-1: a new one),
+// starting from e.
+function bEntryDialog(sk, i, e) {
+  const [dcId, pid] = sk.split(":");
+  const d = bDialog(`<div class="bd-in"><h3>${i < 0 ? "Add a config entry" : "Edit a config entry"}</h3>
+    <p class="faint">In ${esc(Build.sideName(BL.m, dcId, pid))}. Consul's own fields and casing, as YAML or JSON; or file: PATH for an .hcl or .json file next to the lab.</p>
+    ${i < 0 ? `<div class="stepbtns" style="margin-bottom:8px">${Object.keys(CE_TEMPLATES).map((k) => `<button class="btn sm" data-tpl="${k}">${k}</button>`).join("")}</div>` : ""}
+    <textarea id="ce-text" class="cetext" spellcheck="false" rows="12">${esc(e ? ceYAML(e) : ceYAML(CE_TEMPLATES["service-defaults"]))}</textarea>
+    <div class="hint" id="ce-doc"></div><div class="cenotes" id="ce-notes"></div>
+    <div class="bd-row end"><div class="grow"></div><button class="btn sm" data-close>Cancel</button><button class="btn primary sm" id="ce-save">Save</button></div></div>`, "bd-ce");
+  const ta = $("#ce-text", d), notes = $("#ce-notes", d), doc = $("#ce-doc", d), save = $("#ce-save", d);
+  const kindDoc = () => {
+    const k = (/^\s*"?Kind"?\s*:\s*"?([a-z-]+)/m.exec(ta.value) || [])[1];
+    const f = k && Build.ENTRY_KEYS[k];
+    doc.innerHTML = f ? `${esc(k)} fields: <span class="mono">${esc(["Kind", "Name", "Namespace", "Partition", "Meta", ...f].join(", "))}</span>. <a href="${ENTRY_DOCS}${esc(k)}" target="_blank" rel="noopener">Consul's docs</a>` : "";
+  };
+  kindDoc();
+  let warned = "";
+  ta.addEventListener("input", () => { kindDoc(); warned = ""; save.textContent = "Save"; notes.textContent = ""; });
+  d.querySelectorAll("[data-tpl]").forEach((b) => b.addEventListener("click", () => { ta.value = ceYAML(CE_TEMPLATES[b.dataset.tpl]); ta.dispatchEvent(new Event("input")); }));
+  save.addEventListener("click", async () => {
+    let v;
+    try { v = (await bpost("parse", { yaml: ta.value })).value; } catch (err) { notes.textContent = err.message; return; }
+    const n = Build.entryNotes(v);
+    if (n.length && warned !== ta.value) { notes.innerHTML = n.map((x) => `<div>${esc(x)}</div>`).join("") + `<div class="faint">Save again to keep it as it is.</div>`; warned = ta.value; save.textContent = "Save anyway"; return; }
+    d.close();
+    bEdit((m) => { const dd = Build.dcById(m, dcId); return Build.setEntry(dd, pid, v, i); });
+  });
+  ta.focus();
 }
 
 // ---------- scenario ----------
@@ -646,6 +711,14 @@ function bField(el) {
     }
     const id = t.t === "dc" ? t.dc.id : sel;
     if (f === "name") return Build.rename(m, id, v);
+    if (f === "ceadd" || f === "ceover" || f === "ceedit" || f === "cerm") {
+      const [dcId, pid] = el.dataset.sk.split(":"), dd = Build.dcById(m, dcId);
+      const { gen, own } = Build.entries(m, dd, pid);
+      if (f === "cerm") { const e = own[i]; Build.removeEntry(dd, pid, i); return `Removed ${ceName(e)}.`; }
+      // The rest open the editor, after this (empty) edit.
+      setTimeout(() => bEntryDialog(el.dataset.sk, f === "ceedit" ? i : -1, f === "ceover" ? gen[i].e : f === "ceedit" ? own[i] : null));
+      return;
+    }
     if (f === "foadd") {
       if (!v) return;
       const [dcId, part] = el.dataset.sk.split(":"), [toDc, toPart] = v.split(":");

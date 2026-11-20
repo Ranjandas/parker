@@ -74,6 +74,15 @@ func TestBuildCheckAndPatch(t *testing.T) {
 		{"op": "delete", "path": []any{"consul", "nope", "x"}}}}); code != 422 {
 		t.Errorf("bad op: %d", code)
 	}
+
+	// parse: an entry typed in the builder, keys in order.
+	code, body = buildCall(t, h, cookie, "parse", map[string]string{"yaml": "Kind: service-defaults\nName: api\nProtocol: http\n"})
+	if code != 200 || body != `{"value":{"Kind":"service-defaults","Name":"api","Protocol":"http"}}`+"\n" {
+		t.Errorf("parse: %d %q", code, body)
+	}
+	if code, _ = buildCall(t, h, cookie, "parse", map[string]string{"yaml": "Kind: [oops\n"}); code != 422 {
+		t.Errorf("parse of bad YAML: %d", code)
+	}
 }
 
 func TestBuildOpenSave(t *testing.T) {
