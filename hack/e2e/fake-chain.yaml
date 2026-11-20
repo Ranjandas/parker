@@ -84,3 +84,7 @@ scenario:
     - assert:
         exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/cache | grep -q '\"Status\":\"passing\"'" }
         within: 30s
+    # Consul passing comes before web's sidecar has cache's endpoint back,
+    # so wait for the chain itself before anything else calls web.
+    - name: web reaches cache again once its sidecar has the endpoint
+      assert: { call: { on: dc1/web, code: 200, reaches: dc1/cache }, within: 30s }
