@@ -373,6 +373,83 @@
         "run"
       ]
     },
+    "Fake": {
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Message is the body of every response (MESSAGE)."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version labels responses, e.g. v2 for a canary subset (VERSION)."
+        },
+        "upstreams": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Upstreams the service calls on each request, as URIs\n(UPSTREAM_URIS). Default: the service's upstreams: through its\nsidecar, http://127.0.0.1:\u003cport\u003e."
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Workers is how many upstreams are called at once (UPSTREAM_WORKERS);\ndefault 1, in order."
+        },
+        "upstream_failure": {
+          "type": "string",
+          "enum": [
+            "fail",
+            "ignore"
+          ],
+          "description": "UpstreamFailure is fail (default: answer 500 when an upstream\nfails) or ignore."
+        },
+        "health": {
+          "$ref": "#/$defs/FakeHealth",
+          "description": "Health sets what /health answers; Parker's http check uses it."
+        },
+        "ready": {
+          "$ref": "#/$defs/FakeReady",
+          "description": "Ready sets what /ready answers; Parker waits on it at up."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Fake configures Parker's built-in fake service."
+    },
+    "FakeHealth": {
+      "properties": {
+        "code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Code /health answers (HEALTH_CHECK_RESPONSE_CODE); default 200. A\ncode of 400 or more fails the Consul check while the process keeps\nrunning."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "FakeReady": {
+      "properties": {
+        "delay": {
+          "type": "string",
+          "description": "Delay before /ready passes, from the start of the process\n(READY_CHECK_RESPONSE_DELAY), e.g. 5s: a slow-starting service."
+        },
+        "code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Code /ready answers once ready (READY_CHECK_RESPONSE_SUCCESS_CODE);\ndefault 200."
+        },
+        "failure_code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "FailureCode /ready answers before then\n(READY_CHECK_RESPONSE_FAILURE_CODE); default 503."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Federation": {
       "properties": {
         "mode": {
@@ -871,7 +948,11 @@
               "type": "array"
             }
           ],
-          "description": "Run is fake-service (default) or a command."
+          "description": "Run is fake-service (Parker's built-in fake service) or a command."
+        },
+        "fake": {
+          "$ref": "#/$defs/Fake",
+          "description": "Fake configures run: fake-service."
         },
         "env": {
           "additionalProperties": {

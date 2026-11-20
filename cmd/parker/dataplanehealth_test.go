@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -89,5 +91,21 @@ func TestKeepHealth(t *testing.T) {
 	if r.Service.Kind != api.ServiceKindConnectProxy || r.Service.Proxy.DestinationServiceName != "api" || r.Service.Proxy.Upstreams[0].LocalBindPort != 9092 ||
 		r.Check.CheckID != "parker:api-sidecar-proxy" || r.Check.ServiceID != "api-sidecar-proxy" || r.Node != "api" || r.Address != "10.1.0.102" {
 		t.Errorf("proxy registration = %+v", r)
+	}
+}
+
+func TestProbeHTTP(t *testing.T) {
+	code := 200
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }))
+	defer ts.Close()
+	if !tcpProbe(ts.URL + "/health") {
+		t.Error("200 should pass")
+	}
+	code = 503
+	if tcpProbe(ts.URL + "/health") {
+		t.Error("503 should fail")
+	}
+	if !tcpProbe(strings.TrimPrefix(ts.URL, "http://")) {
+		t.Error("host:port is a TCP probe")
 	}
 }

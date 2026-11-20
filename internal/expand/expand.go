@@ -656,7 +656,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if svc.Namespace != spec.DefaultNamespace {
 						svcCheck.Namespace = svc.Namespace
 					}
-					reg, proc := expandService(svcName, svc, svcCheck, SidecarPort+sidecars)
+					reg, proc := expandService(svcName, dcName, svc, svcCheck, SidecarPort+sidecars)
 					if isDP {
 						// No agent to register with or to ask about health:
 						// dataplane-health on server-1 does both.
@@ -831,7 +831,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 
 // expandService returns the agent service registration and, when the
 // service has a run: command, the process that runs it.
-func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidecarPort int) (map[string]any, *spec.Process) {
+func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulCheck, sidecarPort int) (map[string]any, *spec.Process) {
 	reg := map[string]any{"name": name}
 	if svc.Namespace != "" && svc.Namespace != spec.DefaultNamespace {
 		reg["namespace"] = svc.Namespace
@@ -848,7 +848,7 @@ func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidec
 	}
 	switch check {
 	case "http":
-		reg["check"] = map[string]any{"http": fmt.Sprintf("http://127.0.0.1:%d/", svc.Port), "interval": "2s"}
+		reg["check"] = map[string]any{"http": fmt.Sprintf("http://127.0.0.1:%d%s", svc.Port, healthPath(svc)), "interval": "2s"}
 	case "tcp":
 		reg["check"] = map[string]any{"tcp": fmt.Sprintf("127.0.0.1:%d", svc.Port), "interval": "2s"}
 	}
@@ -881,15 +881,24 @@ func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidec
 		return reg, nil
 	}
 	run := svc.Run
-	if len(run) == 1 && run[0] == "fake-service" {
-		run = spec.Command{VarParker, "fake-service", "--name", name, "--port", strconv.Itoa(svc.Port)}
+	env := svc.Env
+	if isFake(svc) {
+		run = spec.Command{VarParker, "fake-service", "--name", name, "--port", strconv.Itoa(svc.Port), "--dc", dcName}
+		env = maps.Clone(svc.Env)
+		if env == nil {
+			env = map[string]string{}
+		}
+		env[FakeEnv] = fakeConfig(svc)
 	}
-	p := &spec.Process{Run: run, Env: svc.Env}
+	p := &spec.Process{Run: run, Env: env}
 	if svc.Port > 0 {
 		// 60s: after a leader change the agent retries its catalog sync
 		// only every ~15s, so a restart can take a few rounds to show.
 		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "60s"}
-		if check != "none" {
+		if isFake(svc) {
+			fakeReady(svc, p.ReadyWhen)
+		}
+		if check != "none" && !fakeStartsUnhealthy(svc) {
 			agent.ServiceHealthy = name
 			p.ReadyWhen.Consul = &agent
 		}
@@ -929,6 +938,9 @@ func mergeService(layers ...*spec.Service) *spec.Service {
 		}
 		if l.Namespace != "" {
 			out.Namespace = l.Namespace
+		}
+		if l.Fake != nil {
+			out.Fake = mergeFake(out.Fake, l.Fake)
 		}
 		if len(l.Upstreams) > 0 {
 			if out.Upstreams == nil {
@@ -1156,6 +1168,7 @@ func meshServices(c *spec.Consul) (bool, error) {
 			for _, svcName := range slices.Sorted(maps.Keys(services)) {
 				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
 				where := fmt.Sprintf("consul.datacenters.%s.nodes.%s: service %s", dcName, nodeName, svcName)
+				errs = append(errs, checkFake(where, svc, services[svcName])...)
 				switch svc.Connect {
 				case "", "none":
 					if len(svc.Upstreams) > 0 {

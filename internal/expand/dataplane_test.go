@@ -58,7 +58,7 @@ func TestDataplane(t *testing.T) {
 		t.Fatalf("entries = %+v", entries)
 	}
 	svc, proxy := entries[0], entries[1]
-	if svc.Node != "api" || svc.Datacenter != "dc1" || svc.Service.ID != "api" || svc.Service.Port != 9090 || svc.Probe != svc.Address+":9090" {
+	if svc.Node != "api" || svc.Datacenter != "dc1" || svc.Service.ID != "api" || svc.Service.Port != 9090 || svc.Probe != "http://"+svc.Address+":9090/health" {
 		t.Errorf("service entry = %+v", svc)
 	}
 	p := proxy.Service.Proxy

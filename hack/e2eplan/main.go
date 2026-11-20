@@ -36,7 +36,10 @@ var (
 	secure = []string{"examples/acl.yaml", "hack/e2e/mesh-secure.yaml", "hack/e2e/tproxy-secure.yaml",
 		"hack/e2e/mesh-federation-acl.yaml", "hack/e2e/peering-secure.yaml",
 		"hack/e2e/dataplane-secure.yaml"}
-	rules = []rule{
+	fakeLabs = []string{"hack/e2e/fake-chain.yaml", "examples/mesh.yaml", "examples/clients.yaml"}
+	rules    = []rule{
+		{"internal/fake/", fakeLabs},
+		{"internal/expand/fake.go", fakeLabs},
 		{"internal/tproxy/", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
 		{"cmd/parker/sidecar.go", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
 		{"internal/expand/gateway.go", []string{"examples/gateways.yaml", "examples/mesh-federation.yaml", "hack/e2e/mesh-federation-acl.yaml"}},
