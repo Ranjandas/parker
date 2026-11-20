@@ -14,5 +14,6 @@ e2e-rootless: build
 # skips without one. Not part of CI yet.
 e2e-ent: build
 	hack/ent-e2e.sh
+	hack/ent-e2e.sh examples/partitions.yaml
 proto:
 	buf generate

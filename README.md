@@ -179,6 +179,9 @@ with selectors that follow the YAML tree:
 | `dc1/server-2`, `dc1/web-1` | one node (`dc1/default/web-1` works too) |
 | `dc1/web` | a node group: every copy of `nodes.web` (`count: N`) |
 | `svc:api`, `svc:dc2/api` | the nodes that run service `api` |
+| `dc1/team-a/billing-1`, `dc1/team-a/billing` | a node or group inside admin partition `team-a` |
+| `part:team-a`, `part:dc1/team-a` | the client agents in a partition (`part:default` for the rest) |
+| `ns:payments`, `ns:dc1/payments` | the nodes that register a service in namespace `payments` |
 | `dc1/leader`, `dc1/followers` | raft roles, asked of the running servers |
 | `toxiproxy`, `dc1-server-1` | a node by its expanded name |
 
@@ -312,6 +315,42 @@ in the lab's run dir, hands agents its path as `CONSUL_LICENSE_PATH`, and
 removes it on `down` or when `up` fails. It never goes into `parker expand`
 output, the saved topology, `describe` or logs. See
 [examples/enterprise.yaml](examples/enterprise.yaml).
+
+### Admin partitions and namespaces
+
+A datacenter can split its nodes and gateways into `partitions:` (the
+default one is `default`; without other partitions, nodes stay straight
+under the dc). Each partition takes `client`, `service_defaults`, `nodes`,
+`gateways` and `config_entries`, and a service picks its namespace with
+`namespace:`:
+
+```yaml
+dc1:
+  servers: 3
+  partitions:
+    default:
+      nodes:
+        frontend:
+          service:
+            port: 8080
+            connect: sidecar
+            upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
+    team-a:
+      service_defaults: { connect: sidecar, namespace: payments }
+      gateways: { mesh: true }
+      nodes:
+        billing: { count: 2, service: { port: 9000 } }
+```
+
+Parker creates the partitions and namespaces as soon as the leader is up
+(the `tenancy` process on `server-1`), joins each agent to its partition,
+registers services, checks and sidecars in their namespace, and writes a
+partition's `config_entries` into it. With ACLs each partition gets its own
+agent token. Node names stay unique across a datacenter's partitions:
+`billing-1` above is `dc1-billing-1`. Partitions and namespaces need an
+Enterprise pin, and can't be combined with federation or peering yet. See
+[examples/partitions.yaml](examples/partitions.yaml), which `make e2e-ent`
+runs too.
 
 ## Supported so far
 

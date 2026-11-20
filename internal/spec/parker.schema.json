@@ -134,6 +134,13 @@
           "type": "string",
           "description": "Reaches: the agent can read this datacenter's catalog (cross-dc RPC\nworks from the agent's datacenter to it)."
         },
+        "partition": {
+          "type": "string",
+          "description": "Partition and Namespace scope ServiceHealthy (Consul Enterprise)."
+        },
+        "namespace": {
+          "type": "string"
+        },
         "token": {
           "type": "string",
           "description": "Token for the agent API when ACLs are on."
@@ -264,8 +271,11 @@
           "description": "Gateways are nodes that run a Consul agent and a gateway Envoy,\nkeyed by node name: mesh: true, or {kind, count, wan}."
         },
         "partitions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Partition"
+          },
           "type": "object",
-          "description": "Partitions are reserved for Admin Partitions (Enterprise); not\nsupported yet."
+          "description": "Partitions are Admin Partitions (Consul Enterprise), keyed by name.\nA dc has either nodes: and gateways: (the default partition) or\npartitions: (put default-partition nodes under partitions.default)."
         },
         "config_entries": {
           "items": {
@@ -529,11 +539,93 @@
           },
           "type": "array",
           "description": "Services the node runs."
+        },
+        "partition": {
+          "type": "string",
+          "description": "Partition the node's agent is in (Enterprise; \"\" outside\npartitions:)."
+        },
+        "namespaces": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Namespaces of the node's services, besides the default (Enterprise)."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "description": "NodeLabels place a node in the consul: tree."
+    },
+    "Partition": {
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/AgentSettings",
+          "description": "Client settings apply to this partition's client agents."
+        },
+        "service_defaults": {
+          "$ref": "#/$defs/Service",
+          "description": "ServiceDefaults are merged into this partition's services."
+        },
+        "nodes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "object",
+          "description": "Nodes in this partition, keyed by name. Node names are unique\nacross a datacenter's partitions."
+        },
+        "gateways": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "boolean",
+                "const": true
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "mesh",
+                      "ingress",
+                      "terminating",
+                      "api"
+                    ],
+                    "description": "Gateway kind; default: the gateway's name."
+                  },
+                  "entry": {
+                    "type": "object",
+                    "description": "The gateway's config entry in Consul casing, without Kind and Name (Listeners, Services, ...)."
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of gateway nodes (default 1)."
+                  },
+                  "wan": {
+                    "type": "boolean",
+                    "description": "Mesh gateways: attach to the wan network (default: on when federated)."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              }
+            ],
+            "description": "true for a gateway with defaults, or {kind, count, wan, entry}."
+          },
+          "type": "object",
+          "description": "Gateways in this partition (mesh gateways are per partition)."
+        },
+        "config_entries": {
+          "items": {
+            "$ref": "#/$defs/ConfigEntry"
+          },
+          "type": "array",
+          "description": "ConfigEntries are written into this partition, after the dc's."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Partition is an Admin Partition (Consul Enterprise): Parker creates it, joins its nodes' client agents to it and writes its config entries into it."
     },
     "Peering": {
       "properties": {
@@ -770,6 +862,10 @@
         "register": {
           "type": "object",
           "description": "Register is merged into the Consul service registration as is."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Namespace the service registers in (Consul Enterprise); Parker\ncreates it. Default: the default namespace."
         },
         "connect": {
           "type": "string",

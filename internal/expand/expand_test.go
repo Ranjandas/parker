@@ -17,6 +17,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/Ranjandas/parker/internal/selector"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -523,5 +524,102 @@ func TestUpgradeNeedsPinnedBinary(t *testing.T) {
 	f.Scenario.Steps[2].Upgrade.Binary = "nomad"
 	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "upgrade: nomad is not pinned under versions:") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPartitionsAndNamespaces(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/partitions.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Billing joins team-a; frontend stays in the default partition.
+	b1 := low.Nodes["dc1-billing-1"]
+	if b1 == nil || b1.Labels.Partition != "team-a" || !slices.Equal(b1.Labels.Namespaces, []string{"payments"}) {
+		t.Fatalf("dc1-billing-1: %+v", b1)
+	}
+	cfg := agentConfig(t, b1)
+	if cfg["partition"] != "team-a" {
+		t.Errorf("billing partition: %v", cfg["partition"])
+	}
+	fe := agentConfig(t, low.Nodes["dc1-frontend"])
+	if _, ok := fe["partition"]; ok {
+		t.Errorf("frontend has a partition: %v", fe["partition"])
+	}
+	// team-a's agents carry their own partition's token, not the default one.
+	tok := cfg["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
+	feTok := fe["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
+	if tok == feTok {
+		t.Error("team-a agents use the default partition's token")
+	}
+	// The service registers in its namespace, its health check and sidecar
+	// look there too.
+	reg := cfg["services"].([]any)[0].(map[string]any)
+	if reg["namespace"] != "payments" || reg["token"] != tok {
+		t.Errorf("billing registration: %v", reg)
+	}
+	sc := b1.Processes["billing"+SidecarSuffix]
+	if sc.Env["CONSUL_PARTITION"] != "team-a" || sc.Env["CONSUL_NAMESPACE"] != "payments" {
+		t.Errorf("sidecar env: %v", sc.Env)
+	}
+	if b1.Processes["billing"] == nil {
+		t.Error("billing's service_defaults run: gave no process")
+	}
+	// The mesh gateway sits in team-a.
+	gw := low.Nodes["dc1-mesh"]
+	if gw == nil || gw.Labels.Partition != "team-a" || agentConfig(t, gw)["partition"] != "team-a" ||
+		gw.Processes["mesh-gateway"].Env["CONSUL_PARTITION"] != "team-a" {
+		t.Fatalf("dc1-mesh: %+v", gw)
+	}
+
+	// The tenancy job creates team-a and both payments namespaces, and the
+	// token team-a's agents use, before any client starts.
+	s1 := low.Nodes["dc1-server-1"]
+	var ten TenancySpec
+	if err := json.Unmarshal([]byte(s1.Files[TenancyManifest]), &ten); err != nil {
+		t.Fatal(err)
+	}
+	want := TenancySpec{
+		Partitions:  []string{"team-a"},
+		Namespaces:  []NamespaceRef{{Partition: "team-a", Name: "payments"}},
+		AgentTokens: []AgentToken{{Partition: "team-a", SecretID: tok.(string)}},
+	}
+	if !reflect.DeepEqual(ten, want) {
+		t.Errorf("tenancy %+v\nwant %+v", ten, want)
+	}
+	p := s1.Processes[Tenancy]
+	if p == nil || p.DependsOn["dc1-server-1/"+ACLSetup] == nil {
+		t.Fatalf("tenancy process: %+v", p)
+	}
+	for _, n := range []string{"dc1-billing-1", "dc1-frontend", "dc1-mesh"} {
+		if d := low.Nodes[n].Processes["consul"].DependsOn["dc1-server-1/"+Tenancy]; d == nil || d.Condition != "ready" {
+			t.Errorf("%s doesn't wait for tenancy", n)
+		}
+	}
+	if !slices.Contains(s1.Processes[ACLSetup].Run, "--enterprise") {
+		t.Errorf("acl-setup: %v", s1.Processes[ACLSetup].Run)
+	}
+	// team-a's config entries are written into team-a, after tenancy.
+	var refs []EntryRef
+	if err := json.Unmarshal([]byte(s1.Files[ConfigEntriesManifest]), &refs); err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 || refs[0].Partition != "team-a" || !strings.Contains(refs[0].Label, "partitions.team-a.config_entries[0]") {
+		t.Errorf("entries: %+v", refs)
+	}
+	if s1.Processes[ConfigEntries].DependsOn["dc1-server-1/"+Tenancy] == nil {
+		t.Error("config entries don't wait for tenancy")
+	}
+	// Selectors see partitions and namespaces.
+	if got, err := selector.Resolve(low, "part:team-a", nil); err != nil || strings.Join(got, " ") != "dc1-billing-1 dc1-billing-2 dc1-mesh" {
+		t.Errorf("part:team-a = %v %v", got, err)
+	}
+}
+
+func TestPartitionChecks(t *testing.T) {
+	f := load(t, "../../examples/partitions.yaml")
+	dc := f.Consul.Datacenters["dc1"]
+	dc.Partitions["team-a"].Gateways = map[string]*spec.Gateway{"billing": {Kind: "mesh"}}
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "partitions.team-a.gateways.billing: a node is already named billing") {
+		t.Errorf("gateway named like a node: %v", err)
 	}
 }

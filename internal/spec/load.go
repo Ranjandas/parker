@@ -147,8 +147,23 @@ func (f *File) Validate() error {
 					add("%s: needs Kind (or file:)", dc.EntryLabel(name, i))
 				}
 			}
-			if len(dc.Partitions) > 0 {
-				add("%s.partitions: not supported by this prototype yet (Enterprise)", p)
+			if len(dc.Partitions) > 0 && (len(dc.Nodes) > 0 || len(dc.Gateways) > 0) {
+				add("%s: nodes: and gateways: can't sit beside partitions:; move them under partitions.default", p)
+			}
+			for pn, part := range dc.Partitions {
+				pp := p + ".partitions." + pn
+				if !nameRe.MatchString(pn) || len(pn) > 32 {
+					add("%s: partition names are lowercase letters, digits and '-', at most 32 chars", pp)
+				}
+				if part == nil {
+					add("%s: empty partition (add nodes:)", pp)
+					continue
+				}
+				for i, e := range part.ConfigEntries {
+					if _, isFile := e["file"]; !isFile && entryKind(e) == "" {
+						add("%s: needs Kind (or file:)", part.EntryLabel(name, pn, i))
+					}
+				}
 			}
 			if dc.Servers.Count < 1 {
 				add("%s.servers: at least 1 server is required", p)
@@ -158,8 +173,20 @@ func (f *File) Validate() error {
 					add("%s.servers.overrides.%s: keys are server names like server-2", p, o)
 				}
 			}
-			for nn, n := range dc.Nodes {
+			seen := map[string]string{}
+			for _, placed := range dc.AllNodes() {
+				nn, n := placed.Name, placed.Node
 				np := p + ".nodes." + nn
+				if placed.Part != nil {
+					np = p + ".partitions." + placed.Partition + ".nodes." + nn
+				}
+				if other, dup := seen[nn]; dup {
+					add("%s: %s is already a node in partition %s; node names are unique across a datacenter's partitions", np, nn, other)
+				}
+				seen[nn] = placed.Partition
+				if seen[nn] == "" {
+					seen[nn] = DefaultPartition
+				}
 				if !nameRe.MatchString(nn) {
 					add("%s: invalid node name", np)
 				}
@@ -180,6 +207,14 @@ func (f *File) Validate() error {
 					add("%s: use service: or services:, not both", np)
 				}
 			}
+		}
+	}
+	if f.Consul.UsesTenancy() {
+		if v := f.Versions["consul"]; !strings.Contains(v, "+ent") && !strings.HasPrefix(v, "path:") {
+			add("partitions and namespaces need Consul Enterprise: pin versions.consul to an Enterprise build such as %s+ent", strings.TrimPrefix(v, "v"))
+		}
+		if f.Consul.FederationMode() != "" || len(f.Consul.Peering) > 0 {
+			add("consul: partitions and namespaces don't work with federation or peering in Parker yet")
 		}
 	}
 	for nn, n := range f.Nodes {

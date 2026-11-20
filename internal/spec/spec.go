@@ -10,6 +10,8 @@ package spec
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -375,9 +377,10 @@ type Datacenter struct {
 	// Gateways are nodes that run a Consul agent and a gateway Envoy,
 	// keyed by node name: mesh: true, or {kind, count, wan}.
 	Gateways map[string]*Gateway `yaml:"gateways,omitempty"`
-	// Partitions are reserved for Admin Partitions (Enterprise); not
-	// supported yet.
-	Partitions map[string]any `yaml:"partitions,omitempty"`
+	// Partitions are Admin Partitions (Consul Enterprise), keyed by name.
+	// A dc has either nodes: and gateways: (the default partition) or
+	// partitions: (put default-partition nodes under partitions.default).
+	Partitions map[string]*Partition `yaml:"partitions,omitempty"`
 	// ConfigEntries are applied in order once the datacenter's servers
 	// (and ACLs) are ready. Each is an entry in Consul's own casing, pasted
 	// from the docs, or {file: path} to an HCL or JSON file relative to
@@ -386,6 +389,152 @@ type Datacenter struct {
 
 	// EntrySources say where each config entry came from; Load fills it.
 	EntrySources []EntrySource `yaml:"-" json:"-"`
+}
+
+// Partition is an Admin Partition (Consul Enterprise): Parker creates
+// it, joins its nodes' client agents to it and writes its config entries
+// into it.
+type Partition struct {
+	// Client settings apply to this partition's client agents.
+	Client *AgentSettings `yaml:"client,omitempty"`
+	// ServiceDefaults are merged into this partition's services.
+	ServiceDefaults *Service `yaml:"service_defaults,omitempty"`
+	// Nodes in this partition, keyed by name. Node names are unique
+	// across a datacenter's partitions.
+	Nodes map[string]*Node `yaml:"nodes,omitempty"`
+	// Gateways in this partition (mesh gateways are per partition).
+	Gateways map[string]*Gateway `yaml:"gateways,omitempty"`
+	// ConfigEntries are written into this partition, after the dc's.
+	ConfigEntries []ConfigEntry `yaml:"config_entries,omitempty"`
+
+	// EntrySources say where each config entry came from; Load fills it.
+	EntrySources []EntrySource `yaml:"-" json:"-"`
+}
+
+// DefaultPartition is the partition every Consul cluster has.
+const DefaultPartition = "default"
+
+// PlacedNode is a node of a datacenter with the partition it's in (""
+// for nodes: directly under the dc).
+type PlacedNode struct {
+	Name      string
+	Node      *Node
+	Partition string
+	Part      *Partition // nil outside partitions:
+}
+
+// AllNodes lists a datacenter's nodes, in its partitions too, by name.
+func (dc *Datacenter) AllNodes() []PlacedNode {
+	var out []PlacedNode
+	for n, node := range dc.Nodes {
+		out = append(out, PlacedNode{Name: n, Node: node})
+	}
+	for pn, part := range dc.Partitions {
+		if part == nil {
+			continue
+		}
+		for n, node := range part.Nodes {
+			out = append(out, PlacedNode{Name: n, Node: node, Partition: pn, Part: part})
+		}
+	}
+	slices.SortFunc(out, func(a, b PlacedNode) int {
+		return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
+	})
+	return out
+}
+
+// PlacedGateway is a gateway with its partition ("" outside partitions:).
+type PlacedGateway struct {
+	Name      string
+	Gateway   *Gateway
+	Partition string
+}
+
+// AllGateways lists a datacenter's gateways, in its partitions too, by
+// name.
+func (dc *Datacenter) AllGateways() []PlacedGateway {
+	var out []PlacedGateway
+	for n, g := range dc.Gateways {
+		out = append(out, PlacedGateway{Name: n, Gateway: g})
+	}
+	for pn, part := range dc.Partitions {
+		if part == nil {
+			continue
+		}
+		for n, g := range part.Gateways {
+			out = append(out, PlacedGateway{Name: n, Gateway: g, Partition: pn})
+		}
+	}
+	slices.SortFunc(out, func(a, b PlacedGateway) int {
+		return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
+	})
+	return out
+}
+
+// UsesTenancy reports whether the lab uses partitions or namespaces, both
+// Enterprise features.
+func (c *Consul) UsesTenancy() bool {
+	if c == nil {
+		return false
+	}
+	for _, dc := range c.Datacenters {
+		if dc != nil && (len(dc.Partitions) > 0 || len(c.Namespaces(dc)) > 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// Namespaces lists the namespaces a datacenter's services use, as
+// "partition/namespace" ("" partition for the default), sorted. A
+// service's namespace comes from the service, else the partition's, dc's
+// or lab's service_defaults.
+func (c *Consul) Namespaces(dc *Datacenter) []string {
+	seen := map[string]bool{}
+	for _, pn := range dc.AllNodes() {
+		if pn.Node == nil {
+			continue
+		}
+		svcs := pn.Node.Services
+		if pn.Node.Service != nil {
+			svcs = map[string]*Service{pn.Name: pn.Node.Service}
+		}
+		for _, s := range svcs {
+			if ns := ServiceNamespace(c, dc, pn.Part, s); ns != "" && ns != DefaultNamespace {
+				part := pn.Partition
+				if part == DefaultPartition {
+					part = ""
+				}
+				seen[part+"/"+ns] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
+// DefaultNamespace is the namespace every partition has.
+const DefaultNamespace = "default"
+
+// ServiceNamespace is the namespace a service registers in ("" for the
+// default), from the most specific layer that sets one.
+func ServiceNamespace(c *Consul, dc *Datacenter, part *Partition, s *Service) string {
+	ns := ""
+	var layers []*Service
+	if c != nil && c.Defaults != nil {
+		layers = append(layers, c.Defaults.ServiceDefaults)
+	}
+	if dc != nil {
+		layers = append(layers, dc.ServiceDefaults)
+	}
+	if part != nil {
+		layers = append(layers, part.ServiceDefaults)
+	}
+	for _, l := range append(layers, s) {
+		if l != nil && l.Namespace != "" {
+			ns = l.Namespace
+		}
+	}
+	return ns
 }
 
 // ConfigEntry is a Consul config entry, passed through as is.
@@ -454,6 +603,9 @@ type Service struct {
 	Check string `yaml:"check,omitempty" jsonschema:"enum=http,enum=tcp,enum=none"`
 	// Register is merged into the Consul service registration as is.
 	Register map[string]any `yaml:"register,omitempty"`
+	// Namespace the service registers in (Consul Enterprise); Parker
+	// creates it. Default: the default namespace.
+	Namespace string `yaml:"namespace,omitempty"`
 	// Connect puts the service in the mesh: sidecar registers a sidecar
 	// proxy and runs Envoy for it (needs versions.envoy); tproxy does the
 	// same as a transparent proxy, redirecting the node's traffic through
@@ -527,6 +679,11 @@ type NodeLabels struct {
 	Group string `yaml:"group,omitempty"`
 	// Services the node runs.
 	Services []string `yaml:"services,omitempty"`
+	// Partition the node's agent is in (Enterprise; "" outside
+	// partitions:).
+	Partition string `yaml:"partition,omitempty"`
+	// Namespaces of the node's services, besides the default (Enterprise).
+	Namespaces []string `yaml:"namespaces,omitempty"`
 }
 
 type Attachment struct {
@@ -596,6 +753,9 @@ type ConsulCheck struct {
 	// Reaches: the agent can read this datacenter's catalog (cross-dc RPC
 	// works from the agent's datacenter to it).
 	Reaches string `yaml:"reaches,omitempty"`
+	// Partition and Namespace scope ServiceHealthy (Consul Enterprise).
+	Partition string `yaml:"partition,omitempty"`
+	Namespace string `yaml:"namespace,omitempty"`
 	// Token for the agent API when ACLs are on.
 	Token string `yaml:"token,omitempty"`
 	// CAFile turns on HTTPS (default address 127.0.0.1:8501) and verifies

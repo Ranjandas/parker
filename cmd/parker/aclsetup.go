@@ -18,12 +18,28 @@ const aclAgentRules = `node_prefix "" { policy = "write" }
 service_prefix "" { policy = "write" }
 `
 
+// aclAgentRulesEnt add services in every namespace (Consul Enterprise),
+// for labs with namespaces.
+const aclAgentRulesEnt = aclAgentRules + `namespace_prefix "" {
+  service_prefix "" { policy = "write" }
+}
+`
+
+// aclPartitionAgentRules are the agent policy inside a non-default admin
+// partition.
+const aclPartitionAgentRules = `node_prefix "" { policy = "write" }
+namespace_prefix "" {
+  service_prefix "" { policy = "write" }
+}
+`
+
 // aclSetupCmd runs inside the ACL primary's first server once its leader
 // is up: it creates the agent policy and the agent token (with the
 // SecretID expand generated, which every agent already has in its config),
 // then waits so the process stays up for status.
 func aclSetupCmd() *cobra.Command {
 	var addr, agentToken string
+	var enterprise bool
 	c := &cobra.Command{
 		Use:    expand.ACLSetup,
 		Short:  "Create the lab's ACL agent token (run by parker up)",
@@ -44,7 +60,11 @@ func aclSetupCmd() *cobra.Command {
 			defer stop()
 			deadline := time.Now().Add(60 * time.Second)
 			for {
-				err = ensureAgentToken(client.ACL(), agentToken)
+				rules := aclAgentRules
+				if enterprise {
+					rules = aclAgentRulesEnt
+				}
+				err = ensureAgentToken(client.ACL(), agentToken, rules, "")
 				if err == nil {
 					break
 				}
@@ -65,6 +85,7 @@ func aclSetupCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&addr, "addr", "", "Consul HTTP address (default $CONSUL_HTTP_ADDR)")
 	c.Flags().StringVar(&agentToken, "agent-token", "", "SecretID of the agent token to create")
+	c.Flags().BoolVar(&enterprise, "enterprise", false, "let the token register services in every namespace (Consul Enterprise)")
 	return c
 }
 
@@ -76,25 +97,27 @@ type aclAPI interface {
 }
 
 // ensureAgentToken is idempotent: it creates what is missing.
-func ensureAgentToken(a aclAPI, secret string) error {
+// partition is "" for the default one.
+func ensureAgentToken(a aclAPI, secret, rules, partition string) error {
 	const policy = "parker-agent"
-	p, _, err := a.PolicyReadByName(policy, nil)
+	p, _, err := a.PolicyReadByName(policy, &api.QueryOptions{Partition: partition})
 	if err != nil && !strings.Contains(err.Error(), "404") {
 		return err
 	}
 	if p == nil {
-		if _, _, err := a.PolicyCreate(&api.ACLPolicy{Name: policy, Description: "Parker lab agents", Rules: aclAgentRules}, nil); err != nil {
+		if _, _, err := a.PolicyCreate(&api.ACLPolicy{Name: policy, Description: "Parker lab agents", Rules: rules, Partition: partition}, &api.WriteOptions{Partition: partition}); err != nil {
 			return fmt.Errorf("create policy: %w", err)
 		}
 	}
-	if t, _, err := a.TokenReadSelf(&api.QueryOptions{Token: secret}); err == nil && t != nil {
+	if t, _, err := a.TokenReadSelf(&api.QueryOptions{Token: secret, Partition: partition}); err == nil && t != nil {
 		return nil
 	}
 	_, _, err = a.TokenCreate(&api.ACLToken{
 		SecretID:    secret,
 		Description: "Parker agent token",
 		Policies:    []*api.ACLTokenPolicyLink{{Name: policy}},
-	}, nil)
+		Partition:   partition,
+	}, &api.WriteOptions{Partition: partition})
 	if err != nil {
 		return fmt.Errorf("create agent token: %w", err)
 	}

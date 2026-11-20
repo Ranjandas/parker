@@ -1,0 +1,56 @@
+# Admin partitions and namespaces (Consul Enterprise; needs a license, see
+# examples/enterprise.yaml). Parker creates team-a and the payments
+# namespaces, joins billing's agents to team-a, and writes team-a's config
+# entries into it. Nodes in the default partition go under
+# partitions.default (or straight under the dc when there are no others).
+#
+# Not in the CI suite: hack/ent-e2e.sh runs it where a license is.
+parker: v1alpha1
+versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
+consul:
+  defaults: { acl: true }
+  datacenters:
+    dc1:
+      servers: 3
+      partitions:
+        default:
+          nodes:
+            frontend:
+              service:
+                port: 8080
+                run: fake-service
+                connect: sidecar
+                upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
+        team-a:
+          service_defaults: { run: fake-service, connect: sidecar, namespace: payments }
+          gateways: { mesh: true }
+          nodes:
+            billing: { count: 2, service: { port: 9000 } }
+          config_entries:
+            # frontend in the default partition may call billing.
+            - Kind: exported-services
+              Name: team-a
+              Services:
+                - Name: billing
+                  Namespace: payments
+                  Consumers: [{ Partition: default }]
+            - Kind: service-intentions
+              Name: billing
+              Namespace: payments
+              Sources: [{ Name: frontend, Partition: default, Action: allow }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - name: team-a and its payments namespace exist
+      assert:
+        exec: { on: dc1/server-1, run: "consul namespace list -partition team-a", output: payments }
+        within: 60s
+    - name: billing's agents joined team-a
+      assert:
+        exec: { on: dc1/server-1, run: "consul members -partition team-a", output: billing-2 }
+        within: 60s
+    - name: frontend reaches billing across partitions, through the mesh gateway
+      assert:
+        exec: { on: dc1/frontend, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: billing }
+        within: 90s

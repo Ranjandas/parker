@@ -15,7 +15,8 @@ func TestApplyEntries(t *testing.T) {
 	refs := []expand.EntryRef{{File: "a", Label: "entry a"}, {File: "b", Label: "entry b (line 9)"}, {File: "c", Label: "entry c"}}
 	var order []string
 	calls := map[string]int{}
-	write := func(_ context.Context, f string) (string, error) {
+	write := func(_ context.Context, r expand.EntryRef) (string, error) {
+		f := r.File
 		calls[f]++
 		order = append(order, f)
 		switch {
@@ -36,7 +37,7 @@ func TestApplyEntries(t *testing.T) {
 }
 
 func TestApplyEntriesGivesUp(t *testing.T) {
-	write := func(context.Context, string) (string, error) {
+	write := func(context.Context, expand.EntryRef) (string, error) {
 		return "Unexpected response code: 500 (No cluster leader)", errors.New("exit 1")
 	}
 	err := applyEntries(context.Background(), []expand.EntryRef{{File: "a", Label: "entry a"}}, write, 0, io.Discard)
