@@ -461,16 +461,20 @@ func Serve(ctx context.Context, o ServeOptions, log io.Writer) error {
 
 // Client returns an API client for the daemon on socket.
 func Client(socket string) parkerv1connect.ParkerServiceClient {
+	return parkerv1connect.NewParkerServiceClient(&http.Client{Transport: unixTransport(socket)}, "http://parker", connect.WithGRPC())
+}
+
+// unixTransport speaks HTTP/2 without TLS to the daemon's unix socket.
+func unixTransport(socket string) *http.Transport {
 	var protocols http.Protocols
 	protocols.SetUnencryptedHTTP2(true)
-	tr := &http.Transport{
+	return &http.Transport{
 		Protocols: &protocols,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socket)
 		},
 	}
-	return parkerv1connect.NewParkerServiceClient(&http.Client{Transport: tr}, "http://parker", connect.WithGRPC())
 }
 
 // Run plays a scenario from the lab's saved topology.

@@ -2,10 +2,16 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +87,10 @@ func TestRemoteTLSAndToken(t *testing.T) {
 		t.Fatal("dial without token should fail")
 	}
 
+	// The same listener serves the web UI; a browser session reaches the
+	// API with the token it signed in with.
+	webUI(t, addr, tok)
+
 	// Restarting keeps the same certificate.
 	c1, _ := os.ReadFile(CertPath())
 	cancel()
@@ -100,5 +110,54 @@ func TestTargetParse(t *testing.T) {
 	}
 	if (Target{Host: "unix:///tmp/x"}).IsRemote() || !(Target{Host: "https://h:1"}).IsRemote() {
 		t.Fatal("IsRemote")
+	}
+}
+
+func webUI(t *testing.T, addr, tok string) {
+	t.Helper()
+	pem, err := os.ReadFile(CertPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(pem)
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	base := "https://" + addr
+	get := func(path string) (int, string) {
+		r, err := hc.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, string(b)
+	}
+	post := func(path, body string) (int, string) {
+		r, err := hc.Post(base+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, string(b)
+	}
+	if code, body := get("/"); code != 200 || !strings.Contains(body, "app.js") {
+		t.Fatalf("GET /: %d %.80s", code, body)
+	}
+	if code, _ := post("/ui/api/parker.v1.ParkerService/Version", "{}"); code != http.StatusUnauthorized {
+		t.Fatalf("UI API before sign-in: %d", code)
+	}
+	if code, _ := post("/ui/session", `{"token":"wrong"}`); code != http.StatusUnauthorized {
+		t.Fatalf("wrong token sign-in: %d", code)
+	}
+	if code, body := post("/ui/session", `{"token":"`+tok+`"}`); code != http.StatusNoContent {
+		t.Fatalf("sign-in: %d %s", code, body)
+	}
+	if code, body := post("/ui/api/parker.v1.ParkerService/Version", "{}"); code != 200 || !strings.Contains(body, `"version"`) {
+		t.Fatalf("UI API after sign-in: %d %s", code, body)
+	}
+	if code, body := post("/ui/api/parker.v1.ParkerService/Status", `{"lab":"t"}`); code != 200 || !strings.Contains(body, `"lab":"t"`) {
+		t.Fatalf("UI status: %d %s", code, body)
 	}
 }

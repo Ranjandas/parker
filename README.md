@@ -82,6 +82,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker fault FILE\|LAB ACTION [SELECTOR...]` | Break a running lab on purpose: `partition`, `heal`, `kill`, `stop`, `start`, `restart`, `pause`, `resume`. See [Faults](#faults). |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is a [selector](#selectors) that names one node, e.g. `dc1/server-1` or `dc1/leader`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs as `running` or `down` (a downed lab stays listed, with its logs, until it is purged). |
+| `parker ui [FILE\|LAB]` | Web UI in your browser, for a local or `--host` daemon: labs, a live node and process table by datacenter with Consul health and leaders, problems called out, node pages with processes, health checks, `describe` and a streaming log viewer (filter, warn/error), faults (restart, stop/start, pause/resume, partition, kill, heal), scenario runs and `down`. Serves on a loopback port and opens a one-time sign-in link; `--no-open` prints it. See [Web UI](#web-ui). |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table grouped by datacenter and partition (servers, then clients) with state, role and a CONSUL column (each agent's alive/known LAN members, each service's catalog health, dataplane nodes included). A lab with several datacenters or admin partitions opens on a datacenter level (nodes, processes up, leader, members, service health; `enter` opens one, `:dc [NAME[/PARTITION]]` jumps), and `:svc` lists the catalog's services with each instance's health and its sidecar's (`enter` goes to the node). `←`/`→` fold and unfold a node (`space` toggles, `z` all; nodes fold on their own when the lab overflows the screen, unless something is wrong on them), `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:q`. Faults on the selected node: `K` kill, `R` restart, `S` stop/start, `P` pause/resume, `x` partition it from the rest, `H` heal (disruptive ones ask first), or `:kill SELECTOR`, `:partition GROUP...` etc.; `:run [SCENARIO]` plays a scenario and streams its steps; `:pf [LOCAL:]REMOTE` port-forwards from the selected node while the TUI runs. `NO_COLOR` or `PARKER_TUI_STATIC=1` keeps the logo still. |
 | `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
@@ -363,6 +364,33 @@ or put the VM on Tailscale.
 laptop$ ssh -N -L /tmp/parker.sock:/run/parker/parker.sock root@vm &
 laptop$ PARKER_HOST=unix:///tmp/parker.sock parker status
 ```
+
+## Web UI
+
+`parker ui` opens the dashboard in your browser. It works against the local
+daemon and a remote one alike: the CLI serves the UI on a loopback port and
+forwards its API calls to whatever daemon the CLI uses, so a remote daemon
+needs no browser certificate exception.
+
+```console
+$ parker ui examples/mesh-federation.yaml
+parker web UI on http://127.0.0.1:40121 (daemon: /run/parker/parker.sock)
+open: http://127.0.0.1:40121/#token=...&lab=meshfed
+```
+
+The link's sign-in token sits in the URL fragment, which browsers never send
+to a server. The page trades it for an HttpOnly, SameSite=Strict session
+cookie and drops it from the address bar. The link only works while that
+`parker ui` runs.
+
+A daemon started with `--listen` also serves the UI itself at
+`https://HOST:PORT/`: sign in with the token from `parker daemon
+credentials`. Browser sessions reach only the calls the UI needs (status,
+logs, describe, scenarios and faults, down). Exec, dial and up stay with the
+CLI.
+
+To work on the UI without a lab, `go run ./hack/uidemo` serves it against a
+fake daemon.
 
 ## Consul Enterprise
 
