@@ -848,7 +848,7 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 	}
 	switch check {
 	case "http":
-		reg["check"] = map[string]any{"http": fmt.Sprintf("http://127.0.0.1:%d/", svc.Port), "interval": "2s"}
+		reg["check"] = map[string]any{"http": fmt.Sprintf("http://127.0.0.1:%d%s", svc.Port, healthPath(svc)), "interval": "2s"}
 	case "tcp":
 		reg["check"] = map[string]any{"tcp": fmt.Sprintf("127.0.0.1:%d", svc.Port), "interval": "2s"}
 	}
@@ -895,7 +895,10 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 		// 60s: after a leader change the agent retries its catalog sync
 		// only every ~15s, so a restart can take a few rounds to show.
 		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "60s"}
-		if check != "none" {
+		if isFake(svc) {
+			fakeReady(svc, p.ReadyWhen)
+		}
+		if check != "none" && !fakeStartsUnhealthy(svc) {
 			agent.ServiceHealthy = name
 			p.ReadyWhen.Consul = &agent
 		}

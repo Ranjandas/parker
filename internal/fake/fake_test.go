@@ -159,3 +159,69 @@ func TestWorkersCallInParallel(t *testing.T) {
 		}
 	}
 }
+
+func code(t *testing.T, url string) int {
+	t.Helper()
+	res, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	return res.StatusCode
+}
+
+func TestHealthAndReady(t *testing.T) {
+	c, err := Load("api", "", 1, env(map[string]string{"HEALTH_CHECK_RESPONSE_CODE": "418",
+		EnvConfig: `{"ready":{"delay":"10s","failure_code":500}}`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, _ := start(t, c)
+	if got := code(t, ts.URL+"/health"); got != 418 {
+		t.Errorf("/health = %d, want 418", got)
+	}
+	if got := code(t, ts.URL+"/ready"); got != 500 {
+		t.Errorf("/ready before the delay = %d, want 500", got)
+	}
+	ts2, s2 := start(t, c)
+	s2.started = time.Now().Add(-11 * time.Second)
+	ts = ts2
+	if got := code(t, ts.URL+"/ready"); got != 200 {
+		t.Errorf("/ready after the delay = %d, want 200", got)
+	}
+	// / still answers normally: health is separate.
+	if got := code(t, ts.URL+"/"); got != 200 {
+		t.Errorf("/ = %d", got)
+	}
+}
+
+func TestHealthEnvErrors(t *testing.T) {
+	for _, e := range []map[string]string{
+		{"HEALTH_CHECK_RESPONSE_CODE": "ok"},
+		{"READY_CHECK_RESPONSE_FAILURE_CODE": "99"},
+		{"READY_CHECK_RESPONSE_DELAY": "later"},
+		{EnvConfig: `{"ready":{"delay":"x"}}`},
+	} {
+		if _, err := Load("x", "", 1, env(e)); err == nil {
+			t.Errorf("%v: want an error", e)
+		}
+	}
+}
+
+func TestCycleStops(t *testing.T) {
+	// web and api call each other, as in examples/dataplane.yaml.
+	webCfg := &Config{Name: "web", Workers: 1, ClientTimeout: 2 * time.Second}
+	web, _ := start(t, webCfg)
+	api, _ := start(t, &Config{Name: "api", Upstreams: []string{web.URL}, Workers: 1, ClientTimeout: 2 * time.Second})
+	webCfg.Upstreams = []string{api.URL}
+
+	r, res := get(t, web.URL, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("code %d: %+v", res.StatusCode, r)
+	}
+	a := r.UpstreamCalls[api.URL]
+	w := a.UpstreamCalls[web.URL]
+	if a.Name != "api" || w == nil || w.Name != "web" || !w.Cycle || len(w.UpstreamCalls) != 0 {
+		t.Errorf("web -> api -> web should stop there: %+v / %+v", a, w)
+	}
+}

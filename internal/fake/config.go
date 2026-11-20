@@ -35,6 +35,13 @@ type Config struct {
 	IgnoreUpstreamErrors bool
 	// ClientTimeout bounds each upstream call.
 	ClientTimeout time.Duration
+	// HealthCode is what /health answers.
+	HealthCode int
+	// ReadyDelay is how long after start /ready keeps failing.
+	ReadyDelay time.Duration
+	// ReadyCode and ReadyFailureCode are /ready's answers after and
+	// before ReadyDelay.
+	ReadyCode, ReadyFailureCode int
 }
 
 // Load builds the config from fake-service's env vars, then the fake:
@@ -43,7 +50,8 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second}
+	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second,
+		HealthCode: 200, ReadyCode: 200, ReadyFailureCode: 503}
 	if v := getenv("NAME"); v != "" && name == "" {
 		c.Name = v
 	}
@@ -67,6 +75,23 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 			return nil, fmt.Errorf("HTTP_CLIENT_REQUEST_TIMEOUT=%q: %w", v, err)
 		}
 		c.ClientTimeout = d
+	}
+	for k, dst := range map[string]*int{"HEALTH_CHECK_RESPONSE_CODE": &c.HealthCode,
+		"READY_CHECK_RESPONSE_SUCCESS_CODE": &c.ReadyCode, "READY_CHECK_RESPONSE_FAILURE_CODE": &c.ReadyFailureCode} {
+		if v := getenv(k); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 100 || n > 599 {
+				return nil, fmt.Errorf("%s=%q: want an HTTP status code", k, v)
+			}
+			*dst = n
+		}
+	}
+	if v := getenv("READY_CHECK_RESPONSE_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("READY_CHECK_RESPONSE_DELAY=%q: %w", v, err)
+		}
+		c.ReadyDelay = d
 	}
 	if raw := getenv(EnvConfig); raw != "" {
 		var f spec.Fake
@@ -92,6 +117,24 @@ func (c *Config) apply(f *spec.Fake) error {
 	}
 	if f.Workers > 0 {
 		c.Workers = f.Workers
+	}
+	if h := f.Health; h != nil && h.Code != 0 {
+		c.HealthCode = h.Code
+	}
+	if r := f.Ready; r != nil {
+		if r.Delay != "" {
+			d, err := time.ParseDuration(r.Delay)
+			if err != nil {
+				return fmt.Errorf("ready.delay: %w", err)
+			}
+			c.ReadyDelay = d
+		}
+		if r.Code != 0 {
+			c.ReadyCode = r.Code
+		}
+		if r.FailureCode != 0 {
+			c.ReadyFailureCode = r.FailureCode
+		}
 	}
 	switch f.UpstreamFailure {
 	case "", "fail":

@@ -103,3 +103,38 @@ func TestFakeValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestFakeHealthAndReadiness(t *testing.T) {
+	lab := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, fake: { ready: { delay: 30s } }", 1)
+	lab = strings.Replace(lab, "env: { MESSAGE: hi }", "env: { MESSAGE: hi }, fake: { health: { code: 503 } }", 1)
+	low, err := Expand(loadText(t, lab))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := low.Nodes["dc1-db"]
+	reg := agentConfig(t, db)["services"].([]any)[0].(map[string]any)
+	if c := reg["check"].(map[string]any)["http"]; c != "http://127.0.0.1:7000/health" {
+		t.Errorf("check = %v", c)
+	}
+	r := db.Processes["db"].ReadyWhen
+	if r.HTTP == nil || r.HTTP.URL != "http://127.0.0.1:7000/ready" || r.HTTP.Status != 200 || r.Timeout != "1m30s" || r.Consul == nil {
+		t.Errorf("db ready_when = %+v", r)
+	}
+	// Set to fail its check from the start: up waits on /ready only.
+	if r := low.Nodes["dc1-web"].Processes["web"].ReadyWhen; r.Consul != nil || r.HTTP == nil {
+		t.Errorf("web ready_when = %+v", r)
+	}
+	// A command service keeps the plain check on /.
+	cmd := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, run: [sleep, infinity]", 1)
+	low, err = Expand(loadText(t, cmd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg = agentConfig(t, low.Nodes["dc1-db"])["services"].([]any)[0].(map[string]any)
+	if c := reg["check"].(map[string]any)["http"]; c != "http://127.0.0.1:7000/" {
+		t.Errorf("command service check = %v", c)
+	}
+	if low.Nodes["dc1-db"].Processes["db"].ReadyWhen.HTTP != nil {
+		t.Error("command service waits on /ready")
+	}
+}

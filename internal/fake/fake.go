@@ -11,13 +11,21 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
-// HeaderRequestID ties the hops of one request together.
-const HeaderRequestID = "X-Request-Id"
+const (
+	// HeaderRequestID ties the hops of one request together.
+	HeaderRequestID = "X-Request-Id"
+	// HeaderTrail lists the fake services a request has passed through,
+	// so a cycle (web -> api -> web) stops instead of recursing.
+	HeaderTrail = "X-Parker-Trail"
+	// maxHops bounds a chain however it is wired.
+	maxHops = 16
+)
 
 // Response is what a fake service answers: close to fake-service's JSON,
 // plus Parker's node, dc and version.
@@ -39,6 +47,9 @@ type Response struct {
 	UpstreamCalls map[string]*Response `json:"upstream_calls,omitempty"`
 	Code          int                  `json:"code"`
 	Error         string               `json:"error,omitempty"`
+	// Cycle is set when this service was already on the request's path:
+	// its upstreams aren't called again.
+	Cycle bool `json:"cycle,omitempty"`
 }
 
 // Server is a fake service.
@@ -48,16 +59,18 @@ type Server struct {
 	ips    []string
 	log    *log.Logger
 	// now is time.Now outside tests.
-	now func() time.Time
+	now     func() time.Time
+	started time.Time
 }
 
 func New(cfg *Config) *Server {
 	return &Server{
-		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.ClientTimeout},
-		ips:    localIPs(),
-		log:    log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
-		now:    time.Now,
+		cfg:     cfg,
+		client:  &http.Client{Timeout: cfg.ClientTimeout},
+		ips:     localIPs(),
+		log:     log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
+		now:     time.Now,
+		started: time.Now(),
 	}
 }
 
@@ -65,6 +78,8 @@ func New(cfg *Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.serve)
+	mux.HandleFunc("/health", s.health)
+	mux.HandleFunc("/ready", s.ready)
 	return mux
 }
 
@@ -94,8 +109,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		URI: r.URL.RequestURI(), Type: "HTTP", IPAddresses: s.ips, From: r.RemoteAddr,
 		Body: body(s.cfg.Message), Code: http.StatusOK,
 	}
-	if len(s.cfg.Upstreams) > 0 {
-		resp.UpstreamCalls = s.callUpstreams(r.Context(), id)
+	var trail []string
+	if t := r.Header.Get(HeaderTrail); t != "" {
+		trail = strings.Split(t, ",")
+	}
+	switch {
+	case len(s.cfg.Upstreams) == 0:
+	case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
+		// Answer, but don't go round again.
+		resp.Cycle = true
+	default:
+		resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","))
 		for _, u := range s.cfg.Upstreams {
 			if up := resp.UpstreamCalls[u]; up.Error != "" || up.Code >= 400 {
 				if !s.cfg.IgnoreUpstreamErrors {
@@ -114,6 +138,30 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.log.Printf("request id=%s path=%s from=%s code=%d duration=%s", id, resp.URI, r.RemoteAddr, resp.Code, resp.Duration)
 }
 
+// health answers the health check: HealthCode.
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	status(w, s.cfg.HealthCode)
+}
+
+// ready fails until ReadyDelay has passed since the server started.
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if s.now().Sub(s.started) < s.cfg.ReadyDelay {
+		status(w, s.cfg.ReadyFailureCode)
+		return
+	}
+	status(w, s.cfg.ReadyCode)
+}
+
+func status(w http.ResponseWriter, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	state := "ok"
+	if code >= 400 {
+		state = "failing"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": state, "code": code})
+}
+
 func (s *Server) finish(resp *Response, start time.Time) {
 	end := s.now()
 	resp.StartTime = start.UTC().Format(time.RFC3339Nano)
@@ -122,7 +170,7 @@ func (s *Server) finish(resp *Response, start time.Time) {
 }
 
 // callUpstreams calls every upstream, Workers at a time, keyed by URI.
-func (s *Server) callUpstreams(ctx context.Context, id string) map[string]*Response {
+func (s *Server) callUpstreams(ctx context.Context, id, trail string) map[string]*Response {
 	out := make(map[string]*Response, len(s.cfg.Upstreams))
 	var mu sync.Mutex
 	sem := make(chan struct{}, max(1, s.cfg.Workers))
@@ -133,7 +181,7 @@ func (s *Server) callUpstreams(ctx context.Context, id string) map[string]*Respo
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r := s.call(ctx, u, id)
+			r := s.call(ctx, u, id, trail)
 			mu.Lock()
 			out[u] = r
 			mu.Unlock()
@@ -145,7 +193,7 @@ func (s *Server) callUpstreams(ctx context.Context, id string) map[string]*Respo
 
 // call makes one upstream request. A fake upstream's JSON is nested as
 // is; anything else becomes a Response with the code and body.
-func (s *Server) call(ctx context.Context, uri, id string) *Response {
+func (s *Server) call(ctx context.Context, uri, id, trail string) *Response {
 	start := s.now()
 	fail := func(code int, err string) *Response {
 		r := &Response{URI: uri, Type: "HTTP", Code: code, Error: err}
@@ -157,6 +205,7 @@ func (s *Server) call(ctx context.Context, uri, id string) *Response {
 		return fail(-1, err.Error())
 	}
 	req.Header.Set(HeaderRequestID, id)
+	req.Header.Set(HeaderTrail, trail)
 	res, err := s.client.Do(req)
 	if err != nil {
 		return fail(-1, err.Error())

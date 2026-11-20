@@ -656,6 +656,29 @@ type Fake struct {
 	// UpstreamFailure is fail (default: answer 500 when an upstream
 	// fails) or ignore.
 	UpstreamFailure string `yaml:"upstream_failure,omitempty" json:"upstream_failure,omitempty" jsonschema:"enum=fail,enum=ignore"`
+	// Health sets what /health answers; Parker's http check uses it.
+	Health *FakeHealth `yaml:"health,omitempty" json:"health,omitempty"`
+	// Ready sets what /ready answers; Parker waits on it at up.
+	Ready *FakeReady `yaml:"ready,omitempty" json:"ready,omitempty"`
+}
+
+type FakeHealth struct {
+	// Code /health answers (HEALTH_CHECK_RESPONSE_CODE); default 200. A
+	// code of 400 or more fails the Consul check while the process keeps
+	// running.
+	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+}
+
+type FakeReady struct {
+	// Delay before /ready passes, from the start of the process
+	// (READY_CHECK_RESPONSE_DELAY), e.g. 5s: a slow-starting service.
+	Delay string `yaml:"delay,omitempty" json:"delay,omitempty"`
+	// Code /ready answers once ready (READY_CHECK_RESPONSE_SUCCESS_CODE);
+	// default 200.
+	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// FailureCode /ready answers before then
+	// (READY_CHECK_RESPONSE_FAILURE_CODE); default 503.
+	FailureCode int `yaml:"failure_code,omitempty" json:"failure_code,omitempty" jsonschema:"minimum=100,maximum=599"`
 }
 
 // Upstream is a destination reached through the sidecar on a local port.

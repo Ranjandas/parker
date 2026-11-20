@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -45,11 +47,23 @@ func dataplaneHealthCmd() *cobra.Command {
 	}
 }
 
+var probeClient = &http.Client{Timeout: time.Second}
+
 type catalogAPI interface {
 	Register(*api.CatalogRegistration, *api.WriteOptions) (*api.WriteMeta, error)
 }
 
+// tcpProbe checks host:port with a TCP connect, or an http:// URL with a
+// GET that must answer below 400 (a fake service's /health).
 func tcpProbe(addr string) bool {
+	if strings.HasPrefix(addr, "http://") {
+		resp, err := probeClient.Get(addr)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode < 400
+	}
 	c, err := net.DialTimeout("tcp", addr, time.Second)
 	if err != nil {
 		return false

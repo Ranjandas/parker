@@ -37,8 +37,8 @@ type DataplaneEntry struct {
 	Partition  string            `json:"partition,omitempty"`
 	NodeMeta   map[string]string `json:"node_meta,omitempty"`
 	Service    DataplaneService  `json:"service"`
-	// Probe is host:port, TCP-probed for the service's health; "" is
-	// always passing.
+	// Probe is host:port, TCP-probed for the service's health, or an
+	// http:// URL that must answer below 400; "" is always passing.
 	Probe string `json:"probe,omitempty"`
 }
 
@@ -81,6 +81,9 @@ func dataplaneEntries(node, ip, dc, part string, meta map[string]string, name st
 	s.Service = DataplaneService{ID: name, Name: name, Port: svc.Port, Address: ip, Namespace: ns}
 	if svc.Port > 0 && svc.Check != "none" {
 		s.Probe = fmt.Sprintf("%s:%d", ip, svc.Port)
+		if isFake(svc) && (svc.Check == "" || svc.Check == "http") {
+			s.Probe = fmt.Sprintf("http://%s:%d%s", ip, svc.Port, healthPath(svc))
+		}
 	}
 	out := []DataplaneEntry{s}
 	if inMesh(svc) {
