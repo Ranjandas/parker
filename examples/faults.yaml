@@ -23,7 +23,9 @@ scenario:
       assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }
     - assert: { consul: { leader: true }, within: 30s }
     - heal: all
-    - assert: { consul: { members: ">=4", peers: ">=3" }, within: 30s }
+    # Serf retries failed members every 30s, so a healed node can take up
+    # to that long to show alive again.
+    - assert: { consul: { members: ">=4", peers: ">=3" }, within: 60s }
 
     - kill: dc1/leader
     - assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }
