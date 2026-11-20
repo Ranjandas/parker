@@ -29,6 +29,8 @@ func uiCmd() *cobra.Command {
 			"PARKER_TOKEN), so a remote daemon needs no browser certificate exception.\n\n" +
 			"The link carries a one-time sign-in token in its #fragment, which the browser\n" +
 			"never sends to a server; the page swaps it for a session cookie and drops it.\n" +
+			"Web UIs inside the lab (the Consul UI, service ports) open from the UI's Open\n" +
+			"links through the daemon, each on its own origin under *.parker.localhost.\n" +
 			"Stop with Ctrl-C.\n\n" +
 			"A daemon started with --listen also serves the UI itself at https://HOST:PORT/;\n" +
 			"sign in there with the token from `parker daemon credentials`.",

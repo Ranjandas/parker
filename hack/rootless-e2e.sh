@@ -180,6 +180,16 @@ curl -sf -b $jar -H 'Content-Type: application/json' -d "{\"lab\":\"$lab\"}" \
 # The topology view's graph names the same nodes.
 curl -sf -b $jar -H 'Content-Type: application/json' -d "{\"lab\":\"$lab\"}" \
   http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Graph | grep -E "\"name\": ?\"$first\"" >/dev/null
+# An app inside the lab (Consul's HTTP API on $first) opens on an origin of
+# its own: the link's one-time ticket becomes that origin's cookie.
+open=$(curl -sf -b $jar -H 'Content-Type: application/json' \
+  -d "{\"lab\":\"$lab\",\"node\":\"$first\",\"port\":$port,\"scheme\":\"$scheme\",\"path\":\"/v1/status/leader\"}" \
+  http://127.0.0.1:18080/ui/open | sed -n 's/.*"url": *"\([^"]*\)".*/\1/p')
+apphost=$(echo "$open" | sed -n 's#^http://\([^:/]*\):.*#\1#p')
+[ -n "$apphost" ] || { echo "no app link: $open"; exit 1; }
+curl -sf -L -b /run/parker/app.jar -c /run/parker/app.jar --resolve "$apphost:18080:127.0.0.1" "$open" | grep 8300 >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$apphost:18080:127.0.0.1" "http://$apphost:18080/v1/status/leader")
+[ "$code" = 401 ] || { echo "app origin without its cookie: $code"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' -b $jar -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Exec)
 [ "$code" = 404 ] || { echo "UI allowed Exec: $code"; exit 1; }
 kill $up; wait $up 2>/dev/null || true

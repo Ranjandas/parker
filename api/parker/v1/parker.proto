@@ -175,6 +175,16 @@ message GraphNode {
   repeated string services = 5;
   repeated string gateways = 6; // mesh, ingress, terminating, api
   repeated string ips = 7;
+  repeated GraphLink links = 8; // web UIs the node serves
+}
+
+// GraphLink is a web UI on a node, opened through the daemon's app proxy.
+message GraphLink {
+  string name = 1; // "Consul UI", or a service's name
+  int32 port = 2;
+  string scheme = 3; // http or https
+  string path = 4;
+  string token = 5; // signs in to it (the Consul UI's management token)
 }
 
 message GraphEdge {

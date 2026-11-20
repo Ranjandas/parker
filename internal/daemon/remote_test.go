@@ -160,4 +160,25 @@ func webUI(t *testing.T, addr, tok string) {
 	if code, body := post("/ui/api/parker.v1.ParkerService/Status", `{"lab":"t"}`); code != 200 || !strings.Contains(body, `"lab":"t"`) {
 		t.Fatalf("UI status: %d %s", code, body)
 	}
+	// The app proxy is behind the token on the listener.
+	if code, _ := get("/app/t/a/http/80/"); code != http.StatusUnauthorized {
+		t.Errorf("app proxy without the token: %d", code)
+	}
+	// An app's origin reaches only the UI's app gateway, never the API,
+	// even holding the token.
+	for _, path := range []string{"/parker.v1.ParkerService/Version", "/app/t/a/http/80/"} {
+		r, _ := http.NewRequest("POST", base+path, strings.NewReader("{}"))
+		r.Host = "a-80--t.parker.localhost"
+		r.Header.Set("Authorization", "Bearer "+tok)
+		r.Header.Set("Content-Type", "application/json")
+		resp, err := hc.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(string(b), "Open it from the Parker UI") {
+			t.Errorf("app host %s: %d %s", path, resp.StatusCode, b)
+		}
+	}
 }

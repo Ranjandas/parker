@@ -391,11 +391,26 @@ from the same live status as the overview, so when a sidecar fails, the
 paths through it turn red and say why. Pick a node for its processes,
 checks, connections and fault actions; drag to pan, scroll to zoom.
 
+Nodes that serve a web UI get **Open** links, on the node page and in the
+topology view's panel: the Consul UI of each server (over HTTPS with the
+lab CA when the lab has TLS, with a *Copy token* button for the ACL
+management token) and each service's port. The daemon proxies them from
+inside the lab, so they work against a remote daemon too. Each app gets an
+origin of its own, `<node>-<port>--<lab>.parker.localhost` on the UI's
+port, which browsers resolve to loopback: apps with absolute paths work,
+and their scripts can't reach the Parker UI or its session. The link
+carries a one-time ticket that signs the browser in to that app only.
+Because `*.localhost` names point at the browser's own machine, use
+`parker ui` (or a browser on the daemon host) for app links.
+
 A daemon started with `--listen` also serves the UI itself at
 `https://HOST:PORT/`: sign in with the token from `parker daemon
 credentials`. Browser sessions reach only the calls the UI needs (status,
-the topology graph, logs, describe, scenarios and faults, down). Exec,
-dial and up stay with the CLI.
+the topology graph, logs, describe, scenarios and faults, down, and the
+app links above). Exec, dial and up stay with the CLI. Its certificate
+covers `*.parker.localhost` when Parker creates it; an older certificate
+(`tls/cert.pem` in the daemon's state directory) doesn't, so delete it and
+restart the daemon, or use `parker ui`.
 
 To work on the UI without a lab, `go run ./hack/uidemo` serves it against a
 fake daemon.

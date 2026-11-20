@@ -28,6 +28,18 @@ type Node struct {
 	// Gateways it runs: mesh, ingress, terminating, api.
 	Gateways []string
 	IPs      []string
+	// Links are the web UIs the node serves, for the UI's Open links.
+	Links []Link
+}
+
+// Link is a web UI on a node.
+type Link struct {
+	Name   string // "Consul UI", or the service's name
+	Port   int
+	Scheme string // http or https
+	Path   string
+	// Token signs in to it (the Consul UI's initial management token).
+	Token string
 }
 
 // Edge kinds.
@@ -72,6 +84,7 @@ type proxy struct {
 
 type service struct {
 	Name    string `json:"name"`
+	Port    int    `json:"port"`
 	Kind    string `json:"kind"`
 	Proxy   *proxy `json:"proxy"`
 	Connect *struct {
@@ -82,10 +95,23 @@ type service struct {
 }
 
 type agentConfig struct {
-	Services        []service `json:"services"`
-	RetryJoinWAN    []string  `json:"retry_join_wan"`
-	PrimaryGateways []string  `json:"primary_gateways"`
-	MeshGWFed       bool      `json:"enable_mesh_gateway_wan_federation"`
+	Services   []service `json:"services"`
+	ClientAddr string    `json:"client_addr"`
+	Ports      struct {
+		HTTP  *int `json:"http"`
+		HTTPS int  `json:"https"`
+	} `json:"ports"`
+	UI struct {
+		Enabled bool `json:"enabled"`
+	} `json:"ui_config"`
+	ACL struct {
+		Tokens struct {
+			InitialManagement string `json:"initial_management"`
+		} `json:"tokens"`
+	} `json:"acl"`
+	RetryJoinWAN    []string `json:"retry_join_wan"`
+	PrimaryGateways []string `json:"primary_gateways"`
+	MeshGWFed       bool     `json:"enable_mesh_gateway_wan_federation"`
 }
 
 type dataplaneEntry struct {
@@ -174,6 +200,7 @@ func Build(f *spec.File) *Graph {
 						g.Federation = "wan"
 					}
 				}
+				n.Links = append(n.Links, links(cfg)...)
 				for _, s := range cfg.Services {
 					if s.Connect != nil && s.Connect.Sidecar != nil && s.Connect.Sidecar.Proxy != nil && len(s.Connect.Sidecar.Proxy.Upstreams) > 0 {
 						callers = append(callers, caller{node: name, ups: s.Connect.Sidecar.Proxy.Upstreams})
@@ -373,6 +400,31 @@ func Build(f *spec.File) *Graph {
 	}
 	sort.SliceStable(g.Edges, func(i, j int) bool { return g.Edges[i].Kind < g.Edges[j].Kind })
 	return g
+}
+
+// links are the web UIs an agent's config says the node serves: the Consul
+// UI (over HTTPS when the agent has an https port) and each service's port.
+// Only addresses reachable from outside the node count.
+func links(cfg agentConfig) []Link {
+	var out []Link
+	if cfg.UI.Enabled && cfg.ClientAddr != "" && !strings.HasPrefix(cfg.ClientAddr, "127.") {
+		switch {
+		case cfg.Ports.HTTPS > 0:
+			out = append(out, Link{Name: "Consul UI", Port: cfg.Ports.HTTPS, Scheme: "https", Path: "/ui/", Token: cfg.ACL.Tokens.InitialManagement})
+		case cfg.Ports.HTTP == nil || *cfg.Ports.HTTP > 0:
+			port := 8500
+			if cfg.Ports.HTTP != nil {
+				port = *cfg.Ports.HTTP
+			}
+			out = append(out, Link{Name: "Consul UI", Port: port, Scheme: "http", Path: "/ui/", Token: cfg.ACL.Tokens.InitialManagement})
+		}
+	}
+	for _, s := range cfg.Services {
+		if s.Port > 0 && s.Kind == "" {
+			out = append(out, Link{Name: s.Name, Port: s.Port, Scheme: "http", Path: "/"})
+		}
+	}
+	return out
 }
 
 func itoa(n int) string {

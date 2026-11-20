@@ -234,11 +234,12 @@ func TestResolvePartitionNames(t *testing.T) {
 
 func TestGraphToProto(t *testing.T) {
 	g := &graph.Graph{Federation: "wan",
-		Nodes: []graph.Node{{Name: "dc1-web", DC: "dc1", Role: "client", Services: []string{"web"}, IPs: []string{"10.1.0.5"}}},
+		Nodes: []graph.Node{{Name: "dc1-web", DC: "dc1", Role: "client", Services: []string{"web"}, IPs: []string{"10.1.0.5"},
+			Links: []graph.Link{{Name: "Consul UI", Port: 8501, Scheme: "https", Path: "/ui/", Token: "t"}}}},
 		Edges: []graph.Edge{{Kind: graph.Upstream, From: "dc1-web", To: "dc2-api", Label: "api :9091", Via: []string{"dc1-mesh", "dc2-mesh"}}}}
 	p := GraphToProto("l", g)
 	if p.Lab != "l" || p.Federation != "wan" || p.Nodes[0].Services[0] != "web" || p.Nodes[0].Dc != "dc1" ||
-		p.Edges[0].Kind != "upstream" || p.Edges[0].Via[1] != "dc2-mesh" || p.Edges[0].Label != "api :9091" {
+		p.Nodes[0].Links[0].Port != 8501 || p.Nodes[0].Links[0].Token != "t" || p.Edges[0].Kind != "upstream" || p.Edges[0].Via[1] != "dc2-mesh" || p.Edges[0].Label != "api :9091" {
 		t.Errorf("%v", p)
 	}
 }

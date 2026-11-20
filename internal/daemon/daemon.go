@@ -251,8 +251,12 @@ func (s *Server) Graph(_ context.Context, req *connect.Request[parkerv1.GraphReq
 func GraphToProto(name string, g *graph.Graph) *parkerv1.GraphResponse {
 	out := &parkerv1.GraphResponse{Lab: name, Federation: g.Federation}
 	for _, n := range g.Nodes {
-		out.Nodes = append(out.Nodes, &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role,
-			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs})
+		pn := &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role,
+			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs}
+		for _, l := range n.Links {
+			pn.Links = append(pn.Links, &parkerv1.GraphLink{Name: l.Name, Port: int32(l.Port), Scheme: l.Scheme, Path: l.Path, Token: l.Token})
+		}
+		out.Nodes = append(out.Nodes, pn)
 	}
 	for _, e := range g.Edges {
 		out.Edges = append(out.Edges, &parkerv1.GraphEdge{Kind: e.Kind, From: e.From, To: e.To, Label: e.Label, Via: e.Via})
@@ -433,6 +437,7 @@ func Serve(ctx context.Context, o ServeOptions, log io.Writer) error {
 
 	mux := http.NewServeMux()
 	mux.Handle(parkerv1connect.NewParkerServiceHandler(s))
+	mux.Handle(AppPrefix, AppProxy())
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
