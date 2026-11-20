@@ -67,6 +67,8 @@ type Handler struct {
 	files    http.Handler
 	mu       sync.Mutex
 	sessions map[string]time.Time
+	tickets  map[string]ticket     // one-time app sign-in links
+	apps     map[string]appSession // app origins' sessions
 	now      func() time.Time
 }
 
@@ -76,13 +78,19 @@ func New(o Options) *Handler {
 	if err != nil {
 		panic(err)
 	}
-	return &Handler{o: o, files: http.FileServer(http.FS(sub)), sessions: map[string]time.Time{}, now: time.Now}
+	return &Handler{o: o, files: http.FileServer(http.FS(sub)), sessions: map[string]time.Time{}, tickets: map[string]ticket{}, apps: map[string]appSession{}, now: time.Now}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	if IsAppHost(r.Host) {
+		h.app(w, r)
+		return
+	}
 	switch {
+	case r.URL.Path == "/ui/open":
+		h.open(w, r)
 	case r.URL.Path == "/ui/session":
 		h.session(w, r)
 	case r.URL.Path == "/ui/info":
@@ -199,12 +207,22 @@ func (h *Handler) valid(r *http.Request) bool {
 	return true
 }
 
-// gc drops expired sessions; h.mu is held.
+// gc drops expired sessions and tickets; h.mu is held.
 func (h *Handler) gc() {
 	now := h.now()
 	for id, exp := range h.sessions {
 		if now.After(exp) {
 			delete(h.sessions, id)
+		}
+	}
+	for id, t := range h.tickets {
+		if now.After(t.exp) {
+			delete(h.tickets, id)
+		}
+	}
+	for id, a := range h.apps {
+		if now.After(a.exp) {
+			delete(h.apps, id)
 		}
 	}
 }

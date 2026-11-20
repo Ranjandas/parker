@@ -134,3 +134,30 @@ func TestMinimal(t *testing.T) {
 		t.Errorf("%+v", g)
 	}
 }
+
+func linksOf(t *testing.T, g *Graph, name string) []string {
+	t.Helper()
+	var out []string
+	for _, l := range node(t, g, name).Links {
+		s := l.Name + " " + l.Scheme + ":" + itoa(l.Port) + l.Path
+		if l.Token != "" {
+			s += " token"
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func TestLinks(t *testing.T) {
+	g := build(t, "mesh.yaml")
+	want(t, "server", linksOf(t, g, "dc1-server-1"), "Consul UI http:8500/ui/")
+	want(t, "service", linksOf(t, g, "dc1-web"), "web http:8080/")
+	// TLS turns the HTTP port off: the UI is on 8501 (and the example has ACLs).
+	want(t, "tls server", linksOf(t, build(t, "tls.yaml"), "dc1-server-1"), "Consul UI https:8501/ui/ token")
+	// With ACLs the UI link carries the management token to sign in with.
+	want(t, "acl server", linksOf(t, build(t, "acl.yaml"), "dc1-server-1"), "Consul UI http:8500/ui/ token")
+	// Gateways register no service ports of their own here.
+	if l := linksOf(t, build(t, "gateways.yaml"), "dc1-ingress"); len(l) != 0 {
+		t.Errorf("gateway links %q", l)
+	}
+}

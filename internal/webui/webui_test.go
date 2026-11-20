@@ -1,9 +1,11 @@
 package webui
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -11,13 +13,14 @@ import (
 
 // fakeAPI records what reached the API.
 type fakeAPI struct {
-	path, auth, cookie string
-	calls              int
+	path, raw, query, auth, cookie string
+	calls                          int
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.calls++
 	f.path, f.auth, f.cookie = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Cookie")
+	f.raw, f.query = r.URL.EscapedPath(), r.URL.RawQuery
 	_, _ = io.WriteString(w, `{"labs":[]}`)
 }
 
@@ -170,4 +173,101 @@ func TestAPIGatewayAllowsTheUIsCalls(t *testing.T) {
 			t.Errorf("%s: %d, reached %q", p, w.Code, api.path)
 		}
 	}
+}
+
+// openApp asks for an app link and returns its URL.
+func openApp(t *testing.T, h http.Handler, cookie, body string) (int, string) {
+	t.Helper()
+	w := do(h, "POST", "/ui/open", body, map[string]string{"Cookie": cookie, "Origin": "http://parker.test"})
+	var out struct{ URL string }
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out.URL
+}
+
+func TestOpenApp(t *testing.T) {
+	h, api := newTest(t)
+	cookie := login(t, h)
+	app := `{"lab":"meshfed","node":"dc1-server-1","port":8501,"scheme":"https","path":"/ui/"}`
+	if w := do(h, "POST", "/ui/open", app, nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("open without a session: %d", w.Code)
+	}
+	if w := do(h, "POST", "/ui/open", app, map[string]string{"Cookie": cookie, "Origin": "https://evil.example"}); w.Code != http.StatusForbidden {
+		t.Errorf("cross-origin open: %d", w.Code)
+	}
+	for _, bad := range []string{`{"lab":"Bad Lab","node":"a","port":80,"scheme":"http"}`, `{"lab":"l","node":"a--b","port":80,"scheme":"http"}`,
+		`{"lab":"l","node":"a","port":0,"scheme":"http"}`, `{"lab":"l","node":"a","port":80,"scheme":"ftp"}`, `{"lab":"l","node":"a","port":80,"scheme":"http","path":"//evil"}`} {
+		if code, _ := openApp(t, h, cookie, bad); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", bad, code)
+		}
+	}
+	code, link := openApp(t, h, cookie, app)
+	u, err := url.Parse(link)
+	if code != 200 || err != nil || u.Host != "dc1-server-1-8501s--meshfed.parker.localhost" || u.Path != "/.parker/open" {
+		t.Fatalf("link %d %q", code, link)
+	}
+	if !IsAppHost(u.Host) || IsAppHost("parker.test") || IsAppHost("a.b.parker.localhost") {
+		t.Error("IsAppHost")
+	}
+
+	// The ticket only works on its own app's origin, and only once.
+	other := "http://web-8080--meshfed.parker.localhost" + u.RequestURI()
+	if w := doURL(h, "GET", other, nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("ticket on another app: %d", w.Code)
+	}
+	code, link = openApp(t, h, cookie, app)
+	u, _ = url.Parse(link)
+	w := doURL(h, "GET", link, nil)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/ui/" {
+		t.Fatalf("ticket: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	ac := w.Result().Cookies()
+	if len(ac) != 1 || ac[0].Name != "parker_app" || !ac[0].HttpOnly || ac[0].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("app cookie %+v", ac)
+	}
+	if w := doURL(h, "GET", link, nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("ticket reused: %d", w.Code)
+	}
+
+	appCookie := ac[0].Name + "=" + ac[0].Value
+	base := "http://" + u.Host
+	// The app's requests reach the API's app proxy with the token, and
+	// without Parker's cookie (the app keeps its own).
+	w = doURL(h, "GET", base+"/v1/kv/a%2Fb?recurse=1", map[string]string{"Cookie": appCookie + "; app_pref=dark"})
+	if w.Code != 200 || api.path != "/app/meshfed/dc1-server-1/https/8501/v1/kv/a/b" || api.auth != "Bearer s3cret" || api.cookie != "app_pref=dark" {
+		t.Errorf("forwarded: %d path %q auth %q cookie %q", w.Code, api.path, api.auth, api.cookie)
+	}
+	if api.raw != "/app/meshfed/dc1-server-1/https/8501/v1/kv/a%2Fb" || api.query != "recurse=1" {
+		t.Errorf("escaped path %q query %q", api.raw, api.query)
+	}
+	// An app origin never serves the Parker UI or its API, even signed in.
+	calls := api.calls
+	for _, p := range []string{"/ui/info", Prefix + "/parker.v1.ParkerService/ListLabs"} {
+		do := doURL(h, "POST", base+p, map[string]string{"Cookie": cookie})
+		if do.Code != http.StatusUnauthorized || api.calls != calls {
+			t.Errorf("%s on an app origin with the UI cookie: %d", p, do.Code)
+		}
+	}
+	// Its cookie is no good on another app.
+	if w := doURL(h, "GET", "http://web-8080--meshfed.parker.localhost/", map[string]string{"Cookie": appCookie}); w.Code != http.StatusUnauthorized {
+		t.Errorf("app cookie on another app: %d", w.Code)
+	}
+}
+
+func TestAppLabelFallsBackToAHash(t *testing.T) {
+	a := AppTarget{Lab: strings.Repeat("l", 40), Node: strings.Repeat("n", 30), Port: 8500, Scheme: "http"}
+	b := a
+	b.Port = 8501
+	if la, lb := a.label(), b.label(); len(la) > 63 || !strings.HasPrefix(la, "app-") || la == lb || !IsAppHost(la+appDomain) {
+		t.Errorf("labels %q %q", la, lb)
+	}
+}
+
+func doURL(h http.Handler, method, target string, hdr map[string]string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, nil)
+	for k, v := range hdr {
+		r.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
 }

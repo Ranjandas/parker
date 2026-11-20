@@ -424,6 +424,7 @@ function renderNode() {
           <div class="hd"><h3>Consul health</h3><div class="grow"></div>${health.some(([, h]) => h === "critical") ? `<span class="chip bad">${health.filter(([, h]) => h === "critical").length} critical</span>` : health.length ? '<span class="chip ok">passing</span>' : ""}</div>
           <div class="checks" style="padding:14px 16px">${health.length ? health.sort().map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("") : `<span class="muted">${n.role ? "No services registered on this node." : "No reachable Consul agent on this node."}</span>`}</div>
         </div>
+        ${openSection(n.name, (h) => `<div class="card"><div class="hd"><h3>Open</h3><div class="grow"></div><span class="muted" style="font-size:12px">through the daemon</span></div><div style="padding:12px">${h}</div></div>`)}
         <div class="card">
           <div class="hd"><h3>Describe</h3><div class="grow"></div><button class="btn sm ghost" data-act="describe">${S.describe && S.describe.node === n.name ? "Refresh" : "Load"}</button></div>
           ${S.describe && S.describe.node === n.name ? `<pre class="yaml">${esc(S.describe.yaml)}</pre>` : '<div class="empty" style="padding:14px 16px;text-align:left">The node\'s expanded topology: networks, rendered files and processes.</div>'}
@@ -506,6 +507,40 @@ function ensureLogs(lab, node, proc) {
 }
 function stopLogs() {
   if (S.logs.ctrl) { const c = S.logs.ctrl; S.logs.ctrl = null; c.abort(); }
+}
+
+// ---------- app UIs ----------
+// openSection lists the web UIs a node serves (from the graph). Each opens
+// through the daemon on an origin of its own (see webui/apps.go).
+function openSection(nodeName, wrap) {
+  const g = S.graph && S.graph.lab === S.route.lab ? S.graph : null;
+  const gn = g && (g.nodes || []).find((n) => n.name === nodeName);
+  const links = (gn && gn.links) || [];
+  if (!links.length) return "";
+  const rows = links.map((l) => `<div class="app-row">
+      <button class="app-l" data-act="open" data-sel="${esc(nodeName)}" data-port="${l.port}" data-scheme="${esc(l.scheme || "http")}" data-path="${esc(l.path || "/")}">
+        <span><b>${esc(l.name)}</b><small>${esc(nodeName)}:${l.port}${esc(l.path || "/")}${l.scheme === "https" ? " · TLS" : ""}</small></span><span class="go" aria-hidden="true">↗</span></button>
+      ${l.token ? `<button class="btn sm ghost" data-act="copytoken" data-token="${esc(l.token)}" title="Copy the ACL token to sign in to the Consul UI">Copy token</button>` : ""}</div>`).join("");
+  return wrap(`<div class="apps">${rows}</div>`);
+}
+
+async function openApp(btn) {
+  // Open the window now, while the click still counts as a user gesture,
+  // and point it at the app once the daemon hands out the link.
+  const win = window.open("about:blank", "_blank");
+  try {
+    const r = await fetch("/ui/open", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lab: S.route.lab, node: btn.dataset.sel, port: +btn.dataset.port, scheme: btn.dataset.scheme, path: btn.dataset.path }),
+    });
+    if (r.status === 401) { if (win) win.close(); signedOut(); return; }
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const { url } = await r.json();
+    if (win) { win.opener = null; win.location.href = url; } else location.href = url;
+  } catch (e) {
+    if (win) win.close();
+    toast("Can't open it: " + e.message);
+  }
 }
 
 // ---------- topology ----------
@@ -813,6 +848,7 @@ function topoPanel(g, ts) {
     }).join("") || `<span class="muted">${n ? "No processes" : "Not running"}</span>`}</div></section>
     ${health.length ? `<section><h4>Consul health</h4><div class="checks">${health.map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("")}</div></section>` : ""}
     ${outs.length || ins.length || through.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}${ins.map((e) => conn(e, "in")).join("")}${through.map((e) => `<a href="#" data-tnode="${esc(e.from)}"><span class="k" style="color:var(--fed)">carries</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><small>${esc(e.label)}</small></a>`).join("")}</div></section>` : ""}
+    ${openSection(gn.name, (h) => `<section><h4>Open</h4>${h}</section>`)}
     <section><h4>Actions</h4><div class="actions"><a class="btn sm" href="${nodeHref}">Logs</a><button class="btn sm" data-act="shell" data-sel="${esc(gn.name)}">${ICON.term}Shell</button><button class="btn sm" data-act="restart" data-sel="${esc(gn.name)}">Restart</button><button class="btn sm" data-act="partition" data-sel="${esc(gn.name)}">Partition</button><button class="btn sm danger" data-act="kill" data-sel="${esc(gn.name)}">Kill</button></div></section>`;
 }
 
@@ -871,6 +907,10 @@ async function onAction(btn) {
   const lab = S.route.lab;
   switch (act) {
     case "theme": toggleTheme(); return;
+    case "open": openApp(btn); return;
+    case "copytoken":
+      try { await navigator.clipboard.writeText(btn.dataset.token); toast("Copied the ACL token. Paste it in the Consul UI's Log in."); } catch (e) { toast("Token: " + btn.dataset.token); }
+      return;
     case "follow": S.logs.follow = !S.logs.follow; btn.classList.toggle("off", !S.logs.follow); paintLogs(null); return;
     case "describe":
       try { const r = await call("Describe", { lab, node: S.route.node }); S.describe = { node: S.route.node, yaml: r.yaml || "" }; render(); } catch (e) { toast(e.message); }
@@ -981,7 +1021,7 @@ async function poll() {
     }
   }
   // The architecture only changes when the lab is brought up again.
-  if (lab && S.route.view === "topology" && (sideTick % 5 === 0 || !S.graph || S.graph.lab !== lab)) {
+  if (lab && (S.route.view === "topology" || S.route.node) && (sideTick % 5 === 0 || !S.graph || S.graph.lab !== lab)) {
     const before = JSON.stringify(S.graph);
     await loadGraph(lab);
     if (JSON.stringify(S.graph) !== before) S.unchanged = false;

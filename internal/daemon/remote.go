@@ -82,8 +82,9 @@ func ensureCert(extraSANs []string) (tls.Certificate, error) {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true, // self-signed: clients use it as their CA
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		// *.parker.localhost: the web UI gives each app UI an origin there.
+		DNSNames:    []string{"localhost", "*.parker.localhost"},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 	}
 	if host != "" {
 		tmpl.DNSNames = append(tmpl.DNSNames, host)
@@ -241,13 +242,26 @@ func serveTCP(ctx context.Context, addr string, sans []string, s *Server, log fu
 	if err != nil {
 		return nil, nil, err
 	}
-	mux := http.NewServeMux()
-	path, api := parkerv1connect.NewParkerServiceHandler(s, connect.WithInterceptors(tokenAuth{want: []byte("Bearer " + tok)}))
-	mux.Handle(path, api)
+	// The API (Connect, and the app proxy), both behind the token.
+	api := http.NewServeMux()
+	api.Handle(parkerv1connect.NewParkerServiceHandler(s, connect.WithInterceptors(tokenAuth{want: []byte("Bearer " + tok)})))
+	api.Handle(AppPrefix, requireToken(tok, AppProxy()))
 	// The web UI: browsers sign in with the same token (see package webui).
-	mux.Handle("/", webui.New(webui.Options{API: api, Token: tok, Where: addr, Version: Version}))
+	ui := webui.New(webui.Options{API: api, Token: tok, Where: addr, Version: Version})
+	mux := http.NewServeMux()
+	mux.Handle("/", ui)
+	mux.Handle(AppPrefix, api)
+	mux.Handle("/"+parkerv1connect.ParkerServiceName+"/", api)
 	srv := &http.Server{
-		Handler:           mux,
+		// An app's own origin (see webui.AppHost) only ever reaches the UI's
+		// app gateway, never the API directly.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if webui.IsAppHost(r.Host) {
+				ui.ServeHTTP(w, r)
+				return
+			}
+			mux.ServeHTTP(w, r)
+		}),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}},
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },

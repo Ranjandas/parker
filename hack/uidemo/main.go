@@ -191,12 +191,40 @@ func (f *fake) Down(context.Context, *connect.Request[parkerv1.DownRequest], *co
 	return nil
 }
 
+// fakeApp stands in for the daemon's app proxy: services answer like
+// Parker's fake-service, anything under /ui/ like a Consul UI page.
+func fakeApp(w http.ResponseWriter, r *http.Request) {
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, daemon.AppPrefix), "/", 5)
+	if len(parts) < 4 {
+		http.Error(w, "bad app path", http.StatusBadRequest)
+		return
+	}
+	labName, node, port, rest := parts[0], parts[1], parts[3], "/"
+	if len(parts) == 5 {
+		rest += parts[4]
+	}
+	if strings.HasPrefix(rest, "/ui/") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<!doctype html><title>Consul by HashiCorp</title><body style="margin:0;font:14px system-ui;background:#f5f6f7">
+<div style="background:#000;color:#fff;padding:12px 20px;font-weight:600">Consul · %s</div>
+<div style="padding:24px"><h2 style="margin:0 0 8px">Services</h2><p style="color:#666">%s:%s in lab %s, through the Parker daemon (demo page: a real daemon proxies the agent's own UI here).</p>
+<table style="border-collapse:collapse;background:#fff;min-width:420px"><tr><th align=left style="padding:8px 12px">Service</th><th align=left style="padding:8px 12px">Health</th></tr>
+<tr><td style="padding:8px 12px">consul</td><td style="color:#16803c">passing</td></tr><tr><td style="padding:8px 12px">web</td><td style="color:#16803c">passing</td></tr>
+<tr><td style="padding:8px 12px">api</td><td style="color:#d92d20">1 critical</td></tr></table></div>`, node, node, port, labName)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"name": strings.TrimPrefix(node, "dc1-"), "node": node, "message": "hello from " + node, "path": rest, "from": "10.1.0.100:51432", "time": time.Now().UTC()})
+}
+
 func main() {
 	addr := flag.String("listen", "127.0.0.1:8090", "address")
 	token := flag.String("token", "demo", "sign-in token")
 	examples := flag.String("examples", "examples", "the repository's examples directory")
 	flag.Parse()
-	_, api := parkerv1connect.NewParkerServiceHandler(&fake{broken: true, examples: *examples})
+	api := http.NewServeMux()
+	api.Handle(parkerv1connect.NewParkerServiceHandler(&fake{broken: true, examples: *examples}))
+	api.HandleFunc(daemon.AppPrefix, fakeApp)
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatal(err)
