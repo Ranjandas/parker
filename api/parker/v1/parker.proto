@@ -66,6 +66,10 @@ message UpRequest {
   bool keep_on_failure = 2;
   // Don't add iptables rules; report them instead.
   bool no_firewall = 3;
+  // Consul Enterprise license the client resolved (CONSUL_LICENSE,
+  // CONSUL_LICENSE_PATH or license.file). The daemon writes it to the lab's
+  // run dir (0600) for the agents and never logs or stores it elsewhere.
+  bytes consul_license = 4;
 }
 
 message LogLine {

@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -28,6 +30,7 @@ import (
 	"github.com/Ranjandas/parker/internal/daemon"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
+	"github.com/Ranjandas/parker/internal/license"
 	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -222,6 +225,17 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 	for _, w := range compat.Warnings(low) {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
+	// The license, checked before anything is fetched or started.
+	var targets []string
+	for _, pv := range upBinaries(low) {
+		if !slices.Contains(slices.Collect(maps.Values(low.Versions)), pv[1]) {
+			targets = append(targets, pv[1]) // scenario upgrade targets
+		}
+	}
+	lic, err := license.For(low, os.Getenv, targets...)
+	if err != nil {
+		return err
+	}
 	// Fetch here: a rootless daemon has no network of its own, and the
 	// cache is shared. Scenario upgrade targets too, for the same reason.
 	if !target().IsRemote() {
@@ -232,7 +246,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		}
 	}
 	if o.noDaemon {
-		_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall})
+		_, err := lab.Up(ctx, low, lab.Options{Log: os.Stdout, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic})
 		return err
 	}
 	c, err := ensureDaemon(ctx)
@@ -244,7 +258,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		return err
 	}
 	stream, err := c.Up(ctx, connect.NewRequest(&parkerv1.UpRequest{
-		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall,
+		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, ConsulLicense: lic,
 	}))
 	if err != nil {
 		return rpcErr(err)

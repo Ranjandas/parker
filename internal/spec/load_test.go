@@ -219,3 +219,25 @@ func TestValidateFederation(t *testing.T) {
 		t.Errorf("two primaries: %v", err)
 	}
 }
+
+func TestLicensePath(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "lab.yaml")
+	os.WriteFile(p, []byte("parker: v1alpha1\nversions: { consul: 1.22.7+ent }\nlicense: { file: keys/consul.hclic }\n"), 0o644)
+	f, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.License.File != filepath.Join(dir, "keys", "consul.hclic") {
+		t.Errorf("relative license.file: %q", f.License.File)
+	}
+	home, _ := os.UserHomeDir()
+	os.WriteFile(p, []byte("parker: v1alpha1\nlicense: { file: ~/consul.hclic }\n"), 0o644)
+	if f, err := Load(p, nil); err != nil || f.License.File != filepath.Join(home, "consul.hclic") {
+		t.Errorf("~ license.file: %v %v", f, err)
+	}
+	os.WriteFile(p, []byte("parker: v1alpha1\nlicense: {}\n"), 0o644)
+	if _, err := Load(p, nil); err == nil || !strings.Contains(err.Error(), "license.file: required") {
+		t.Errorf("empty license: %v", err)
+	}
+}

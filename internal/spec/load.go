@@ -72,6 +72,16 @@ func Load(path string, overrides map[string]string) (*File, error) {
 	if f.Name == "" {
 		f.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+	if l := f.License; l != nil && l.File != "" {
+		if rest, ok := strings.CutPrefix(l.File, "~/"); ok {
+			if home, err := os.UserHomeDir(); err == nil {
+				l.File = filepath.Join(home, rest)
+			}
+		}
+		if !filepath.IsAbs(l.File) {
+			l.File = filepath.Join(filepath.Dir(path), l.File)
+		}
+	}
 	if err := resolveConfigEntries(&f, text, filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -90,6 +100,9 @@ func (f *File) Validate() error {
 
 	if f.Parker != SchemaVersion {
 		add("parker: must be %q (got %q)", SchemaVersion, f.Parker)
+	}
+	if f.License != nil && f.License.File == "" {
+		add("license.file: required (or drop license: and set CONSUL_LICENSE_PATH)")
 	}
 	if !nameRe.MatchString(f.Name) || len(f.Name) > 24 {
 		add("name: %q must be lowercase letters, digits and '-', at most 24 chars", f.Name)
