@@ -31,9 +31,12 @@
   //   agent: "client" | "dataplane"
   //   svc: null (a bare client) or {port, connect, ups: [{to, port}]},
   //        held: ports of upstreams the canvas doesn't show
+  //        ns: its own namespace ("" for the default, or inherited)
+  //        inhNs: the namespace a file's service_defaults gives it
   //     connect: "" (from service_defaults) | "none" | "sidecar" | "tproxy"
   //     to: the called node's id
-  // gw: {id, name, kind, part, to: [node ids]}
+  // gw: {id, name, kind, part, to: [node ids], ns}
+  //   ns: the namespace a terminating, ingress or API gateway registers in
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
@@ -71,7 +74,20 @@
     const eq = (u, v) => u[0] === v[0] && u[1] === v[1];
     return (eq(acc, x) && eq(dial, y)) || (eq(acc, y) && eq(dial, x));
   });
-  const ent = (m) => m.dcs.some((d) => d.parts.length > 0);
+  // Namespaces: "" is the default one.
+  const normNs = (x) => (x && x !== "default" ? String(x) : "");
+  const nsOf = (n) => (n && n.svc ? normNs(n.svc.ns || n.svc.inhNs) : "");
+  const gwNs = (g) => (g && g.kind !== "mesh" ? normNs(g.ns) : "");
+  // fillInh gives every service the namespace its scope's service_defaults
+  // set in an opened file (d.inh: part id -> namespace), new ones too.
+  function fillInh(m) {
+    for (const d of m.dcs) for (const n of d.nodes) if (n.svc) {
+      const x = d.inh && d.inh[n.part || ""];
+      if (x) n.svc.inhNs = x; else delete n.svc.inhNs;
+    }
+  }
+  const usesNs = (m) => m.dcs.some((d) => d.nodes.some((n) => nsOf(n)) || d.gws.some((g) => gwNs(g)));
+  const ent = (m) => m.dcs.some((d) => d.parts.length > 0) || usesNs(m);
   // Every name in a dc: nodes and gateways share one namespace.
   const namesIn = (d) => new Set([...d.nodes.map((n) => n.name), ...d.gws.map((g) => g.name)]);
 
@@ -91,6 +107,7 @@
 
   // Every call in the lab, resolved: [{sd, src, td, t, port, r}].
   function calls(m) {
+    fillInh(m);
     const out = [];
     for (const sd of m.dcs) for (const src of sd.nodes) for (const u of (src.svc && src.svc.ups) || []) {
       const f = find(m, u.to);
@@ -303,6 +320,7 @@
   // ---------- YAML ----------
   // toDoc builds the topology as plain objects, keys in the examples' order.
   function toDoc(m) {
+    fillInh(m);
     const doc = { parker: "v1alpha1", name: m.name };
     const nodes = m.dcs.flatMap((d) => d.nodes);
     const anyEnvoy = nodes.some((n) => connectOf(m, n) !== "none") || m.dcs.some((d) => d.gws.length);
@@ -330,7 +348,8 @@
         const exp = {};
         for (const c of all) if (c.r.kind === "peer" && c.r.peering === p) {
           const k = sideName(m, c.td.id, c.t.part);
-          (exp[k] = exp[k] || []).includes(c.t.name) || exp[k].push(c.t.name);
+          const name = nsOf(c.t) ? `${nsOf(c.t)}/${c.t.name}` : c.t.name;
+          (exp[k] = exp[k] || []).includes(name) || exp[k].push(name);
         }
         if (Object.keys(exp).length) pe.exports = exp;
         consul.peering[peeringName(m, p)] = pe;
@@ -365,20 +384,28 @@
       body.gateways = {};
       for (const g of gws) {
         const targets = g.to.map((id) => find(m, id)).filter((f) => f && f.t === "node").map((f) => f.node.name);
+        const tnodes = g.to.map((id) => find(m, id)).filter((f) => f && f.t === "node").map((f) => f.node);
+        const gns = gwNs(g);
+        // A service a gateway names, with its namespace when it isn't the
+        // gateway's own.
+        const ref = (n, extra) => Object.assign({ Name: n.name }, nsOf(n) !== gns ? { Namespace: nsOf(n) || "default" } : {}, extra || {});
         let v = {};
         if (g.name !== g.kind) v.kind = g.kind;
+        if (gns) v.namespace = gns;
         if (g.kind === "ingress" && targets.length) {
-          v.entry = { Listeners: targets.map((t, i) => ({ Port: 8080 + i, Protocol: "http", Services: [{ Name: t, Hosts: ["*"] }] })) };
-          httpSvcs.push(...targets);
+          v.entry = { Listeners: tnodes.map((t, i) => ({ Port: 8080 + i, Protocol: "http", Services: [ref(t, { Hosts: ["*"] })] })) };
+          httpSvcs.push(...tnodes);
         } else if (g.kind === "terminating" && targets.length) {
-          v.entry = { Services: targets.map((t) => ({ Name: t })) };
+          v.entry = { Services: tnodes.map((t) => ref(t)) };
         } else if (g.kind === "api") {
           v.entry = { Listeners: [{ Name: "http", Port: 8081, Protocol: "http" }] };
-          httpSvcs.push(...targets);
-          targets.forEach((t) => {
+          httpSvcs.push(...tnodes);
+          tnodes.forEach((t) => {
             // One service takes every path; several split by a path prefix.
-            const rule = targets.length > 1 ? { Matches: [{ Path: { Match: "prefix", Value: "/" + t } }], Services: [{ Name: t }] } : { Services: [{ Name: t }] };
-            const r = { Kind: "http-route", Name: `${g.name}-to-${t}`, Parents: [{ Kind: "api-gateway", Name: g.name, SectionName: "http" }], Rules: [rule] };
+            const rule = tnodes.length > 1 ? { Matches: [{ Path: { Match: "prefix", Value: "/" + t.name } }], Services: [ref(t)] } : { Services: [ref(t)] };
+            const r = { Kind: "http-route", Name: `${g.name}-to-${t.name}` };
+            if (gns) r.Namespace = gns;
+            Object.assign(r, { Parents: [{ Kind: "api-gateway", Name: g.name, SectionName: "http" }], Rules: [rule] });
             routes.push(r);
           });
         }
@@ -395,12 +422,17 @@
           const sv = { port: n.svc.port };
           const want = connectOf(m, n);
           if (want !== inherited(m, n)) sv.connect = want;
+          if (normNs(n.svc.ns || n.svc.inhNs) !== normNs(n.svc.inhNs)) sv.namespace = n.svc.ns;
           const ups = {};
           for (const c of all.filter((c) => c.src === n)) {
-            if (c.r.kind === "local") ups[c.t.name] = c.port;
-            else if (c.r.kind === "partition") ups[c.t.name] = { port: c.port, partition: c.r.partition };
-            else if (c.r.kind === "peer") ups[c.t.name] = { port: c.port, peer: c.r.peer };
-            else ups[c.t.name] = { port: c.port, dc: c.r.dc };
+            let u;
+            if (c.r.kind === "local") u = { port: c.port };
+            else if (c.r.kind === "partition") u = { port: c.port, partition: c.r.partition };
+            else if (c.r.kind === "peer") u = { port: c.port, peer: c.r.peer };
+            else u = { port: c.port, dc: c.r.dc };
+            // The destination namespace defaults to the caller's.
+            if (nsOf(c.t) !== nsOf(n)) u.namespace = nsOf(c.t) || "default";
+            ups[c.t.name] = Object.keys(u).length === 1 ? u.port : u;
           }
           if (Object.keys(ups).length) sv.upstreams = ups;
           v.service = sv;
@@ -413,33 +445,48 @@
     const here = (dd, part) => dd.id === d.id && (part || "") === s.id;
     const viaGW = all.some((c) => (c.r.kind !== "local" && here(c.sd, c.src.part)) || (c.r.kind === "partition" && here(c.td, c.t.part)));
     if (viaGW) entries.push({ Kind: "proxy-defaults", Name: "global", MeshGateway: { Mode: "local" } });
-    for (const t of [...new Set(httpSvcs)]) entries.push({ Kind: "service-defaults", Name: t, Protocol: "http" });
+    const seenHttp = new Set();
+    for (const t of httpSvcs) {
+      const k = nsOf(t) + "/" + t.name;
+      if (seenHttp.has(k)) continue;
+      seenHttp.add(k);
+      entries.push(Object.assign({ Kind: "service-defaults", Name: t.name }, nsOf(t) ? { Namespace: nsOf(t) } : {}, { Protocol: "http" }));
+    }
     // Exports to other partitions.
     const exp = new Map();
     for (const c of all) if (c.r.kind === "partition" && here(c.td, c.t.part)) {
-      const consumers = exp.get(c.t.name) || [];
+      const k = nsOf(c.t) + "/" + c.t.name;
+      const e = exp.get(k) || { t: c.t, consumers: [] };
       const p = partName(c.sd, c.src.part);
-      if (!consumers.includes(p)) consumers.push(p);
-      exp.set(c.t.name, consumers);
+      if (!e.consumers.includes(p)) e.consumers.push(p);
+      exp.set(k, e);
     }
-    if (exp.size) entries.push({ Kind: "exported-services", Name: s.name, Services: [...exp].map(([n, cs]) => ({ Name: n, Consumers: cs.map((p) => ({ Partition: p })) })) });
+    if (exp.size) entries.push({ Kind: "exported-services", Name: s.name, Services: [...exp.values()].map((e) => Object.assign({ Name: e.t.name }, nsOf(e.t) ? { Namespace: nsOf(e.t) } : {}, { Consumers: e.consumers.map((p) => ({ Partition: p })) })) });
     entries.push(...routes);
     // With ACLs on (deny by default), allow each call.
     if (m.acl) {
+      // By destination (namespace and name); a source's namespace defaults
+      // to the destination's.
       const allow = new Map();
-      const add = (name, src) => { const l = allow.get(name) || []; if (!l.some((x) => JSON.stringify(x) === JSON.stringify(src))) l.push(src); allow.set(name, l); };
+      const add = (t, src) => {
+        const k = nsOf(t) + "/" + t.name;
+        const e = allow.get(k) || { t, srcs: [] };
+        if (!e.srcs.some((x) => JSON.stringify(x) === JSON.stringify(src))) e.srcs.push(src);
+        allow.set(k, e);
+      };
+      const srcNs = (ns, t) => (ns !== nsOf(t) ? { Namespace: ns || "default" } : {});
       for (const c of all) if (here(c.td, c.t.part)) {
-        const src = { Name: c.src.name };
+        const src = Object.assign({ Name: c.src.name }, srcNs(nsOf(c.src), c.t));
         if (c.r.kind === "peer") src.Peer = c.r.peer;
         if (c.r.kind === "partition") src.Partition = partName(c.sd, c.src.part);
         src.Action = "allow";
-        add(c.t.name, src);
+        add(c.t, src);
       }
       for (const g of gws) if (g.kind !== "mesh") for (const id of g.to) {
         const f = find(m, id);
-        if (f && f.node && connectOf(m, f.node) !== "none") add(f.node.name, { Name: g.name, Action: "allow" });
+        if (f && f.node && connectOf(m, f.node) !== "none") add(f.node, Object.assign({ Name: g.name }, srcNs(gwNs(g), f.node), { Action: "allow" }));
       }
-      for (const [n, srcs] of allow) entries.push({ Kind: "service-intentions", Name: n, Sources: srcs });
+      for (const e of allow.values()) entries.push(Object.assign({ Kind: "service-intentions", Name: e.t.name }, nsOf(e.t) ? { Namespace: nsOf(e.t) } : {}, { Sources: e.srcs }));
     }
     if (entries.length) body.config_entries = entries;
     return body;
@@ -562,6 +609,10 @@
         : `${c.sd.name}/${c.src.name} calls ${c.t.name} in ${c.td.name}, but the datacenters are neither federated nor peered. Link ${c.sd.name} to ${c.td.name}.`;
       out.push({ message, id: c.src.id });
     }
+    for (const d of m.dcs) {
+      for (const n of d.nodes) if (n.svc && n.svc.ns && !NAME_RE.test(n.svc.ns)) out.push({ message: `${n.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: n.id });
+      for (const g of d.gws) if (g.ns && !NAME_RE.test(g.ns)) out.push({ message: `${g.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: g.id });
+    }
     for (const p of m.peerings) {
       const a = dcById(m, p.acceptor), d = dcById(m, p.dialer);
       if (a && d && a.id === d.id) out.push({ message: `Consul can't peer two partitions of one datacenter (${peeringName(m, p)}). Link their services instead: the builder exports them to the other partition.`, id: p.id });
@@ -627,11 +678,13 @@
       m.dcs.push(d);
       const scope = (pid, sv, spath, sds) => {
         const sd = Object.assign({}, ...sds.map(sdOf), sdOf(sv));
+        if (typeof sd.namespace === "string" && normNs(sd.namespace)) (d.inh = d.inh || {})[pid] = sd.namespace;
         for (const [gn, gvRaw] of Object.entries(isMap(sv.gateways) ? sv.gateways : {})) {
           const gv = isMap(gvRaw) ? gvRaw : {};
           if (gvRaw === false) continue;
           const kind = KINDS.includes(gv.kind) ? gv.kind : KINDS.includes(gn) ? gn : "mesh";
           const g = keep(gw(kind, gn, pid), [...spath, "gateways", gn]);
+          if (kind !== "mesh" && typeof gv.namespace === "string" && normNs(gv.namespace)) g.ns = gv.namespace;
           d.gws.push(g);
           const e = isMap(gv.entry) ? gv.entry : {};
           const names = kind === "ingress" ? (e.Listeners || []).flatMap((l) => (l && l.Services) || []).map((x) => x && x.Name)
@@ -647,6 +700,8 @@
           if (isMap(nv.service)) {
             const s = nv.service;
             n.svc = { port: Number(s.port) || 0, connect: typeof s.connect === "string" ? s.connect : "", ups: [] };
+            if (typeof s.namespace === "string" && s.namespace) n.svc.ns = s.namespace;
+
             const inh = typeof sd.connect === "string" ? sd.connect : "";
             if (inh && inh !== (m.mesh ? sdOf(defs).connect : "none")) n.svc.inh = inh;
             for (const [un, uv] of Object.entries(isMap(s.upstreams) ? s.upstreams : {})) {
@@ -663,7 +718,11 @@
                 if (!td) return;
                 if (u.partition) tp = ((td.parts.find((x) => x.name === u.partition) || { id: u.partition === "default" ? "" : null }).id);
                 else if (td !== d && !u.peer) tp = "";
-                const t = td.nodes.find((x) => x.name === un && (x.part || "") === tp && x.svc);
+                // By name; when several namespaces have it, the upstream's
+                // namespace (else the caller's) picks one.
+                const cands = td.nodes.filter((x) => x.name === un && (x.part || "") === tp && x.svc);
+                const want = normNs(typeof u.namespace === "string" ? u.namespace : nsOf(n));
+                const t = cands.find((x) => nsOf(x) === want) || cands[0];
                 if (t) n.svc.ups.push({ to: t.id, port: Number(u.port) || 0 });
                 // An upstream to something the canvas doesn't show (an
                 // external service) stays in the file; keep its port taken.
@@ -776,7 +835,7 @@
       return out;
     };
     const old = new Map(scopes(da).map(([p, v]) => [dot(p), v.config_entries || []]));
-    const ek = (e) => `${e.Kind}/${e.Name}`;
+    const ek = (e) => `${e.Kind}/${normNs(e.Namespace)}/${e.Name}`;
     for (const [p, v] of scopes(db)) {
       const was = old.get(dot(p)) || [], now = v.config_entries || [];
       const lp = [...p, "config_entries"];
@@ -875,7 +934,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { VERSIONS, minorOf, envoyNote, setConsul, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

@@ -284,11 +284,11 @@ function bCanvas() {
     h += bCard("srv:" + d.id, P.it["srv:" + d.id], BI.server, "srv", d.servers > 1 ? `server-1 … server-${d.servers}` : "server-1", `servers: ${d.servers}${d.ui ? " · UI" : ""}`);
     for (const g of d.gws) {
       const n = g.to.length;
-      h += bCard(g.id, P.it[g.id], BI[g.kind], "gw", g.name, `${g.kind} gateway${n ? ` · ${n} route${n > 1 ? "s" : ""}` : ""}`, { port: g.kind !== "mesh", bad: problems.has(g.id) });
+      h += bCard(g.id, P.it[g.id], BI[g.kind], "gw", g.name, `${g.kind} gateway${n ? ` · ${n} route${n > 1 ? "s" : ""}` : ""}${Build.gwNs(g) ? ` · ns ${Build.gwNs(g)}` : ""}`, { port: g.kind !== "mesh", bad: problems.has(g.id) });
     }
     for (const n of d.nodes) {
       const k = bKind(m, n);
-      const sub = n.svc ? `:${n.svc.port} · ${Build.connectOf(m, n) === "none" ? "no mesh" : Build.connectOf(m, n)}${n.agent === "dataplane" ? " · dataplane" : ""}` : "client agent";
+      const sub = n.svc ? `:${n.svc.port} · ${Build.connectOf(m, n) === "none" ? "no mesh" : Build.connectOf(m, n)}${n.agent === "dataplane" ? " · dataplane" : ""}${Build.nsOf(n) ? ` · ns ${Build.nsOf(n)}` : ""}` : "client agent";
       h += bCard(n.id, P.it[n.id], BI[k], k === "svc" || k === "dp" ? "svc" : "cl", n.name + (n.count > 1 ? ` ×${n.count}` : ""), sub, { port: !!n.svc, bad: problems.has(n.id) });
     }
   }
@@ -388,7 +388,7 @@ function bInspector() {
     const fedOpts = [["", "none"], ...senum("Federation", "mode", ["wan", "mesh-gateways"]).map((x) => [x, x])];
     body = fld("Name", txt("name", m.name), "", "bf-name") +
       fld("Consul", vlist("consul", m.consul, ((BL.versions && BL.versions.releases) || []).map((r) => r.consul)), "", "bf-consul",
-        [Build.ent(m) ? "Partitions need Consul Enterprise; the YAML pins the +ent build." : "", "Pick a release or type any version (or path:/my/build)."].filter(Boolean).join(" ")) +
+        [Build.ent(m) ? "Partitions and namespaces need Consul Enterprise; the YAML pins the +ent build." : "", "Pick a release or type any version (or path:/my/build)."].filter(Boolean).join(" ")) +
       fld("Envoy", vlist("envoy", m.envoy, envoyChoices(m)), "", "bf-envoy", Build.envoyNote(m, BL.versions)) +
       fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_defaults connect: sidecar).") +
       fld("TLS", seg("tls", yes, m.tls), sdoc("Inheritable", "tls")) +
@@ -423,6 +423,7 @@ function bInspector() {
         return `<div class="up ${r.kind === "none" ? "bad" : ""}">${BI.up}<span>${esc(t.node.name)}${how ? ` <i>${esc(how)}</i>` : ""}</span><input data-f="upport" data-i="${i}" value="${u.port}" aria-label="Local port for ${esc(t.node.name)}" inputmode="numeric"><button class="x" data-f="rmup" data-i="${i}" title="Remove">✕</button></div>`;
       }).join("");
       body += fld("Port", `<input id="bf-port" data-f="port" value="${n.svc.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-port") +
+        fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
         fld("Connect", `<select data-f="connect" id="bf-connect">${conn.map(([v, l]) => `<option value="${v}" ${n.svc.connect === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Service", "connect"), "bf-connect") +
         `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Service", "upstreams"))}">Upstreams</label><div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button><div class="hint doc">dc:, peer: or partition: follow from where the two services sit.</div></div></div>`;
     }
@@ -433,6 +434,7 @@ function bInspector() {
     const what = { mesh: "Carries calls between datacenters, peers and partitions; the builder sets proxy-defaults MeshGateway mode local where calls need it.", ingress: "Each route is an HTTP listener (8080, 8081, ...) for one service.", terminating: "Fronts services outside the mesh; the services it fronts run without a sidecar.", api: "Listens on 8081; each route is an http-route (by path prefix when there are several)." }[g.kind];
     const routes = g.to.map((id, i) => { const t = Build.find(m, id); return t && t.node ? `<div class="up">${BI.up}<span>${esc(t.node.name)}</span><button class="x" data-f="rmroute" data-i="${i}" title="Remove">✕</button></div>` : ""; }).join("");
     body = fld("Name", txt("name", g.name), "", "bf-name") + `<div class="hint">${esc(what)}</div>` +
+      (g.kind !== "mesh" ? fld("Namespace", txt("gns", g.ns || "", "default"), sdoc("Gateway", "namespace"), "bf-gns", "Consul Enterprise.") : "") +
       (g.kind !== "mesh" ? `<div class="fld" style="align-items:start"><label>${g.kind === "terminating" ? "Fronts" : "Routes to"}</label><div class="ups">${routes || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Route to a service</button></div></div>` : "") +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove gateway</button></div>`;
   } else if (f.t === "peering") {
@@ -482,12 +484,14 @@ function bField(el) {
       if (f === "svc") n.svc = v === "true" ? n.svc || { port: Build.nextPort(m, 8080), connect: "", ups: [] } : null;
       if (f === "port") n.svc.port = num(v, 1, 65535);
       if (f === "connect") n.svc.connect = v;
+      if (f === "ns") { const x = v.trim(); if (x && !Build.NAME_RE.test(x)) throw new Error("Use lowercase letters, digits and single hyphens."); n.svc.ns = x; }
       if (f === "upport") n.svc.ups[i].port = num(v, 1, 65535);
       if (f === "rmup") n.svc.ups.splice(i, 1);
       // A node with no service is called by nothing.
       if (f === "svc" && v === "false") for (const d of m.dcs) { d.nodes.forEach((x) => { if (x.svc) x.svc.ups = x.svc.ups.filter((u) => u.to !== n.id); }); d.gws.forEach((g) => { g.to = g.to.filter((x) => x !== n.id); }); }
     } else if (t.t === "gw") {
       if (f === "rmroute") t.gw.to.splice(i, 1);
+      if (f === "gns") { const x = v.trim(); if (x && !Build.NAME_RE.test(x)) throw new Error("Use lowercase letters, digits and single hyphens."); t.gw.ns = x; }
     } else if (t.t === "peering") {
       const p = t.peering;
       if (f === "pmesh") p.mesh = v === "true";

@@ -73,3 +73,22 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.link(m, fe.id, bi.id);
   write("peering-partitions", m);
 }
+
+// Namespaces: across a partition and over a peering, with a terminating
+// gateway in a namespace, and ACLs.
+{
+  const m = B.lab("namespaces"); m.acl = true;
+  const d1 = B.dc("dc1", 1), d2 = B.dc("dc2", 1); m.dcs.push(d1, d2);
+  const pa = { id: "pa", name: "part-a" }, pb = { id: "pb", name: "part-b" };
+  d1.parts.push(pa); d2.parts.push(pb);
+  const web = B.node("web", 8080, { part: pa.id }), api = B.node("api", 9090, { part: pa.id });
+  const legacy = B.node("legacy", 7070, { part: pa.id }), billing = B.node("billing", 9000, { part: pb.id });
+  web.svc.ns = "app"; api.svc.ns = "backend"; legacy.svc.ns = "app"; billing.svc.ns = "payments";
+  d1.nodes.push(web, api, legacy); d2.nodes.push(billing);
+  const tgw = B.gw("terminating", "terminating", pa.id); tgw.ns = "app";
+  d1.gws.push(tgw);
+  B.link(m, tgw.id, legacy.id);
+  B.link(m, pa.id, pb.id);
+  B.link(m, web.id, api.id); B.link(m, web.id, legacy.id); B.link(m, web.id, billing.id);
+  write("namespaces", m);
+}
