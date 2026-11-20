@@ -558,6 +558,19 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   Parker sets its Kind and Name and applies it after `config_entries`.
   `parker exec` sets `PARKER_IP` to the node's LAN address, handy for
   `curl http://$PARKER_IP:8080/` on a gateway (see `examples/gateways.yaml`)
+- `namespace:` on a terminating, ingress or API gateway registers it (and
+  its config entry) in that namespace (Consul Enterprise); mesh gateways
+  always sit in their partition's default namespace
+- `consul.external: { api: { service: { port: 9000 }, in: [dc1, dc2/part-b] } }`:
+  a service outside Consul. It runs once, on a node named after it that
+  joins the LAN of every datacenter under `in:` (at the top of the
+  subnet), with no agent. Each place under `in:` (a datacenter or
+  `dc/partition`) registers it in its catalog on an external node (node
+  meta `external-node: "true"`), and the dc's `dataplane-health` process
+  probes it, as consul-esm would. It takes `consul.defaults.service_defaults`
+  but never `connect` or upstreams; reach it from the mesh through a
+  terminating gateway (see `examples/terminating-failover.yaml`, which
+  fails over between two datacenters' terminating gateways over a peering)
 - `consul.federation: { mode: mesh-gateways }` (needs `tls: true` and a
   mesh gateway per datacenter): servers keep serf on their LAN address,
   which other datacenters can't route to, and reach each other only

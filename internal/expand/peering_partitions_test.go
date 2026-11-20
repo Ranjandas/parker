@@ -177,9 +177,13 @@ func TestPeeringExportsMergeIntoUserEntry(t *testing.T) {
 	}
 }
 
-func TestGatewayNamespaceKey(t *testing.T) {
-	errs := spec.CheckKeys([]byte("parker: v1alpha1\nconsul:\n  datacenters:\n    dc1:\n      gateways:\n        mesh: { namespace: payments }\n"))
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "gateways always run in their partition's default namespace") {
-		t.Errorf("%v", errs)
+func TestGatewayNamespace(t *testing.T) {
+	if errs := spec.CheckKeys([]byte("parker: v1alpha1\nconsul:\n  datacenters:\n    dc1:\n      gateways:\n        terminating: { namespace: payments }\n")); len(errs) != 0 {
+		t.Errorf("namespace is a gateway key: %v", errs)
+	}
+	f := load(t, "../../examples/peering-partitions.yaml")
+	f.Consul.Datacenters["dc1"].Partitions["team-a"].Gateways["mesh"] = &spec.Gateway{Namespace: "payments"}
+	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "mesh gateways sit in their partition's default namespace") {
+		t.Errorf("mesh gateway in a namespace: %v", err)
 	}
 }

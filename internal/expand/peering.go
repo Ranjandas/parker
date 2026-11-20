@@ -278,6 +278,15 @@ func serviceNamespaces(c *spec.Consul, s side, svc string) []string {
 			seen[ns] = true
 		}
 	}
+	for _, x := range c.ExternalsIn(dc) {
+		if x.Name == svc && x.Partition == s.part {
+			ns := x.Namespace
+			if ns == "" {
+				ns = spec.DefaultNamespace
+			}
+			seen[ns] = true
+		}
+	}
 	return slices.Sorted(maps.Keys(seen))
 }
 
