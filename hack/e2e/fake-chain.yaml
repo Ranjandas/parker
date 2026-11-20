@@ -42,3 +42,14 @@ scenario:
     - name: and only that request
       assert:
         exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/" }
+    - name: db fails its check while it keeps running
+      fake: { on: dc1/db, health: { code: 503 } }
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/db | grep -q '\"Status\":\"critical\"'" }
+        within: 30s
+    - assert:
+        exec: { on: dc1/db, run: "curl -sf -m 2 http://127.0.0.1:7000/" }
+    - fake: { on: dc1/db, reset: true }
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/db | grep -q '\"Status\":\"passing\"'" }
+        within: 30s

@@ -119,6 +119,39 @@ type Step struct {
 	// node at a time: servers before clients, the leader last, each one
 	// healthy again before the next.
 	Upgrade *UpgradeStep `yaml:"upgrade,omitempty"`
+	// Fake changes the faults of running fake services (run:
+	// fake-service) on the nodes a selector matches, without a restart.
+	Fake *FakeStep `yaml:"fake,omitempty"`
+}
+
+// FakeStep changes a running fake service's faults. The fields set are
+// changed; the rest stay as they are.
+type FakeStep struct {
+	// On is a selector: dc1/api, dc2, ...
+	On string `yaml:"on" json:"on"`
+	// Service picks one fake service on the nodes; default: all of them.
+	Service string `yaml:"service,omitempty" json:"service,omitempty"`
+	// Reset goes back to the faults the lab started with.
+	Reset bool `yaml:"reset,omitempty" json:"reset,omitempty"`
+	// Health sets what /health answers: 503 fails the Consul check while
+	// the process keeps running.
+	Health *FakeHealth `yaml:"health,omitempty" json:"health,omitempty"`
+	// Latency, as under fake:. Set a percentile to 0s to clear it.
+	Latency *FakeLatency `yaml:"latency,omitempty" json:"latency,omitempty"`
+	// Errors, as under fake:. rate: 0 stops them.
+	Errors *FakeErrors `yaml:"errors,omitempty" json:"errors,omitempty"`
+	// RateLimit, as under fake:. rps: 0 turns it off.
+	RateLimit *FakeRateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+}
+
+// Change is the step's changes in a fake: block's shape.
+func (f *FakeStep) Change() *Fake {
+	return &Fake{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit}
+}
+
+// Empty reports a step that changes nothing (it shows the current faults).
+func (f *FakeStep) Empty() bool {
+	return !f.Reset && f.Health == nil && f.Latency == nil && f.Errors == nil && f.RateLimit == nil
 }
 
 type UpgradeStep struct {
@@ -689,7 +722,7 @@ type FakeLatency struct {
 
 type FakeErrors struct {
 	// Rate is the share of requests that fail, 0 to 1 (ERROR_RATE).
-	Rate float64 `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0,maximum=1"`
+	Rate *float64 `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0,maximum=1"`
 	// Code a failed request answers (ERROR_CODE); default 500.
 	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
 	// Type is http_error (default: answer Code) or delay (answer late,
@@ -701,7 +734,7 @@ type FakeErrors struct {
 
 type FakeRateLimit struct {
 	// RPS is the requests per second allowed (RATE_LIMIT); 0 is off.
-	RPS float64 `yaml:"rps,omitempty" json:"rps,omitempty" jsonschema:"minimum=0"`
+	RPS *float64 `yaml:"rps,omitempty" json:"rps,omitempty" jsonschema:"minimum=0"`
 	// Code for requests over the limit (RATE_LIMIT_CODE); default 503.
 	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
 }

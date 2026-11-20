@@ -541,6 +541,44 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "FakeStep": {
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "On is a selector: dc1/api, dc2, ..."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service picks one fake service on the nodes; default: all of them."
+        },
+        "reset": {
+          "type": "boolean",
+          "description": "Reset goes back to the faults the lab started with."
+        },
+        "health": {
+          "$ref": "#/$defs/FakeHealth",
+          "description": "Health sets what /health answers: 503 fails the Consul check while\nthe process keeps running."
+        },
+        "latency": {
+          "$ref": "#/$defs/FakeLatency",
+          "description": "Latency, as under fake:. Set a percentile to 0s to clear it."
+        },
+        "errors": {
+          "$ref": "#/$defs/FakeErrors",
+          "description": "Errors, as under fake:. rate: 0 stops them."
+        },
+        "rate_limit": {
+          "$ref": "#/$defs/FakeRateLimit",
+          "description": "RateLimit, as under fake:. rps: 0 turns it off."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on"
+      ],
+      "description": "FakeStep changes a running fake service's faults."
+    },
     "Federation": {
       "properties": {
         "mode": {
@@ -1210,6 +1248,10 @@
         "upgrade": {
           "$ref": "#/$defs/UpgradeStep",
           "description": "Upgrade moves the nodes to another version of a pinned binary, one\nnode at a time: servers before clients, the leader last, each one\nhealthy again before the next."
+        },
+        "fake": {
+          "$ref": "#/$defs/FakeStep",
+          "description": "Fake changes the faults of running fake services (run:\nfake-service) on the nodes a selector matches, without a restart."
         }
       },
       "additionalProperties": false,

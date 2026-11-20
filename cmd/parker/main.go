@@ -40,7 +40,7 @@ func main() {
 	root.PersistentFlags().StringArrayVar(&overlayFlags, "overlay", nil, "merge an overlay file over FILE (maps merge, lists replace); repeatable, in order")
 	root.PersistentFlags().StringArrayVar(&setFlags, "set", nil, "set a value over FILE and overlays: PATH=VALUE or SELECTOR:PATH=VALUE (dc1/web:service.port=9000); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
-	root.AddCommand(versionCmd(), tuiCmd(), uiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), dataplaneHealthCmd(), runCmd(), faultCmd(), sidecarCmd())
+	root.AddCommand(versionCmd(), tuiCmd(), uiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), dataplaneHealthCmd(), runCmd(), faultCmd(), fakeCmd(), sidecarCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -184,16 +184,17 @@ func fetchCmd() *cobra.Command {
 }
 
 func fakeServiceCmd() *cobra.Command {
-	var name, dc string
+	var name, dc, control string
 	var port int
 	c := &cobra.Command{
 		Use:    "fake-service",
 		Short:  "Built-in fake service (run: fake-service)",
 		Hidden: true,
-		RunE:   func(cmd *cobra.Command, args []string) error { return fake.Serve(name, dc, port) },
+		RunE:   func(cmd *cobra.Command, args []string) error { return fake.Serve(name, dc, port, control) },
 	}
 	c.Flags().StringVar(&name, "name", "fake", "service name")
 	c.Flags().StringVar(&dc, "dc", "", "datacenter, shown in responses")
+	c.Flags().StringVar(&control, "control", "", "unix socket for the control API (parker fake)")
 	c.Flags().IntVar(&port, "port", 8080, "listen port")
 	return c
 }

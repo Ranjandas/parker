@@ -51,7 +51,7 @@ func TestFakeServiceProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := low.Nodes["dc1-web"].Processes["web"]
-	if got := strings.Join(web.Run, " "); got != VarParker+" fake-service --name web --port 8080 --dc dc1" {
+	if got := strings.Join(web.Run, " "); got != VarParker+" fake-service --name web --port 8080 --dc dc1 --control "+VarNodeDir+"/web.fake.sock" {
 		t.Errorf("run = %s", got)
 	}
 	if web.Env["MESSAGE"] != "hi" {

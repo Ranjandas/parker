@@ -99,6 +99,9 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	}
 }
 
+// SetLogOutput sends the request log to w (stdout by default).
+func (s *Server) SetLogOutput(w io.Writer) { s.log.SetOutput(w) }
+
 // Faults returns the faults in force now.
 func (s *Server) Faults() Faults {
 	s.mu.RLock()
@@ -128,13 +131,20 @@ func (s *Server) ListenAndServe() error {
 	return http.ListenAndServe(fmt.Sprintf(":%d", s.cfg.Port), s.Handler())
 }
 
-// Serve is ListenAndServe for a config built from the environment.
-func Serve(name, dc string, port int) error {
+// Serve is ListenAndServe for a config built from the environment, with
+// the control API on a unix socket at control ("" for none).
+func Serve(name, dc string, port int, control string) error {
 	cfg, err := Load(name, dc, port, nil)
 	if err != nil {
 		return err
 	}
-	return New(cfg).ListenAndServe()
+	s := New(cfg)
+	if control != "" {
+		if err := s.ListenControl(control); err != nil {
+			return err
+		}
+	}
+	return s.ListenAndServe()
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {

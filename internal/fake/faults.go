@@ -88,10 +88,12 @@ func (f *Faults) Apply(sf *spec.Fake) error {
 		}
 	}
 	if e := sf.Errors; e != nil {
-		if e.Rate < 0 || e.Rate > 1 {
-			return fmt.Errorf("errors.rate: want 0 to 1 (0.2 is 20%%), got %v", e.Rate)
+		if e.Rate != nil {
+			if *e.Rate < 0 || *e.Rate > 1 {
+				return fmt.Errorf("errors.rate: want 0 to 1 (0.2 is 20%%), got %v", *e.Rate)
+			}
+			f.ErrorRate = *e.Rate
 		}
-		f.ErrorRate = e.Rate
 		if err := checkCode("errors.code", e.Code); err != nil {
 			return err
 		}
@@ -114,10 +116,12 @@ func (f *Faults) Apply(sf *spec.Fake) error {
 		}
 	}
 	if r := sf.RateLimit; r != nil {
-		if r.RPS < 0 {
-			return fmt.Errorf("rate_limit.rps: want 0 or more, got %v", r.RPS)
+		if r.RPS != nil {
+			if *r.RPS < 0 {
+				return fmt.Errorf("rate_limit.rps: want 0 or more, got %v", *r.RPS)
+			}
+			f.RateLimit = *r.RPS
 		}
-		f.RateLimit = r.RPS
 		if err := checkCode("rate_limit.code", r.Code); err != nil {
 			return err
 		}

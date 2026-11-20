@@ -79,6 +79,16 @@ if grep "^scenario:" "$F" >/dev/null; then
     echo "failing scenario exits non-zero"
   fi
 fi
+if grep "^name: fake-chain" "$F" >/dev/null; then
+  echo "--- parker fake"
+  $P fake "$F" dc1/api --error-rate 1 --error-code 502 | grep "errors 100% (502)"
+  code=$($P exec "$F" dc1-web -- curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ </dev/null)
+  [ "$code" = 500 ] || { echo "web answered $code with api failing" >&2; exit 1; }
+  $P fake "$F" dc1/api | grep "errors 100%"
+  $P fake "$F" dc1/api --reset | grep "errors off"
+  $P exec "$F" dc1-web -- curl -sf -o /dev/null http://127.0.0.1:8080/ </dev/null
+  echo "faults changed at runtime and reset"
+fi
 if grep "^name: faults" "$F" >/dev/null; then
   echo "--- parker fault"
   web_state() { $P status "$F" | awk '$1=="dc1-web" && $3=="consul" {s=$5} END {print s}'; }

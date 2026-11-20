@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/selector"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -883,7 +884,8 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 	run := svc.Run
 	env := svc.Env
 	if isFake(svc) {
-		run = spec.Command{VarParker, "fake-service", "--name", name, "--port", strconv.Itoa(svc.Port), "--dc", dcName}
+		run = spec.Command{VarParker, "fake-service", "--name", name, "--port", strconv.Itoa(svc.Port), "--dc", dcName,
+			"--control", VarNodeDir + "/" + fake.SocketName(name)}
 		env = maps.Clone(svc.Env)
 		if env == nil {
 			env = map[string]string{}

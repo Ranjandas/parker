@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -40,6 +41,9 @@ type Lab interface {
 	// Upgrade moves one node's product processes to version and waits for
 	// the node, and its cluster, to be healthy again.
 	Upgrade(ctx context.Context, node, product, version string) error
+	// Fake changes (or, for an empty step, reads) the faults of the fake
+	// services on node and returns a line per service.
+	Fake(ctx context.Context, node string, st *spec.FakeStep) ([]string, error)
 }
 
 // Upgrades lists a scenario's upgrade steps, so their binaries can be
@@ -139,7 +143,7 @@ func Validate(sc *spec.Scenario) error {
 func validateStep(st *spec.Step) error {
 	if n := len(actions(st)); n != 1 {
 		if n == 0 {
-			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ", upgrade)")
+			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ", upgrade, fake)")
 		}
 		return fmt.Errorf("one action per step, got %s", strings.Join(actions(st), ", "))
 	}
@@ -178,6 +182,17 @@ func validateStep(st *spec.Step) error {
 	if u := st.Upgrade; u != nil && (u.On == "" || u.To == "") {
 		return errors.New("upgrade: needs on: and to:")
 	}
+	if f := st.Fake; f != nil {
+		if f.On == "" {
+			return errors.New("fake: needs on:")
+		}
+		if f.Reset && !(&spec.FakeStep{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit}).Empty() {
+			return errors.New("fake: reset: true takes no other changes")
+		}
+		if err := fake.Validate(f.Change()); err != nil {
+			return fmt.Errorf("fake: %w", err)
+		}
+	}
 	for i, g := range st.Partition {
 		if len(g) == 0 || slices.Contains(g, "") {
 			return fmt.Errorf("partition: group %d is empty", i+1)
@@ -211,6 +226,9 @@ func actions(st *spec.Step) []string {
 	}
 	if st.Upgrade != nil {
 		a = append(a, "upgrade")
+	}
+	if st.Fake != nil {
+		a = append(a, "fake")
 	}
 	for _, x := range []struct{ name, sel string }{
 		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
@@ -251,6 +269,9 @@ func Selectors(sc *spec.Scenario) []string {
 		}
 		if st.Upgrade != nil {
 			out = append(out, st.Upgrade.On)
+		}
+		if st.Fake != nil {
+			out = append(out, st.Fake.On)
 		}
 	}
 	return out
@@ -308,6 +329,8 @@ func Label(st *spec.Step) string {
 		return "heal " + st.Heal
 	case st.Upgrade != nil:
 		return fmt.Sprintf("upgrade %s %s to %s", st.Upgrade.On, st.Upgrade.Product(), st.Upgrade.To)
+	case st.Fake != nil:
+		return fakeLabel(st.Fake)
 	}
 	if a, sel := procTarget(st); a != "" {
 		return a + " " + sel
@@ -457,6 +480,22 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		}
 		return nil
 	}
+	if f := st.Fake; f != nil {
+		nodes, err := l.Resolve(f.On)
+		if err != nil {
+			return err
+		}
+		for _, n := range nodes {
+			lines, err := l.Fake(ctx, n, f)
+			if err != nil {
+				return fmt.Errorf("%s: %w", n, err)
+			}
+			for _, line := range lines {
+				say("  %s", line)
+			}
+		}
+		return nil
+	}
 	if action, sel := procTarget(st); action != "" {
 		nodes, err := l.Resolve(sel)
 		if err != nil {
@@ -531,4 +570,35 @@ func lastLine(s string) string {
 		s = s[:200] + "..."
 	}
 	return s
+}
+
+func fakeLabel(f *spec.FakeStep) string {
+	on := f.On
+	if f.Service != "" {
+		on += " (" + f.Service + ")"
+	}
+	switch {
+	case f.Reset:
+		return "fake " + on + ": reset"
+	case f.Empty():
+		return "fake " + on
+	}
+	var parts []string
+	if f.Health != nil {
+		parts = append(parts, fmt.Sprintf("health %d", f.Health.Code))
+	}
+	if e := f.Errors; e != nil && e.Rate != nil {
+		parts = append(parts, fmt.Sprintf("errors %g%%", *e.Rate*100))
+	} else if e != nil {
+		parts = append(parts, "errors")
+	}
+	if f.Latency != nil {
+		parts = append(parts, "latency")
+	}
+	if r := f.RateLimit; r != nil && r.RPS != nil {
+		parts = append(parts, fmt.Sprintf("rate limit %g/s", *r.RPS))
+	} else if r != nil {
+		parts = append(parts, "rate limit")
+	}
+	return "fake " + on + ": " + strings.Join(parts, ", ")
 }
