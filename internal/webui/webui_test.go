@@ -187,6 +187,24 @@ func TestSchemaServed(t *testing.T) {
 	}
 }
 
+// The builder's version picker reads the release pins and Envoy support.
+func TestVersionsServed(t *testing.T) {
+	h, _ := newTest(t)
+	w := do(h, "GET", "/ui/versions", "", nil)
+	var v struct {
+		Releases []struct{ Consul, Envoy, Dataplane string }
+		Envoy    map[string][]string
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || len(v.Releases) == 0 || v.Releases[0].Envoy == "" || len(v.Envoy[compatMinor(v.Releases[0].Consul)]) == 0 {
+		t.Errorf("%d %.300s", w.Code, w.Body)
+	}
+}
+
+func compatMinor(v string) string {
+	parts := strings.SplitN(v, ".", 3)
+	return parts[0] + "." + parts[1]
+}
+
 // The builder's scripts are served next to the UI.
 func TestBuilderScriptsServed(t *testing.T) {
 	h, _ := newTest(t)

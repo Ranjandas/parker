@@ -2,7 +2,7 @@
 # Bring it up with: parker up partitions.yaml
 parker: v1alpha1
 name: partitions
-versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
+versions: { consul: 2.1.0+ent, envoy: 1.39.1 }
 consul:
   defaults:
     acl: true

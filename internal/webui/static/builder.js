@@ -60,6 +60,7 @@ function bInit() {
   try { const f = JSON.parse(localStorage.getItem(BKF) || "null"); if (f && typeof f.text === "string") BL.file = f; } catch (e) { /* none saved */ }
   if (!BL.m) BL.m = Build.starter("mesh");
   fetch("/ui/schema.json", { credentials: "same-origin" }).then((r) => r.json()).then((s) => { BL.schema = s; if (S.route.view === "build") bInspector(); }).catch(() => {});
+  fetch("/ui/versions", { credentials: "same-origin" }).then((r) => r.json()).then((v) => { BL.versions = v; if (S.route.view === "build") bInspector(); }).catch(() => {});
 }
 function bSave() {
   try {
@@ -362,6 +363,15 @@ function bCanvas() {
 const fld = (label, input, doc, forId, note) => `<div class="fld"><label${forId ? ` for="${forId}"` : ""}${doc ? ` title="${esc(doc)}"` : ""}>${label}</label><div>${input}${note ? `<div class="hint">${esc(note)}</div>` : ""}${doc ? `<div class="hint doc">${esc(doc)}</div>` : ""}</div></div>`;
 const seg = (f, opts, cur) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" data-f="${f}" data-v="${esc(v)}" class="${String(cur) === String(v) ? "on" : ""}">${esc(l)}</button>`).join("")}</div>`;
 const stepper = (f, n) => `<span class="stepper"><button type="button" data-f="${f}" data-v="-1" aria-label="Fewer">−</button><span>${n}</span><button type="button" data-f="${f}" data-v="1" aria-label="More">+</button></span>`;
+// vlist is a text field with suggestions (a datalist).
+const vlist = (f, v, opts) => `<input id="bf-${f}" data-f="${f}" value="${esc(v)}" list="bl-${f}" spellcheck="false" autocomplete="off"><datalist id="bl-${f}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>`;
+// envoyChoices: the release pins' Envoys that the lab's Consul supports.
+function envoyChoices(m) {
+  const vt = BL.versions;
+  if (!vt) return [];
+  const sup = (vt.envoy || {})[Build.minorOf(m.consul)];
+  return [...new Set((vt.releases || []).map((r) => r.envoy))].filter((e) => !sup || sup.includes(Build.minorOf(e)));
+}
 const txt = (f, v, ph) => `<input id="bf-${f}" data-f="${f}" value="${esc(v)}" ${ph ? `placeholder="${esc(ph)}"` : ""} spellcheck="false" autocomplete="off">`;
 
 function bInspector() {
@@ -377,8 +387,9 @@ function bInspector() {
     title = "Lab";
     const fedOpts = [["", "none"], ...senum("Federation", "mode", ["wan", "mesh-gateways"]).map((x) => [x, x])];
     body = fld("Name", txt("name", m.name), "", "bf-name") +
-      fld("Consul", txt("consul", m.consul), "", "bf-consul", Build.ent(m) ? "Partitions need Consul Enterprise; the YAML pins the +ent build." : "") +
-      fld("Envoy", txt("envoy", m.envoy), "", "bf-envoy") +
+      fld("Consul", vlist("consul", m.consul, ((BL.versions && BL.versions.releases) || []).map((r) => r.consul)), "", "bf-consul",
+        [Build.ent(m) ? "Partitions need Consul Enterprise; the YAML pins the +ent build." : "", "Pick a release or type any version (or path:/my/build)."].filter(Boolean).join(" ")) +
+      fld("Envoy", vlist("envoy", m.envoy, envoyChoices(m)), "", "bf-envoy", Build.envoyNote(m, BL.versions)) +
       fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_defaults connect: sidecar).") +
       fld("TLS", seg("tls", yes, m.tls), sdoc("Inheritable", "tls")) +
       fld("ACLs", seg("acl", yes, m.acl), sdoc("Inheritable", "acl"), "", m.acl ? "The builder writes the intentions each call needs." : "") +
@@ -453,7 +464,8 @@ function bField(el) {
     const t = sel === "lab" ? null : sel.startsWith("srv:") ? { t: "dc", dc: Build.dcById(m, sel.slice(4)) } : Build.find(m, sel);
     if (!t) {
       if (f === "name") { if (!Build.NAME_RE.test(v)) throw new Error("Use lowercase letters, digits and single hyphens."); m.name = v; }
-      else if (f === "consul" || f === "envoy") m[f] = v.trim() || m[f];
+      else if (f === "consul") { if (v.trim()) Build.setConsul(m, v.trim(), BL.versions); }
+      else if (f === "envoy") m.envoy = v.trim() || m.envoy;
       else if (f === "mesh" || f === "tls" || f === "acl") m[f] = v === "true";
       else if (f === "fed") { if (v) return Build.joinDCs(m, m.dcs[0].id, m.dcs[1].id, v); m.fed = ""; }
       return;

@@ -10,7 +10,9 @@
 "use strict";
 
 (function (root) {
-  const VERSIONS = { consul: "1.22.7", envoy: "1.35.12", dataplane: "1.9.12" };
+  // The newest release pins Parker knows (compat.Releases[0]); the daemon's
+  // /ui/versions lists the rest.
+  const VERSIONS = { consul: "2.1.0", envoy: "1.39.1", dataplane: "2.1.0" };
   const KINDS = ["mesh", "ingress", "terminating", "api"];
   // A gateway's default node name per kind (api gateways are often "edge").
   const GW_NAME = { mesh: "mesh", ingress: "ingress", terminating: "terminating", api: "edge" };
@@ -126,6 +128,25 @@
   function nextUpPort(n) {
     const used = new Set([n.svc.port, ...n.svc.ups.map((u) => u.port), ...(n.svc.held || [])]);
     for (let p = 9091; ; p++) if (!used.has(p)) return p;
+  }
+
+  // ---------- versions ----------
+  // vt is /ui/versions: {releases: [{consul, envoy, dataplane}], envoy:
+  // {"2.1": ["1.39", ...]}}.
+  const minorOf = (v) => { const x = String(v || "").replace(/^v/, "").split(/[+-]/)[0].split("."); return x.length > 1 && /^\d+$/.test(x[0]) && /^\d+$/.test(x[1]) ? `${x[0]}.${x[1]}` : ""; };
+  // envoyNote says when the lab's Envoy isn't one its Consul supports.
+  function envoyNote(m, vt) {
+    const sup = vt && vt.envoy && vt.envoy[minorOf(m.consul)];
+    if (!sup || !minorOf(m.envoy) || sup.includes(minorOf(m.envoy))) return "";
+    return `Consul ${minorOf(m.consul)} supports Envoy ${sup.join(", ")}, not ${minorOf(m.envoy)}.`;
+  }
+  // setConsul pins Consul v and, when the Envoy pin no longer fits, the
+  // Envoy and consul-dataplane paired with that Consul minor.
+  function setConsul(m, v, vt) {
+    m.consul = v;
+    if (!vt || !envoyNote(m, vt)) return;
+    const r = (vt.releases || []).find((x) => minorOf(x.consul) === minorOf(v));
+    if (r) { m.envoy = r.envoy; if (r.dataplane) m.dataplane = r.dataplane; }
   }
 
   // link joins two things on the canvas and says what it made, or throws
@@ -854,7 +875,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { VERSIONS, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { VERSIONS, minorOf, envoyNote, setConsul, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

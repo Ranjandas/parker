@@ -28,6 +28,32 @@ var envoyByConsul = map[string][]string{
 	"2.1":  {"1.36", "1.37", "1.38", "1.39"},
 }
 
+// Release is a Consul release with the Envoy and consul-dataplane builds
+// Parker pairs with it.
+type Release struct {
+	Consul    string `json:"consul"`
+	Envoy     string `json:"envoy"`
+	Dataplane string `json:"dataplane"`
+}
+
+// Releases are the pins Parker offers, newest first: the lab builder
+// starts new labs on the first.
+var Releases = []Release{
+	{Consul: "2.1.0", Envoy: "1.39.1", Dataplane: "2.1.0"},
+	{Consul: "2.0.4", Envoy: "1.38.4", Dataplane: "2.0.4"},
+	{Consul: "1.22.7", Envoy: "1.35.12", Dataplane: "1.9.12"},
+}
+
+// Supported maps each Consul minor Parker knows to the Envoy minors it
+// supports, newest first.
+func Supported() map[string][]string {
+	out := map[string][]string{}
+	for k := range envoyByConsul {
+		out[k], _ = EnvoyFor(k + ".0")
+	}
+	return out
+}
+
 // minor is "1.22" for "1.22.7", "1.22.7+ent" or "v1.22.7"; "" when it
 // isn't a version (e.g. path:/my/build).
 func minor(v string) string {

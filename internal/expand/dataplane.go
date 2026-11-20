@@ -146,10 +146,10 @@ func (d dataplane) process() *spec.Process {
 }
 
 // dataplaneHealthProcess registers a dc's dataplane services and keeps
-// their checks current.
-func dataplaneHealthProcess(deps map[string]*spec.Dep, env map[string]string) *spec.Process {
+// their checks current; it is ready once every server sees them.
+func dataplaneHealthProcess(deps map[string]*spec.Dep, env map[string]string, servers []string) *spec.Process {
 	return &spec.Process{
-		Run:       spec.Command{VarParker, DataplaneHealth, VarNodeDir + "/" + DataplaneManifest},
+		Run:       spec.Command{VarParker, DataplaneHealth, VarNodeDir + "/" + DataplaneManifest, "--servers", strings.Join(servers, ",")},
 		Env:       env,
 		DependsOn: deps,
 		ReadyWhen: &spec.Ready{Log: DataplaneHealthReadyLine, Timeout: "60s"},

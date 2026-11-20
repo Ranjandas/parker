@@ -77,3 +77,17 @@ func TestAtLeast(t *testing.T) {
 		}
 	}
 }
+
+func TestReleasesAreSupported(t *testing.T) {
+	for _, r := range Releases {
+		if err := CheckEnvoy(r.Consul, r.Envoy); err != nil {
+			t.Errorf("%s: %v", r.Consul, err)
+		}
+		if _, ok := EnvoyFor(r.Consul); !ok {
+			t.Errorf("%s: not in the Envoy table", r.Consul)
+		}
+	}
+	if s := Supported()["2.1"]; len(s) == 0 || s[0] != "1.39" {
+		t.Errorf("Supported 2.1: %v", s)
+	}
+}

@@ -109,3 +109,58 @@ func TestProbeHTTP(t *testing.T) {
 		t.Error("host:port is a TCP probe")
 	}
 }
+
+// laggingServer is a follower that applies registrations a few reads late.
+type laggingServer struct {
+	mu    sync.Mutex
+	reads int
+	lag   int
+}
+
+func (l *laggingServer) Node(node string, q *api.QueryOptions) (*api.CatalogNode, *api.QueryMeta, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.reads++
+	if !q.AllowStale {
+		return nil, nil, errors.New("want a stale read of the server's own state")
+	}
+	if l.reads <= l.lag {
+		return nil, nil, nil
+	}
+	return &api.CatalogNode{Services: map[string]*api.AgentService{"api": {ID: "api"}}}, nil, nil
+}
+
+// Ready waits until every server sees the registrations: a consul-dataplane
+// that reaches a follower before it applied them fails with "Service not
+// found".
+func TestKeepHealthWaitsForServers(t *testing.T) {
+	entries := []expand.DataplaneEntry{{Node: "api", Address: "10.1.0.102", Datacenter: "dc1",
+		Service: expand.DataplaneService{ID: "api", Name: "api", Port: 9090}}}
+	cat := &fakeCatalog{}
+	follower := &laggingServer{lag: 3}
+	var out, log bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = keepHealth(ctx, cat, entries, func(string) bool { return true }, 5*time.Millisecond, &out, &log, &laggingServer{}, follower)
+		close(done)
+	}()
+	for range 400 {
+		follower.mu.Lock()
+		n := follower.reads
+		follower.mu.Unlock()
+		if n > 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+	if out.String() != expand.DataplaneHealthReadyLine+"\n" {
+		t.Errorf("out = %q", out.String())
+	}
+	if follower.reads <= 3 {
+		t.Errorf("ready before the follower saw the registration (%d reads)", follower.reads)
+	}
+}

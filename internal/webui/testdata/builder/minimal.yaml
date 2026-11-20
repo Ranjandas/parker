@@ -2,7 +2,7 @@
 # Bring it up with: parker up minimal.yaml
 parker: v1alpha1
 name: minimal
-versions: { consul: 1.22.7 }
+versions: { consul: 2.1.0 }
 consul:
   datacenters:
     dc1:

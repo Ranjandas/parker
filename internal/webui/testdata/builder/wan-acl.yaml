@@ -2,7 +2,7 @@
 # Bring it up with: parker up wan.yaml
 parker: v1alpha1
 name: wan
-versions: { consul: 1.22.7, envoy: 1.35.12, consul-dataplane: 1.9.12 }
+versions: { consul: 2.1.0, envoy: 1.39.1, consul-dataplane: 2.1.0 }
 consul:
   defaults:
     acl: true

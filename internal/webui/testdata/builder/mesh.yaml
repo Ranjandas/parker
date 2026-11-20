@@ -2,7 +2,7 @@
 # Bring it up with: parker up mesh.yaml
 parker: v1alpha1
 name: mesh
-versions: { consul: 1.22.7, envoy: 1.35.12 }
+versions: { consul: 2.1.0, envoy: 1.39.1 }
 consul:
   defaults:
     service_defaults: { run: fake-service, connect: sidecar }
