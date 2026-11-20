@@ -49,6 +49,11 @@ const ACLReadyLine = "parker: ACLs set up"
 
 type secrets struct{ management, agent, gossip string }
 
+// RetryInterval is how often agents retry joining, in place of Consul's
+// 30s: a lab's agents often start before what they join is ready (a
+// partition's servers, a WAN peer), and a lab should be up in seconds.
+const RetryInterval = "1s"
+
 func uuid() (string, error) {
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(Rand, b); err != nil {
@@ -371,6 +376,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				"advertise_addr":       ip,
 				"client_addr":          "0.0.0.0",
 				"retry_join":           others(serverIPs, ip),
+				"retry_interval":       RetryInterval,
 				"log_level":            logLevel(defaults, dc, false),
 				"disable_update_check": true,
 				"ui_config":            map[string]any{"enabled": ui && s == 0},
@@ -404,6 +410,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				cfg["serf_wan"] = wan
 				cfg["advertise_addr_wan"] = wan
 				cfg["retry_join_wan"] = others(allWAN, wan)
+				cfg["retry_interval_wan"] = RetryInterval
 				attach[WANNetwork] = &spec.Attachment{IP: wan}
 				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
 			}
@@ -681,6 +688,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						"advertise_addr":       ip,
 						"client_addr":          "0.0.0.0",
 						"retry_join":           serverIPs,
+						"retry_interval":       RetryInterval,
 						"log_level":            logLevel(defaults, dc, true),
 						"disable_update_check": true,
 					}
