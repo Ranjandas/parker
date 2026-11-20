@@ -29,7 +29,7 @@ $P up "$F"
 $P daemon status
 echo "--- status"
 $P status "$F"
-first=$($P status "$F" | awk 'NR==3 {print $1}')
+first=$($P status "$F" | awk 'NR>2 && $3=="consul" && !n++ {print $1}')   # a node with an agent
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
 echo "--- selectors"

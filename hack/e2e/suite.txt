@@ -18,3 +18,5 @@ hack/e2e/mesh-federation-acl.yaml
 examples/gateways.yaml
 examples/peering.yaml
 hack/e2e/peering-secure.yaml
+examples/dataplane.yaml
+hack/e2e/dataplane-secure.yaml

@@ -361,6 +361,9 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		}
 		ui := dc.UI == nil || *dc.UI
 		var serverRefs []string
+		// Dataplane nodes reach the servers over gRPC.
+		dataplanes := slices.ContainsFunc(dc.AllNodes(), func(p spec.PlacedNode) bool { return p.Node != nil && p.Node.Agent == "dataplane" })
+		var dpEntries []DataplaneEntry
 
 		for s := range n {
 			name := fmt.Sprintf("server-%d", s+1)
@@ -433,8 +436,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					return err
 				}
 			}
-			if inPeering {
-				// Peering runs over the servers' gRPC port.
+			if inPeering || dataplanes {
+				// Peering and dataplanes use the servers' gRPC port.
 				ports, _ := cfg["ports"].(map[string]any)
 				if ports == nil {
 					ports = map[string]any{}
@@ -445,6 +448,13 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					ports["grpc"] = GRPCPort
 				}
 				cfg["ports"] = ports
+				if tls && dataplanes {
+					// Dataplanes have no client certificate; they verify
+					// the servers and authenticate with ACL tokens.
+					if t, ok := cfg["tls"].(map[string]any); ok {
+						t["grpc"] = map[string]any{"verify_incoming": false}
+					}
+				}
 			}
 			var serverDeps map[string]*spec.Dep
 			if meshFed {
@@ -632,6 +642,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				}
 				var regs []any
 				sidecars := 0
+				isDP := node.Agent == "dataplane"
 				transparentNode := false
 				for _, s := range services {
 					if mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, s).Connect == "tproxy" {
@@ -646,6 +657,28 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						svcCheck.Namespace = svc.Namespace
 					}
 					reg, proc := expandService(svcName, svc, svcCheck, SidecarPort+sidecars)
+					if isDP {
+						// No agent to register with or to ask about health:
+						// dataplane-health on server-1 does both.
+						dpEntries = append(dpEntries, dataplaneEntries(name, ip, dcName, part, node.Meta, svcName, svc, SidecarPort+sidecars)...)
+						if proc != nil && proc.ReadyWhen != nil {
+							proc.ReadyWhen.Consul = nil
+						}
+						if proc != nil {
+							rn.Processes[svcName] = proc
+						}
+						if inMesh(svc) {
+							d := dataplane{svc: svcName, node: name, ns: svcCheck.Namespace, part: part, dc: dcName, servers: serverIPs,
+								admin: SidecarAdminPort + sidecars, graceful: DataplaneGracefulPort + sidecars, tls: tls,
+								deps: map[string]*spec.Dep{dcName + "-server-1/" + DataplaneHealth: {Condition: "ready"}}}
+							if acl {
+								d.token = agentToken[part]
+							}
+							rn.Processes[svcName+SidecarSuffix] = d.process()
+							sidecars++
+						}
+						continue
+					}
 					if acl {
 						reg["token"] = agentToken[part] // registers and syncs the service
 					}
@@ -677,7 +710,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					sidecars++ // the agent opens its gRPC port for it
 				}
 
-				if node.Agent != "none" {
+				if isDP && tls {
+					rn.Files[CAFile] = labCA.certPEM
+				}
+				if node.Agent != "none" && !isDP {
 					cfg := map[string]any{
 						"node_name":            name,
 						"datacenter":           dcName,
@@ -765,8 +801,11 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					}
 				}
 				role := "client"
-				if node.Agent == "none" {
+				switch node.Agent {
+				case "none":
 					role = "none"
+				case "dataplane":
+					role = DataplaneRole
 				}
 				if isGW {
 					role = "gateway"
@@ -775,6 +814,16 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					Partition: placed.Partition, Namespaces: nodeNamespaces(c, dc, placed.Part, services)}
 				out.Nodes[key] = rn
 			}
+		}
+		if len(dpEntries) > 0 {
+			deps := map[string]*spec.Dep{}
+			for _, r := range serverRefs {
+				deps[r] = &spec.Dep{Condition: "ready"}
+			}
+			maps.Copy(deps, setupDeps)
+			s1 := out.Nodes[dcName+"-server-1"]
+			s1.Files[DataplaneManifest] = mustJSON(dpEntries)
+			s1.Processes[DataplaneHealth] = dataplaneHealthProcess(deps, apiEnv(token, tls))
 		}
 	}
 	return nil
@@ -1125,6 +1174,9 @@ func meshServices(c *spec.Consul) (bool, error) {
 				}
 				if node.Agent == "none" {
 					errs = append(errs, fmt.Errorf("%s: connect: %s needs a Consul agent on the node", where, svc.Connect))
+				}
+				if node.Agent == "dataplane" && svc.Connect == "tproxy" {
+					errs = append(errs, fmt.Errorf("%s: connect: tproxy isn't supported on dataplane nodes yet; use sidecar", where))
 				}
 				mesh = true
 				ports := map[int]string{}

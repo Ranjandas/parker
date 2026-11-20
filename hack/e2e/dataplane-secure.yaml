@@ -1,0 +1,43 @@
+# examples/dataplane.yaml with ACLs (dataplanes log in with a token; the
+# intentions let the mesh through) and TLS (dataplanes verify the servers
+# on gRPC TLS 8503 without a client certificate).
+parker: v1alpha1
+name: dpsec
+versions: { consul: 1.22.7, envoy: 1.35.12, consul-dataplane: 1.9.12 }
+consul:
+  defaults: { acl: true, tls: true }
+  datacenters:
+    dc1:
+      servers: 3
+      service_defaults: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service: { port: 8080, upstreams: { api: 9091 } }
+        api:
+          agent: dataplane
+          service: { port: 9090, upstreams: { web: 9092 } }
+      # Allowed both ways, so the mesh also works with ACLs on (deny by default).
+      config_entries:
+        - { Kind: service-intentions, Name: api, Sources: [{ Name: web, Action: allow }] }
+        - { Kind: service-intentions, Name: web, Sources: [{ Name: api, Action: allow }] }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - name: api is in the catalog with no agent, healthy
+      assert:
+        exec: { on: dc1/server-1, run: "curl -sf ${CONSUL_CACERT:+--cacert $CONSUL_CACERT} -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" \"${CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}/v1/health/service/api?passing\"", output: '"Node":"api"' }
+        within: 60s
+    - name: web (agent) reaches api (dataplane) through the mesh
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: '"name":"api"' }
+        within: 60s
+    - name: api (dataplane) reaches web (agent) through the mesh
+      assert:
+        exec: { on: dc1/api, run: "curl -sf -m 2 http://127.0.0.1:9092/", output: '"name":"web"' }
+        within: 60s
+    - name: stopping api's service turns its check critical
+      stop: dc1/api
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -sf ${CONSUL_CACERT:+--cacert $CONSUL_CACERT} -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" \"${CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}/v1/health/checks/api\" | grep -q critical" }
+        within: 30s

@@ -429,9 +429,18 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
 - `consul.defaults` / dc-level `agents`, `server`, `client` (`config`
   passthrough deep-merged, `log_level`), `service_defaults`
 - `servers: N` or `{count, overrides: {server-N: {version, config}}}`
-- `nodes:` with `count`, `agent: client|none`, `config`, `meta`,
+- `nodes:` with `count`, `agent: client|dataplane|none`, `config`, `meta`,
   `service:` / `services:` (`port`, `run`, `env`, `check: http|tcp|none`,
   `register` passthrough), `processes:`
+- `agent: dataplane` (needs `versions.consul-dataplane` and
+  `versions.envoy`): the node runs no Consul agent, as on Kubernetes.
+  A `dataplane-health` process on the dc's server-1 registers its services
+  and sidecars in the catalog and probes them every second, as the
+  consul-k8s endpoints controller does; each sidecar is `consul-dataplane`,
+  which finds the servers over gRPC (8502, or 8503 with `tls: true`, where
+  servers don't ask dataplanes for a client certificate) and logs in with
+  the agent token under ACLs. Dataplane nodes can't use `connect: tproxy`
+  yet (see `examples/dataplane.yaml`)
 - `run: fake-service`: built-in echo HTTP server (`parker fake-service`)
 - Several datacenters, each on its own LAN (`10.<n>.0.0/24` by default);
   `primary: true` picks the primary (default: first by name)

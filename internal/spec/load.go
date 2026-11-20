@@ -315,9 +315,14 @@ func (f *File) Validate() error {
 				switch n.Agent {
 				case "", "client", "none":
 				case "dataplane":
-					add("%s.agent: dataplane is reserved and not implemented yet", np)
+					if v := f.Versions["consul-dataplane"]; v == "" {
+						add("%s.agent: dataplane needs versions.consul-dataplane (e.g. 1.9.12) and versions.envoy", np)
+					}
+					if len(n.Config) > 0 {
+						add("%s.config: a dataplane node has no agent to configure", np)
+					}
 				default:
-					add("%s.agent: must be client or none", np)
+					add("%s.agent: must be client, dataplane or none", np)
 				}
 				if n.Service != nil && len(n.Services) > 0 {
 					add("%s: use service: or services:, not both", np)
