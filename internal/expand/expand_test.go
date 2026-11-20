@@ -57,6 +57,9 @@ func TestMinimal(t *testing.T) {
 	if !reflect.DeepEqual(cfg["retry_join"], []any{"10.1.0.10", "10.1.0.12"}) {
 		t.Fatalf("retry_join: %v", cfg["retry_join"])
 	}
+	if cfg["retry_interval"] != RetryInterval {
+		t.Errorf("retry_interval: %v", cfg["retry_interval"])
+	}
 }
 
 func TestClientsInheritAndDepend(t *testing.T) {
@@ -545,6 +548,9 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	cfg := agentConfig(t, b1)
 	if cfg["partition"] != "team-a" {
 		t.Errorf("billing partition: %v", cfg["partition"])
+	}
+	if cfg["retry_interval"] != RetryInterval {
+		t.Errorf("client retry_interval: %v", cfg["retry_interval"])
 	}
 	fe := agentConfig(t, low.Nodes["dc1-frontend"])
 	if _, ok := fe["partition"]; ok {
