@@ -43,9 +43,10 @@ func (s *Server) ControlHandler() http.Handler {
 	})
 	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
 		s.SetFaults(s.cfg.Faults)
-		s.log.Printf("faults reset: %s", s.cfg.Faults.Summary())
+		s.logf(LevelInfo, "faults reset: %s", s.cfg.Faults.Summary())
 		writeJSON(w, http.StatusOK, s.cfg.Faults)
 	})
+	s.logLevelHandlers(mux)
 	return mux
 }
 
@@ -61,7 +62,7 @@ func (s *Server) Change(change *spec.Fake) (Faults, error) {
 	if err != nil {
 		return Faults{}, err
 	}
-	s.log.Printf("faults changed: %s", f.Summary())
+	s.logf(LevelInfo, "faults changed: %s", f.Summary())
 	return f, nil
 }
 

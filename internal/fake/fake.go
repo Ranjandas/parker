@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -72,6 +74,9 @@ type Server struct {
 	// tests.
 	sleep func(ctx context.Context, d time.Duration)
 
+	// level is the Level in force.
+	level atomic.Int32
+
 	mu     sync.RWMutex
 	faults Faults
 	inj    *injector
@@ -79,7 +84,7 @@ type Server struct {
 }
 
 func New(cfg *Config) *Server {
-	return &Server{
+	s := &Server{
 		cfg:     cfg,
 		client:  &http.Client{Timeout: cfg.ClientTimeout, Transport: freshConns()},
 		h2c:     h2cClient(cfg.ClientTimeout),
@@ -92,6 +97,8 @@ func New(cfg *Config) *Server {
 		inj:     newInjector(cfg.Seed),
 		facts:   newFactTeller(cfg.Version, uint64(cfg.Seed)),
 	}
+	s.level.Store(int32(cfg.LogLevel))
+	return s
 }
 
 // freshConns opens a connection per upstream call. Through a sidecar's TCP
@@ -225,7 +232,23 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 		}
 	}
 	s.finish(resp, start)
-	s.log.Printf("request id=%s type=%s path=%s from=%s code=%d duration=%s", id, typ, resp.URI, r.RemoteAddr, resp.Code, resp.Duration)
+	lvl := LevelInfo
+	switch {
+	case resp.Code >= 500 || resp.Code < 0:
+		lvl = LevelError
+	case resp.Code >= 400 || resp.Injected != "":
+		lvl = LevelWarn
+	}
+	s.logf(lvl, "request id=%s type=%s path=%s from=%s code=%d duration=%s%s", id, typ, resp.URI, r.RemoteAddr, resp.Code, resp.Duration, injectedNote(resp))
+	if s.Level() == LevelDebug {
+		for _, k := range slices.Sorted(maps.Keys(r.Header)) {
+			s.logf(LevelDebug, "request id=%s header %s: %s", id, k, strings.Join(r.Header[k], ", "))
+		}
+		for _, u := range slices.Sorted(maps.Keys(resp.UpstreamCalls)) {
+			up := resp.UpstreamCalls[u]
+			s.logf(LevelDebug, "request id=%s upstream %s code=%d duration=%s%s", id, u, up.Code, up.Duration, errNote(up.Error))
+		}
+	}
 	return resp, id
 }
 
@@ -396,4 +419,18 @@ func localIPs() []string {
 		}
 	}
 	return out
+}
+
+func injectedNote(r *Response) string {
+	if r.Injected == "" {
+		return ""
+	}
+	return " injected=" + r.Injected
+}
+
+func errNote(e string) string {
+	if e == "" {
+		return ""
+	}
+	return fmt.Sprintf(" error=%q", e)
 }

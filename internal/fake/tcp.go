@@ -86,7 +86,7 @@ func (s *Server) serveTCPContext(ctx context.Context, addr string, bound func(ne
 		if s.Faults().HealthCode < 400 {
 			return errors.New("fake tcp: listener closed")
 		}
-		s.log.Printf("health %d: stopped listening on %s", s.Faults().HealthCode, addr)
+		s.logf(LevelWarn, "health %d: stopped listening on %s", s.Faults().HealthCode, addr)
 	}
 }
 
@@ -95,12 +95,12 @@ func (s *Server) echo(ctx context.Context, c net.Conn) {
 	from := c.RemoteAddr().String()
 	f := s.Faults()
 	if !s.inj.allow(f.RateLimit, s.now()) {
-		s.log.Printf("tcp from=%s rate limited", from)
+		s.logf(LevelWarn, "tcp from=%s rate limited", from)
 		return
 	}
 	if f.ErrorRate > 0 && s.inj.float() < f.ErrorRate {
 		if f.ErrorType != "delay" {
-			s.log.Printf("tcp from=%s error injected", from)
+			s.logf(LevelWarn, "tcp from=%s error injected", from)
 			return
 		}
 		s.sleep(ctx, f.ErrorDelay)
@@ -109,7 +109,7 @@ func (s *Server) echo(ctx context.Context, c net.Conn) {
 	if _, err := c.Write([]byte(tcpHello(s.cfg.Name, s.cfg.Node, s.cfg.DC))); err != nil {
 		return
 	}
-	s.log.Printf("tcp from=%s connected", from)
+	s.logf(LevelInfo, "tcp from=%s connected", from)
 	sc := bufio.NewScanner(c)
 	for sc.Scan() {
 		if _, err := c.Write(append(sc.Bytes(), '\n')); err != nil {

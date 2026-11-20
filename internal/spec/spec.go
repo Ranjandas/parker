@@ -122,7 +122,32 @@ type Step struct {
 	// Fake changes the faults of running fake services (run:
 	// fake-service) on the nodes a selector matches, without a restart.
 	Fake *FakeStep `yaml:"fake,omitempty"`
+	// LogLevel changes the log level of the Consul agents, Envoys and
+	// fake services on the nodes a selector matches, without a restart.
+	LogLevel *LogLevelStep `yaml:"log_level,omitempty"`
 }
+
+// LogLevelStep changes running processes' log levels. With no level,
+// loggers or reset it shows the levels in force.
+type LogLevelStep struct {
+	// On is a selector: dc1/web, dc1, ...
+	On string `yaml:"on" json:"on"`
+	// Level is trace, debug, info, warn or error (critical and off for
+	// Envoy only).
+	Level string `yaml:"level,omitempty" json:"level,omitempty" jsonschema:"enum=trace,enum=debug,enum=info,enum=warn,enum=error,enum=critical,enum=off"`
+	// Only picks one kind of process: consul, envoy or fake; default all.
+	Only string `yaml:"only,omitempty" json:"only,omitempty" jsonschema:"enum=consul,enum=envoy,enum=fake"`
+	// Process picks one process on the nodes by name (web-sidecar,
+	// consul, web); default all of them.
+	Process string `yaml:"process,omitempty" json:"process,omitempty"`
+	// Loggers sets single Envoy loggers: {upstream: trace, http: debug}.
+	Loggers map[string]string `yaml:"loggers,omitempty" json:"loggers,omitempty"`
+	// Reset goes back to the levels the lab started with.
+	Reset bool `yaml:"reset,omitempty" json:"reset,omitempty"`
+}
+
+// Empty reports a step that changes nothing (it shows the levels).
+func (l *LogLevelStep) Empty() bool { return l.Level == "" && len(l.Loggers) == 0 && !l.Reset }
 
 // FakeStep changes a running fake service's faults. The fields set are
 // changed; the rest stay as they are.
@@ -817,6 +842,10 @@ type Fake struct {
 	// Seed makes the random draws (errors, latency) repeatable
 	// (RAND_SEED); default: a new seed each start.
 	Seed int64 `yaml:"seed,omitempty" json:"seed,omitempty"`
+	// LogLevel is debug (adds headers and upstream calls), info (every
+	// request; the default), warn (failed or faulted requests) or error
+	// (LOG_LEVEL).
+	LogLevel string `yaml:"log_level,omitempty" json:"log_level,omitempty" jsonschema:"enum=trace,enum=debug,enum=info,enum=warn,enum=error"`
 	// RequestFaults lets a caller ask for faults on one request
 	// (?error-rate=50&delay=2s, or the X-Parker-Fault header); default
 	// true.

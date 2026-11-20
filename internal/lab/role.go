@@ -112,13 +112,7 @@ func ServerClients(low *spec.File, dc string) (map[string]*api.Client, error) {
 		if l := low.Nodes[n].Labels; l == nil || l.DC != dc || l.Role != "server" {
 			continue
 		}
-		dial := supervisor.DialerIn(netsetup.NetnsPath(low.Name, n))
-		hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
-		cfg, err := supervisor.ConsulConfig(AgentCheck(low, n), hc, supervisor.NodeDir(RunDir(low.Name), n))
-		if err != nil {
-			return nil, err
-		}
-		c, err := api.NewClient(cfg)
+		c, err := AgentClient(low, n, 2*time.Second)
 		if err != nil {
 			return nil, err
 		}
@@ -177,4 +171,16 @@ func pickLeader(low *spec.File, dc string, votes map[string]int, errs []error) (
 		return "", fmt.Errorf("%s has no raft leader", dc)
 	}
 	return selector.LeaderByAddr(low, dc, best)
+}
+
+// AgentClient talks to the Consul agent on node from inside its netns,
+// with the token and CA its readiness check uses.
+func AgentClient(low *spec.File, node string, timeout time.Duration) (*api.Client, error) {
+	dial := supervisor.DialerIn(netsetup.NetnsPath(low.Name, node))
+	hc := &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
+	cfg, err := supervisor.ConsulConfig(AgentCheck(low, node), hc, supervisor.NodeDir(RunDir(low.Name), node))
+	if err != nil {
+		return nil, err
+	}
+	return api.NewClient(cfg)
 }

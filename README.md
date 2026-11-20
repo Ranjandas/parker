@@ -102,7 +102,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker ui [FILE\|LAB]` | Web UI in your browser, for a local or `--host` daemon: labs, a live node and process table by datacenter with Consul health and leaders, problems called out, node pages with processes, health checks, `describe` and a streaming log viewer (filter, warn/error), faults (restart, stop/start, pause/resume, partition, kill, heal), scenario runs and `down`, and a lab builder that writes topology YAML from a canvas or edits an existing file in place, and runs it. Serves on a loopback port and opens a one-time sign-in link; `--no-open` prints it. See [Web UI](#web-ui). |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table grouped by datacenter and partition (servers, then clients) with state, role and a CONSUL column (each agent's alive/known LAN members, each service's catalog health, dataplane nodes included). A lab with several datacenters or admin partitions opens on a datacenter level (nodes, processes up, leader, members, service health; `enter` opens one, `:dc [NAME[/PARTITION]]` jumps), and `:svc` lists the catalog's services with each instance's health and its sidecar's (`enter` goes to the node). `←`/`→` fold and unfold a node (`space` toggles, `z` all; nodes fold on their own when the lab overflows the screen, unless something is wrong on them), `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:q`. Faults on the selected node: `K` kill, `R` restart, `S` stop/start, `P` pause/resume, `x` partition it from the rest, `H` heal (disruptive ones ask first), or `:kill SELECTOR`, `:partition GROUP...` etc.; `:run [SCENARIO]` plays a scenario and streams its steps; `:pf [LOCAL:]REMOTE` port-forwards from the selected node while the TUI runs. `NO_COLOR` or `PARKER_TUI_STATIC=1` keeps the logo still. |
 | `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
-| `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
+| `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. `--level debug` first changes log levels while the processes run (see [Log levels](#log-levels)). |
 | `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker`, `server-1.dc1.<lab>.parker` or, inside an admin partition, `billing-1.team-a.dc1.<lab>.parker` (the short form works while only one partition has that name); only lab addresses are reachable. |
 | `parker port-forward FILE\|LAB NODE [LOCAL:]PORT` | Forward a local port to a node's port. |
 | `parker daemon [stop\|status\|credentials]` | Run the daemon in the foreground (`--listen :7443` for remote clients), stop it (labs keep running), check it, or print what a remote client needs. |
@@ -248,6 +248,41 @@ binary and started again; after a server, the step waits (up to 2 minutes)
 for autopilot to report every server healthy and the upgraded one on the new
 version. Processes that depend on the agent keep running. `parker fetch`
 also downloads upgrade targets. See `examples/upgrade.yaml`.
+
+### Log levels
+
+```yaml
+    - log_level: { on: dc1/web, level: debug }                  # Consul agent, Envoys and fakes
+    - log_level: { on: dc1/web, only: envoy, loggers: { upstream: trace, http: debug } }
+    - log_level: { on: dc1-web-1, process: web-sidecar, level: trace }
+    - log_level: { on: dc1, reset: true }                       # back to the lab's levels
+    - log_level: { on: dc1 }                                    # just show them
+```
+
+Levels change without a restart, and the step prints the level in force on
+each process after it:
+
+- **Envoy** (sidecars, gateways, a dataplane's Envoy): through its admin
+  `/logging` endpoint. `level:` sets every logger; `loggers:` sets single
+  ones. Envoy also takes `critical` and `off` (with `only: envoy`).
+- **Consul agents**: Parker sets `log_level` in the node's `consul.json`
+  and reloads the agent (`log_level` is reloadable), then reads the level
+  back from `/v1/agent/self`. It stays in force across agent restarts,
+  until a reset or the next `up`.
+- **Fake services**: through their control socket (see
+  [the fake service](docs/fake-service.md)).
+
+consul-dataplane's own log level is fixed at start; only its Envoy's
+changes. By hand, the same thing is `parker logs`:
+
+```console
+$ parker logs mesh dc1-web-1/web-sidecar --level debug -f   # raise it, then follow
+$ parker logs mesh dc1-web-1 --logger upstream=trace         # one Envoy logger
+$ parker logs mesh dc1 --level info --only consul            # every agent in dc1
+$ parker logs mesh dc1 --level reset
+```
+
+The web UI's node page has the same control above each process's log.
 
 ## Selectors
 

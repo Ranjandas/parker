@@ -50,6 +50,10 @@ if grep "acl: true" "$F" >/dev/null; then
   echo "anonymous denied"
   $P exec "$F" "$first" -- consul catalog services </dev/null
   $P exec "$F" "$first" -- consul keyring -list </dev/null | grep -q '\[' && echo "gossip key installed"
+  # A log level change reloads the agent with the management token.
+  $P logs "$F" "$first" --level debug --only consul | grep -F "$first/consul (consul): debug" >/dev/null
+  $P logs "$F" "$first" --level reset --only consul | grep -F "(consul): info" >/dev/null
+  echo "agent log level changed and reset under ACLs"
 fi
 if grep "config_entries:" "$F" >/dev/null; then
   echo "--- config entries"
@@ -105,6 +109,24 @@ if grep "^name: fake-chain" "$F" >/dev/null; then
   code=$($P exec "$F" dc1-db -- curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"health":{"code":503}}' http://127.0.0.1:7000/.parker/fake/faults </dev/null)
   [ "$code" = 403 ] || { echo "the service port took a fault change ($code)" >&2; exit 1; }
   echo "parker call and the fake UI work"
+  echo "--- log levels at runtime"
+  $P logs "$F" dc1-web --level debug | tee /tmp/ll.out
+  for want in "dc1-web/consul (consul): debug" "dc1-web/web-sidecar (envoy): debug" "dc1-web/web (fake): debug"; do
+    grep -F "$want" /tmp/ll.out >/dev/null || { echo "missing: $want" >&2; exit 1; }
+  done
+  $P logs "$F" dc1-web/web-sidecar --logger upstream=trace | grep -F "upstream: trace" >/dev/null
+  $P exec "$F" dc1-web -- curl -sf -o /dev/null http://127.0.0.1:8080/ </dev/null
+  $P logs "$F" dc1-web/web -n 100 | grep -E "\[DEBUG\] request id=.* upstream " >/dev/null
+  # The reloaded agent logs at debug.
+  for i in $(seq 1 20); do
+    $P logs "$F" dc1-web/consul -n 300 | grep -F "[DEBUG]" >/dev/null && break
+    [ "$i" = 20 ] && { echo "consul logged no [DEBUG] line after the reload" >&2; exit 1; }
+    sleep 0.5
+  done
+  $P logs "$F" dc1 --level reset | tee /tmp/ll.out
+  if grep -E ": (debug|trace)" /tmp/ll.out >/dev/null; then echo "reset left a debug level" >&2; exit 1; fi
+  if $P logs "$F" dc1-web --level loud >/dev/null 2>&1; then echo "a bad level exited 0" >&2; exit 1; fi
+  echo "log levels changed at runtime and reset"
 fi
 if grep "^name: faults" "$F" >/dev/null; then
   echo "--- parker fault"
