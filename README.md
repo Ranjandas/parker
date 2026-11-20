@@ -615,7 +615,8 @@ namespace are skipped unless their env var is set (`PARKER_LIVE_IPTABLES`,
 `unshare -Urnm`: a private user + network + mount namespace where an
 unprivileged user holds `CAP_NET_ADMIN` over a throwaway network stack.
 `make e2e` runs every lab in `hack/e2e/suite.txt` in turn. CI runs each
-lab as its own parallel job. On a PR it runs only the labs the change
+lab as its own job, on a self-hosted Fedora runner
+([docs/self-hosted-runner.md](docs/self-hosted-runner.md)), one job at a time. On a PR it runs only the labs the change
 touches (`hack/e2eplan` maps paths to labs: docs and unit-test-only changes
 run none, core code runs them all). Every push to main and a nightly run
 cover the whole suite. New labs go in `suite.txt`. Enterprise labs need a license,

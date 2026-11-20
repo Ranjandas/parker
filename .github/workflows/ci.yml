@@ -11,13 +11,19 @@ on:
 permissions:
   contents: read
 
+# Jobs run on the self-hosted runner (docs/self-hosted-runner.md). To go back
+# to GitHub-hosted runners without a code change, set the repository
+# variable CI_RUNS_ON to "ubuntu-24.04" (with the quotes: it is JSON).
+# Paths go under runner.temp, not /tmp: a self-hosted runner keeps /tmp
+# between jobs, runner.temp is emptied after each one.
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -31,11 +37,11 @@ jobs:
       - name: go test (with coverage summary)
         shell: bash # -o pipefail, so a failing test fails the step through tee
         run: |
-          go test -race -cover ./... | tee /tmp/test.out
+          go test -race -cover ./... | tee "$RUNNER_TEMP/test.out"
           {
             echo '### Unit test coverage'
             echo '```'
-            grep -o 'github.com/Ranjandas/parker/[^ 	]*.*coverage: [0-9.]*%' /tmp/test.out | sed -E 's|github.com/Ranjandas/parker/||; s|\t.*coverage: | |' | grep -v 'internal/api'
+            grep -o 'github.com/Ranjandas/parker/[^ 	]*.*coverage: [0-9.]*%' "$RUNNER_TEMP/test.out" | sed -E 's|github.com/Ranjandas/parker/||; s|\t.*coverage: | |' | grep -v 'internal/api'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: client builds for macOS and arm64
@@ -47,7 +53,7 @@ jobs:
   plan:
     # Which e2e labs to run: on a PR, the ones its changes touch
     # (hack/e2eplan); on main, nightly and by hand, all of them.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') }}
     outputs:
       labs: ${{ steps.plan.outputs.labs }}
     steps:
@@ -60,8 +66,8 @@ jobs:
       - id: plan
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | tee /tmp/changed
-            labs=$(go run ./hack/e2eplan </tmp/changed)
+            git diff --name-only HEAD^1 HEAD | tee "$RUNNER_TEMP/changed"
+            labs=$(go run ./hack/e2eplan <"$RUNNER_TEMP/changed")
           else
             labs=$(go run ./hack/e2eplan -all)
           fi
@@ -74,7 +80,7 @@ jobs:
     # sudo for parker itself. "live" is the netsetup round trips plus
     # rootless mode as a normal user.
     name: e2e (${{ matrix.lab }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') }}
     needs: [test, plan]
     if: needs.plan.outputs.labs != '[]'
     strategy:
@@ -87,9 +93,13 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Allow unprivileged user namespaces
-        # Ubuntu 24.04 blocks them via AppArmor by default.
+        # Ubuntu 24.04 blocks them via AppArmor by default. Fedora allows
+        # them, and the self-hosted runner has no sudo.
+        if: runner.environment == 'github-hosted'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Cache Consul and Envoy binaries
+        # A self-hosted runner keeps ~/.cache/parker on disk already.
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: ~/.cache/parker
@@ -100,33 +110,34 @@ jobs:
         if: matrix.lab != 'live'
         run: hack/rootless-e2e.sh "${{ matrix.lab }}"
         env:
-          PARKER_E2E_LOGS: /tmp/parker-e2e-logs
+          PARKER_E2E_LOGS: ${{ runner.temp }}/parker-e2e-logs
       - name: iptables rules round trip (private netns)
         if: matrix.lab == 'live'
         run: |
-          go test -c -o /tmp/netsetup.test ./internal/netsetup/
-          PARKER_LIVE_IPTABLES=1 unshare -Urn /tmp/netsetup.test -test.run FirewallLive -test.v
+          go test -c -o "$RUNNER_TEMP/netsetup.test" ./internal/netsetup/
+          PARKER_LIVE_IPTABLES=1 unshare -Urn "$RUNNER_TEMP/netsetup.test" -test.run FirewallLive -test.v
       - name: bridges and namespaces round trip (private netns)
         if: matrix.lab == 'live'
         run: |
-          PARKER_LIVE_NETNS=1 unshare -Urnm sh -c 'mount -t tmpfs tmpfs /run && mkdir -p /run/netns && /tmp/netsetup.test -test.run NetsetupLive -test.v'
+          PARKER_LIVE_NETNS=1 unshare -Urnm sh -c 'mount -t tmpfs tmpfs /run && mkdir -p /run/netns && "$RUNNER_TEMP/netsetup.test" -test.run NetsetupLive -test.v'
       - name: rootless mode (no sudo, no unshare wrapper)
         if: matrix.lab == 'live'
         run: make e2e-rootless
         env:
-          PARKER_E2E_LOGS: /tmp/parker-e2e-logs
+          PARKER_E2E_LOGS: ${{ runner.temp }}/parker-e2e-logs
       - name: Upload lab logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-logs-${{ strategy.job-index }}
-          path: /tmp/parker-e2e-logs
+          path: ${{ runner.temp }}/parker-e2e-logs
           if-no-files-found: ignore
+          retention-days: 7 # artifact storage counts toward the free quota
 
   e2e:
     # One status for the whole matrix: green when every planned lab passed
     # or the PR needed none.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') }}
     needs: [test, plan, e2e-lab]
     if: always()
     steps:
