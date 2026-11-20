@@ -61,11 +61,11 @@ func TestCheckOncePortAndHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := checkOnce(ctx, &spec.Ready{Port: port}, tcpDial, http.DefaultClient, ""); err != nil {
+	if err := checkOnce(ctx, &spec.Ready{Port: port}, tcpDial, http.DefaultClient, "", 0); err != nil {
 		t.Errorf("open port: %v", err)
 	}
 	ln.Close()
-	if err := checkOnce(ctx, &spec.Ready{Port: port}, tcpDial, http.DefaultClient, ""); err == nil {
+	if err := checkOnce(ctx, &spec.Ready{Port: port}, tcpDial, http.DefaultClient, "", 0); err == nil {
 		t.Error("closed port counted as ready")
 	}
 
@@ -83,7 +83,7 @@ func TestCheckOncePortAndHTTP(t *testing.T) {
 		{spec.HTTPCheck{URL: srv.URL + "/teapot"}, false},
 		{spec.HTTPCheck{URL: srv.URL + "/teapot", Status: 418}, true},
 	} {
-		err := checkOnce(ctx, &spec.Ready{HTTP: &c.r}, tcpDial, srv.Client(), "")
+		err := checkOnce(ctx, &spec.Ready{HTTP: &c.r}, tcpDial, srv.Client(), "", 0)
 		if (err == nil) != c.pass {
 			t.Errorf("%+v: err=%v, want pass=%v", c.r, err, c.pass)
 		}
@@ -93,12 +93,23 @@ func TestCheckOncePortAndHTTP(t *testing.T) {
 func TestCheckOnceLog(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "p.log")
 	r := &spec.Ready{Log: "agent: Synced node info"}
-	if err := checkOnce(context.Background(), r, tcpDial, nil, log); err == nil {
+	if err := checkOnce(context.Background(), r, tcpDial, nil, log, 0); err == nil {
 		t.Error("missing log counted as ready")
 	}
 	os.WriteFile(log, []byte("starting\n[INFO] agent: Synced node info\n"), 0o644)
-	if err := checkOnce(context.Background(), r, tcpDial, nil, log); err != nil {
+	if err := checkOnce(context.Background(), r, tcpDial, nil, log, 0); err != nil {
 		t.Errorf("log line present: %v", err)
+	}
+	// A line from an earlier run, before this run's start offset, doesn't count.
+	earlier, _ := os.ReadFile(log)
+	if err := checkOnce(context.Background(), r, tcpDial, nil, log, int64(len(earlier))); err == nil {
+		t.Error("an earlier run's line counted as ready")
+	}
+	f, _ := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("[INFO] agent: Synced node info\n")
+	f.Close()
+	if err := checkOnce(context.Background(), r, tcpDial, nil, log, int64(len(earlier))); err != nil {
+		t.Errorf("this run's line: %v", err)
 	}
 }
 
@@ -171,7 +182,7 @@ func TestCheckOnceConsul(t *testing.T) {
 			srv := fakeConsul(t, c.leader, c.alive, c.healthy)
 			ck := c.check
 			ck.Addr = strings.TrimPrefix(srv.URL, "http://")
-			err := checkOnce(ctx, &spec.Ready{Consul: &ck}, tcpDial, srv.Client(), "")
+			err := checkOnce(ctx, &spec.Ready{Consul: &ck}, tcpDial, srv.Client(), "", 0)
 			if (err == nil) != c.pass {
 				t.Errorf("err=%v, want pass=%v", err, c.pass)
 			}
@@ -299,17 +310,17 @@ func TestConsulCheckOverHTTPS(t *testing.T) {
 	hc := &http.Client{Transport: &http.Transport{}}
 
 	ok := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt", CAFile: "ca.pem"}}
-	if err := checkOnce(ctx, ok, tcpDial, hc, logPath); err != nil {
+	if err := checkOnce(ctx, ok, tcpDial, hc, logPath, 0); err != nil {
 		t.Errorf("https check: %v", err)
 	}
 	other := t.TempDir()
 	os.WriteFile(filepath.Join(other, "ca.pem"), []byte("not a cert"), 0o644)
 	bad := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt", CAFile: filepath.Join(other, "ca.pem")}}
-	if err := checkOnce(ctx, bad, tcpDial, hc, logPath); err == nil {
+	if err := checkOnce(ctx, bad, tcpDial, hc, logPath, 0); err == nil {
 		t.Error("check passed with a bad CA file")
 	}
 	plain := &spec.Ready{Consul: &spec.ConsulCheck{Addr: addr, Leader: true, Token: "mgmt"}}
-	if err := checkOnce(ctx, plain, tcpDial, hc, logPath); err == nil {
+	if err := checkOnce(ctx, plain, tcpDial, hc, logPath, 0); err == nil {
 		t.Error("plain HTTP check passed against an HTTPS server")
 	}
 }

@@ -31,6 +31,12 @@ type NodeStatus struct {
 	Namespace bool
 	Processes []ProcStatus
 	Role      string // leader | follower | no-leader | client | ""
+	// DC and Partition are where the node sits (its labels).
+	DC, Partition string
+	// MembersAlive of MembersTotal LAN members its agent sees.
+	MembersAlive, MembersTotal int
+	// Health of its service instances in the catalog, by service name.
+	Health map[string]string
 }
 
 type Status struct {
@@ -60,12 +66,21 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 	}
 
 	nodes := slices.Sorted(maps.Keys(low.Nodes))
-	roles := make([]string, len(nodes))
+	agents := make([]agentInfo, len(nodes))
 	var roleWG sync.WaitGroup
+	var health map[string]map[string]string
+	roleWG.Add(1)
+	go func() {
+		defer roleWG.Done()
+		health = ServiceHealth(low)
+	}()
 	for i, node := range nodes {
 		n := low.Nodes[node]
 		nsIno, nsOK := inode(netsetup.NetnsPath(name, node))
 		ns := NodeStatus{Name: node, IPs: NodeIPs(n), Namespace: nsOK}
+		if l := n.Labels; l != nil {
+			ns.DC, ns.Partition = l.DC, l.Partition
+		}
 		hasAgent := false
 		for _, pn := range slices.Sorted(maps.Keys(n.Processes)) {
 			id := node + "/" + pn
@@ -87,14 +102,16 @@ func GetStatus(name string, h *supervisor.Handle) (*Status, error) {
 			roleWG.Add(1)
 			go func() {
 				defer roleWG.Done()
-				roles[i] = consulRole(name, node, ns.IPs, AgentCheck(low, node))
+				agents[i] = consulAgent(name, node, ns.IPs, AgentCheck(low, node))
 			}()
 		}
 		st.Nodes = append(st.Nodes, ns)
 	}
 	roleWG.Wait()
 	for i := range st.Nodes {
-		st.Nodes[i].Role = roles[i]
+		a := agents[i]
+		st.Nodes[i].Role, st.Nodes[i].MembersAlive, st.Nodes[i].MembersTotal = a.role, a.alive, a.total
+		st.Nodes[i].Health = health[st.Nodes[i].Name]
 	}
 	return st, nil
 }

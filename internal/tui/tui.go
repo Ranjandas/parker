@@ -73,7 +73,9 @@ const (
 	viewNodes
 	viewLogs
 	viewDescribe
-	viewRun // a scenario's progress, streamed like a log
+	viewRun      // a scenario's progress, streamed like a log
+	viewDCs      // a lab's datacenters and partitions
+	viewServices // the catalog's services and their instances
 )
 
 type inputMode int
@@ -87,9 +89,9 @@ const (
 // row is one line of the nodes table: a process on a node, a folded
 // node's summary, or a datacenter heading.
 type row struct {
-	node, ip, proc, pid, state, restarts, role string
-	section                                    string // a datacenter heading, not a process
-	spacer                                     bool   // a blank line between datacenters
+	node, ip, proc, pid, state, consul, restarts, role string
+	section                                            string // a datacenter heading, not a process
+	spacer                                             bool   // a blank line between datacenters
 	// A node with several processes has a fold marker; folded, its one
 	// row sums them up: procText and stateText replace proc and state
 	// (proc stays its first process, for logs).
@@ -97,7 +99,7 @@ type row struct {
 }
 
 func (r row) fields() []string {
-	return []string{r.node, r.ip, r.proc, r.pid, r.state, r.restarts, r.role}
+	return []string{r.node, r.ip, r.proc, r.pid, r.state, r.consul, r.restarts, r.role}
 }
 
 func (r row) matches(f string) bool {
@@ -123,7 +125,7 @@ func (r row) cells(cont bool) []cell {
 	if r.stateText != "" {
 		state.text = r.stateText
 	}
-	return []cell{node, ip, proc, pid, state, restarts, roleCell(r.role)}
+	return []cell{node, ip, proc, pid, state, consulCell(r.consul), restarts, roleCell(r.role)}
 }
 
 // Model is the Bubble Tea model.
@@ -140,7 +142,16 @@ type Model struct {
 	rows      []row // after filter
 	nodeTable grid
 	filter    string // nodes view filter
-	dc        string // :dc prefix filter
+	dc, part  string // the datacenter (and partition) picked
+	// pickDC opens the datacenters view once the lab's status is in, when
+	// it has several (or partitions).
+	pickDC bool
+
+	places   []place
+	dcTable  grid
+	svcRows  []svcRow
+	svcTable grid
+	svcFrom  view // where esc goes back to from the services view
 	// fold is each node folded or unfolded by hand; other nodes fold when
 	// the lab overflows the screen (autoFold), unless something's wrong
 	// on them.
@@ -219,6 +230,8 @@ func New(o Options) Model {
 		o:         o,
 		labTable:  newGrid(column{title: "LAB", flex: true}, column{title: "NAMESPACES"}, column{title: "SUPERVISED"}),
 		nodeTable: newGrid(nodeColumns...),
+		dcTable:   newGrid(dcColumns...),
+		svcTable:  newGrid(svcColumns...),
 		input:     ti,
 		fold:      map[string]bool{},
 		follow:    true,
@@ -227,14 +240,14 @@ func New(o Options) Model {
 		height:    24,
 	}
 	if o.Lab != "" {
-		m.lab, m.view = o.Lab, viewNodes
+		m.lab, m.view, m.pickDC, m.autoOpened = o.Lab, viewNodes, true, true
 	}
 	return m
 }
 
 // nodeColumns: NODE and IP give way on a narrow terminal.
 var nodeColumns = []column{{title: "NODE", flex: true}, {title: "IP", flex: true}, {title: "PROCESS"},
-	{title: "PID"}, {title: "STATE"}, {title: "RESTARTS"}, {title: "ROLE"}}
+	{title: "PID"}, {title: "STATE"}, {title: "CONSUL"}, {title: "RESTARTS"}, {title: "ROLE"}}
 
 func (m Model) Init() tea.Cmd {
 	if m.o.Static {
@@ -260,7 +273,7 @@ func (m Model) refresh() tea.Cmd {
 			}
 			return labsMsg{r.Msg.Labs}
 		}
-	case viewNodes:
+	case viewNodes, viewDCs, viewServices:
 		lab := m.lab
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -320,7 +333,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.status = msg.st
 		m.updated = time.Now()
+		if m.pickDC {
+			m.pickDC = false
+			if m.view == viewNodes && m.dc == "" && hasDCLevel(msg.st) {
+				m.view = viewDCs
+			}
+		}
 		m.applyRows()
+		m.applyDCRows()
+		m.applySvcRows()
 		return m, nil
 	case describeMsg:
 		m.describeTitle = msg.node
@@ -371,6 +392,8 @@ func (m *Model) resize() {
 	h := m.bodyHeight()
 	m.labTable.SetSize(m.width, h-2) // less the table's header and rule
 	m.nodeTable.SetSize(m.width, h-2)
+	m.dcTable.SetSize(m.width, h-2)
+	m.svcTable.SetSize(m.width, h-2)
 	m.vp.Width, m.vp.Height = m.width, h
 	if m.view == viewLogs || m.view == viewRun {
 		m.renderLog()
@@ -379,7 +402,7 @@ func (m *Model) resize() {
 }
 
 func (m Model) openLab(name string) (tea.Model, tea.Cmd) {
-	m.lab, m.view, m.status, m.filter, m.dc = name, viewNodes, nil, "", ""
+	m.lab, m.view, m.status, m.filter, m.dc, m.part, m.pickDC = name, viewNodes, nil, "", "", "", true
 	m.fold = map[string]bool{}
 	m.nodeTable.SetRows(nil)
 	return m, m.refresh()
@@ -399,7 +422,7 @@ func (m *Model) applyRows() {
 	var groups []nodeGroup
 	lines := 0
 	for _, g := range groupNodes(m.status.Nodes) {
-		if m.dc != "" && g.dc != m.dc {
+		if m.dc != "" && (g.dc != m.dc || m.part != "" && g.partOr() != m.part) {
 			continue
 		}
 		var nodes []*parkerv1.NodeStatus
@@ -414,7 +437,7 @@ func (m *Model) applyRows() {
 			groups = append(groups, g)
 		}
 	}
-	headings := m.dc == "" && len(groups) > 0 && (groups[0].dc != "" || len(groups) > 1)
+	headings := len(groups) > 1 || m.dc == "" && len(groups) > 0 && groups[0].dc != ""
 	if headings {
 		lines += 2*len(groups) - 1
 	}
@@ -502,7 +525,8 @@ func (m *Model) procRows(n *parkerv1.NodeStatus) []row {
 	})
 	var out []row
 	for _, p := range procs {
-		r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), restarts: strconv.Itoa(int(p.Restarts)), role: procRole(n, p.Name, names)}
+		r := row{node: n.Name, ip: ip, proc: p.Name, pid: "-", state: ProcState(p), consul: consulText(n, p.Name),
+			restarts: strconv.Itoa(int(p.Restarts)), role: procRole(n, p.Name, names)}
 		if p.Pid > 0 {
 			r.pid = strconv.Itoa(int(p.Pid))
 		}
@@ -529,7 +553,12 @@ func (m *Model) nodeRows(n *parkerv1.NodeStatus) []row {
 		return rows
 	}
 	worst, ok, restarts := "ready", 0, 0
+	consul := membersText(n)
+	health := ""
 	for _, r := range rows {
+		if _, _, isMembers := parseMembers(r.consul); r.consul != "" && !isMembers {
+			health = worseHealth(health, r.consul)
+		}
 		if stateRank[r.state] > stateRank[worst] {
 			worst = r.state
 		}
@@ -550,7 +579,7 @@ func (m *Model) nodeRows(n *parkerv1.NodeStatus) []row {
 	}
 	mark, _, _ := strings.Cut(stateCell(worst).text, " ")
 	return []row{{
-		node: n.Name, ip: rows[0].ip, proc: rows[0].proc, pid: "", state: worst, restarts: strconv.Itoa(restarts),
+		node: n.Name, ip: rows[0].ip, proc: rows[0].proc, pid: "", state: worst, consul: foldedConsul(consul, health), restarts: strconv.Itoa(restarts),
 		role: nodeRole(n), marker: "▸ ", procText: plural(len(rows), "process"),
 		stateText: fmt.Sprintf("%s %d/%d %s", mark, count, len(rows), worst),
 	}}
@@ -692,6 +721,7 @@ func procOrder(name string) procKey {
 // nodeGroup is a datacenter's nodes in display order.
 type nodeGroup struct {
 	dc               string // "" for nodes outside any datacenter
+	part             string // an admin partition besides the default
 	nodes            []*parkerv1.NodeStatus
 	servers, clients int
 	rows             []row
@@ -701,14 +731,38 @@ func (g nodeGroup) title() string {
 	if g.dc == "" {
 		return "other"
 	}
-	parts := []string{plural(g.servers, "server")}
+	name := g.dc
+	if g.part != "" {
+		name += " / " + g.part
+	}
+	var parts []string
+	if g.servers > 0 || g.part == "" {
+		parts = append(parts, plural(g.servers, "server"))
+	}
 	if g.clients > 0 {
 		parts = append(parts, plural(g.clients, "client"))
 	}
 	if other := len(g.nodes) - g.servers - g.clients; other > 0 {
 		parts = append(parts, plural(other, "other node"))
 	}
-	return g.dc + "\t" + strings.Join(parts, " · ")
+	return name + "\t" + strings.Join(parts, " · ")
+}
+
+// partOr is the group's partition, "default" when it's the default one.
+func (g nodeGroup) partOr() string {
+	if g.part == "" {
+		return "default"
+	}
+	return g.part
+}
+
+// foldedConsul is a folded node's CONSUL: trouble with a service first,
+// else its agent's members, else its services' health.
+func foldedConsul(members, health string) string {
+	if health != "" && health != "passing" || members == "" {
+		return health
+	}
+	return members
 }
 
 func plural(n int, s string) string {
@@ -751,18 +805,30 @@ func groupNodes(nodes []*parkerv1.NodeStatus) []nodeGroup {
 			dcs[dc] = true
 		}
 	}
-	byDC := map[string]*nodeGroup{}
-	var order []string
+	for _, n := range nodes {
+		if n.Dc != "" {
+			dcs[n.Dc] = true
+		}
+	}
+	byDC := map[place]*nodeGroup{}
+	var order []place
 	for _, n := range nodes {
 		dc, _, _ := strings.Cut(n.Name, "-")
+		if n.Dc != "" {
+			dc = n.Dc
+		}
 		if !dcs[dc] {
 			dc = ""
 		}
-		g := byDC[dc]
+		at := place{dc: dc}
+		if dc != "" && n.Partition != "" && n.Partition != "default" {
+			at.part = n.Partition
+		}
+		g := byDC[at]
 		if g == nil {
-			g = &nodeGroup{dc: dc}
-			byDC[dc] = g
-			order = append(order, dc)
+			g = &nodeGroup{dc: dc, part: at.part}
+			byDC[at] = g
+			order = append(order, at)
 		}
 		g.nodes = append(g.nodes, n)
 		switch kind(n) {
@@ -772,14 +838,17 @@ func groupNodes(nodes []*parkerv1.NodeStatus) []nodeGroup {
 			g.clients++
 		}
 	}
-	slices.SortFunc(order, func(a, b string) int {
-		if (a == "") != (b == "") {
-			if a == "" {
+	slices.SortFunc(order, func(a, b place) int {
+		if (a.dc == "") != (b.dc == "") {
+			if a.dc == "" {
 				return 1
 			}
 			return -1
 		}
-		return strings.Compare(a, b)
+		if c := strings.Compare(a.dc, b.dc); c != 0 {
+			return c
+		}
+		return strings.Compare(a.part, b.part) // the default partition ("") first
 	})
 	out := make([]nodeGroup, len(order))
 	for i, dc := range order {
@@ -847,7 +916,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ":":
 		return m.startInput(inputCommand)
 	case "q":
-		if m.view == viewLabs || (m.view == viewNodes && m.o.Lab != "") {
+		if m.view == viewLabs || m.o.Lab != "" && (m.view == viewDCs || m.view == viewNodes && !m.dcLevel()) {
 			m.stopForwards()
 			return m, tea.Quit
 		}
@@ -918,6 +987,33 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.nodeTable, cmd = m.nodeTable.Update(k)
 		return m, cmd
+	case viewDCs:
+		if k.String() == "enter" {
+			if c := m.dcTable.Cursor(); c >= 0 && c < len(m.places) {
+				p := m.places[c]
+				m.view, m.dc, m.part = viewNodes, p.dc, p.part
+				m.applyRows()
+				m.applySvcRows()
+				m.nodeTable.SetCursor(0)
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.dcTable, cmd = m.dcTable.Update(k)
+		return m, cmd
+	case viewServices:
+		if k.String() == "enter" {
+			if c := m.svcTable.Cursor(); c >= 0 && c < len(m.svcRows) && m.svcRows[c].section == "" {
+				r := m.svcRows[c]
+				m.view, m.filter = viewNodes, ""
+				m.applyRows()
+				m.selectRow(r.node, r.proc)
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.svcTable, cmd = m.svcTable.Update(k)
+		return m, cmd
 	case viewLogs, viewRun:
 		switch k.String() {
 		case "f":
@@ -963,16 +1059,36 @@ func (m Model) back() (tea.Model, tea.Cmd) {
 		m.view = viewNodes
 		return m, nil
 	case viewNodes:
-		if m.filter != "" || m.dc != "" {
-			m.filter, m.dc = "", ""
+		switch {
+		case m.filter != "":
+			m.filter = ""
 			m.applyRows()
+			return m, nil
+		case m.dcLevel():
+			m.view, m.dc, m.part = viewDCs, "", ""
+			m.applyRows()
+			m.applySvcRows()
+			return m, nil
+		case m.dc != "":
+			m.dc, m.part = "", ""
+			m.applyRows()
+			m.applySvcRows()
 			return m, nil
 		}
 		m.view, m.lab, m.status = viewLabs, "", nil
 		return m, m.refresh()
+	case viewDCs:
+		m.view, m.lab, m.status = viewLabs, "", nil
+		return m, m.refresh()
+	case viewServices:
+		m.view = m.svcFrom
+		return m, nil
 	}
 	return m, nil
 }
+
+// dcLevel: the open lab shows its datacenters above the nodes.
+func (m Model) dcLevel() bool { return m.status != nil && hasDCLevel(m.status) }
 
 func (m Model) startInput(mode inputMode) (tea.Model, tea.Cmd) {
 	m.inputMode = mode
@@ -1049,8 +1165,31 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.stopLogs()
-		m.view, m.dc = viewNodes, arg
+		if arg == "" {
+			m.view, m.dc, m.part = viewDCs, "", ""
+		} else {
+			dc, part, _ := strings.Cut(arg, "/")
+			m.view, m.dc, m.part = viewNodes, dc, part
+		}
 		m.applyRows()
+		m.applySvcRows()
+		return m, nil
+	case "svc", "services":
+		if m.lab == "" {
+			m.flash = ":svc needs a lab open"
+			return m, nil
+		}
+		m.stopLogs()
+		if m.view != viewServices {
+			m.svcFrom = m.view
+			if m.svcFrom != viewDCs {
+				m.svcFrom = viewNodes
+			}
+		}
+		m.view = viewServices
+		if m.status != nil {
+			m.applySvcRows()
+		}
 		return m, nil
 	case "run":
 		if m.lab == "" {
@@ -1086,7 +1225,7 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 	case "":
 		return m, nil
 	}
-	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc NAME, :kill, :partition, :heal, :run, :q)", verb)
+	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc [NAME[/PARTITION]], :svc, :kill, :partition, :heal, :run, :q)", verb)
 	return m, nil
 }
 
@@ -1347,6 +1486,14 @@ func (m Model) View() string {
 		}
 	case viewNodes:
 		body = m.nodeTable.View()
+	case viewDCs:
+		body = m.dcTable.View()
+	case viewServices:
+		if len(m.svcRows) == 0 {
+			body = mutedStyle.Render(" no services in the catalog yet")
+		} else {
+			body = m.svcTable.View()
+		}
 	case viewLogs, viewDescribe, viewRun:
 		body = m.vp.View()
 	}
@@ -1379,11 +1526,16 @@ func fitLines(s string, n int) string {
 func (m Model) header() string {
 	crumbs := []string{}
 	switch m.view {
-	case viewNodes:
+	case viewNodes, viewServices:
 		crumbs = append(crumbs, m.lab)
 		if m.dc != "" {
-			crumbs = append(crumbs, m.dc)
+			crumbs = append(crumbs, place{dc: m.dc, part: m.part}.String())
 		}
+		if m.view == viewServices {
+			crumbs = append(crumbs, "services")
+		}
+	case viewDCs:
+		crumbs = append(crumbs, m.lab, "datacenters")
 	case viewLogs:
 		crumbs = append(crumbs, m.lab, m.logTarget, "logs")
 	case viewRun:
@@ -1405,7 +1557,7 @@ func (m Model) header() string {
 	h := strings.Join(hs, mutedStyle.Render(" › "))
 	var info []string
 	switch m.view {
-	case viewNodes:
+	case viewNodes, viewDCs, viewServices:
 		if m.status != nil {
 			info = append(info, summary(m.status)...)
 			if m.status.Supervised {
@@ -1509,6 +1661,10 @@ func (m Model) footer() (string, lipgloss.Style) {
 	case viewNodes:
 		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"←/→", "fold"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
 			{"P", "pause"}, {"x", "partition"}, {"H", "heal"}, {"/", "filter"}, {":", "command"}, {"esc", "back"}}
+	case viewDCs:
+		keys = [][2]string{{"enter", "open"}, {":svc", "services"}, {":", "command"}, {"esc", "back"}}
+	case viewServices:
+		keys = [][2]string{{"enter", "go to node"}, {":", "command"}, {"esc", "back"}}
 	case viewLogs:
 		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"/", "filter"}, {"g/G", "top/end"}, {"esc", "back"}}
 	case viewDescribe:
