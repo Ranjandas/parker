@@ -249,7 +249,7 @@ func rowsOf(m Model) []string {
 func TestRolesAndProcessOrder(t *testing.T) {
 	m := nodesModel(t, meshLab(true), 40)
 	want := []string{
-		"▾ dc1-server-1/consul=server ★ leader", "dc1-server-1/config-entries=setup",
+		"▾ dc1-server-1/consul=server ★", "dc1-server-1/config-entries=setup",
 		"  dc1-server-2/consul=server",
 		"▾ dc1-api/consul=client", "dc1-api/api=service", "dc1-api/api-sidecar=sidecar → api",
 		"▾ dc1-mesh/consul=client", "dc1-mesh/mesh-gateway=mesh gateway",
@@ -306,7 +306,7 @@ func TestFolding(t *testing.T) {
 	if !m.autoFold {
 		t.Fatal("no autoFold")
 	}
-	want := []string{"▸ dc1-server-1/2 processes=server ★ leader", "  dc1-server-2/consul=server",
+	want := []string{"▸ dc1-server-1/2 processes=server ★", "  dc1-server-2/consul=server",
 		"▾ dc1-api/consul=client", "dc1-api/api=service", "dc1-api/api-sidecar=sidecar → api", "▸ dc1-mesh/2 processes=client"}
 	if got := rowsOf(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("auto-folded:\n%s", strings.Join(got, "\n"))
