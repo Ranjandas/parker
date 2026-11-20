@@ -92,3 +92,19 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.link(m, web.id, api.id); B.link(m, web.id, legacy.id); B.link(m, web.id, billing.id);
   write("namespaces", m);
 }
+
+// An external service behind terminating gateways in two peered
+// datacenters, as on the canvas: web calls api, each terminating gateway
+// fronts it (registering it there), and the datacenters are peered.
+{
+  const m = B.lab("externals"); m.acl = true; m.tls = true;
+  const d1 = B.dc("dc1", 3), d2 = B.dc("dc2", 3); m.dcs.push(d1, d2);
+  const web = B.node("web", 8080); d1.nodes.push(web);
+  const t1 = B.gw("terminating"), t2 = B.gw("terminating");
+  d1.gws.push(t1); d2.gws.push(t2);
+  const api = B.ext("api", 9000); m.exts.push(api);
+  B.link(m, t1.id, api.id); B.link(m, t2.id, api.id);
+  B.joinDCs(m, d1.id, d2.id, "peering");
+  B.link(m, web.id, api.id);
+  write("externals", m);
+}

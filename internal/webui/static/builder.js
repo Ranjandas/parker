@@ -23,13 +23,14 @@ const BI = {
   api: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3L2 8l3 5M11 3l3 5-3 5M9.5 3l-3 10"/></svg>',
   up: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 11.5C5 11.5 5 4.5 8 4.5h5.5M11 2l2.5 2.5L11 7"/></svg>',
   peer: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="4.5" cy="8" r="2.5"/><circle cx="11.5" cy="8" r="2.5"/><path d="M7 8h2"/></svg>',
+  ext: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.8" y="4.5" width="8.5" height="9" rx="1.5" stroke-dasharray="2 1.6"/><path d="M8 8.5l6-6M10.5 2.5h3.5V6"/></svg>',
   fed: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg>',
 };
 
 const PALETTE = [
   ["Structure", [["dc", "Datacenter", "A Consul datacenter", "dc"], ["part", "Admin partition", "Groups nodes in a dc", "part", true]]],
   ["Consul", [["servers", "Server group", "servers: 1, 3 or 5", "server"], ["client", "Client node", "A client agent, no service", "client"], ["dp", "Dataplane node", "Agentless, consul-dataplane", "dp"]]],
-  ["Services and mesh", [["svc", "Service", "fake-service with a sidecar", "svc"], ["mesh", "Mesh gateway", "Cross-dc, peering, partitions", "mesh"], ["ingress", "Ingress gateway", "North-south entry point", "ingress"], ["terminating", "Terminating gateway", "Reach services outside the mesh", "terminating"], ["api", "API gateway", "HTTP routes into the mesh", "api"]]],
+  ["Services and mesh", [["svc", "Service", "fake-service with a sidecar", "svc"], ["mesh", "Mesh gateway", "Cross-dc, peering, partitions", "mesh"], ["ingress", "Ingress gateway", "North-south entry point", "ingress"], ["terminating", "Terminating gateway", "Reach services outside the mesh", "terminating"], ["api", "API gateway", "HTTP routes into the mesh", "api"], ["ext", "External service", "Outside Consul, in the catalog", "ext"]]],
   ["Connections", [["up", "Upstream", "A service calls a service", "up"], ["peer", "Cluster peering", "Peer two datacenters or partitions", "peer"], ["fed", "WAN federation", "Federate the datacenters", "fed"]]],
 ];
 
@@ -209,7 +210,7 @@ function bRender() {
   bYAML();
 }
 
-const bLabel = (id) => { const f = Build.find(BL.m, id); return f ? (f.node || f.gw || f.part || f.dc || {}).name || "it" : "it"; };
+const bLabel = (id) => { const f = Build.find(BL.m, id); return f ? (f.node || f.gw || f.ext || f.part || f.dc || {}).name || "it" : "it"; };
 
 // ---------- canvas ----------
 const DCW = 288, GAP = 76, X0 = 28, Y0 = 112, CW = 236, CH = 48, ROW = 60;
@@ -238,6 +239,14 @@ function bLayout() {
     } else scope("", cx, CW);
     P.dc[d.id] = { x, y: Y0, w: DCW, h: Math.max(330, y - Y0 + 70) };
   });
+  // External services: a column of their own, outside every datacenter.
+  const exts = BL.m.exts || [];
+  if (exts.length) {
+    const x = X0 + BL.m.dcs.length * (DCW + GAP);
+    let y = Y0 + 30;
+    exts.forEach((e) => { P.it[e.id] = { x: x + (DCW - CW) / 2, y, w: CW }; y += ROW; });
+    P.ext = { x, y: Y0, w: DCW, h: Math.max(330, y - Y0 + 70) };
+  }
   return P;
 }
 
@@ -292,8 +301,16 @@ function bCanvas() {
       h += bCard(n.id, P.it[n.id], BI[k], k === "svc" || k === "dp" ? "svc" : "cl", n.name + (n.count > 1 ? ` ×${n.count}` : ""), sub, { port: !!n.svc, bad: problems.has(n.id) });
     }
   }
-  const ax = X0 + m.dcs.length * (DCW + GAP);
-  const maxH = Math.max(330, ...m.dcs.map((d) => P.dc[d.id].h));
+  if (P.ext) {
+    const r = P.ext;
+    h += `<div class="breg bext" data-drop="ext:" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"><div class="lbl">Outside Consul<span>registered in the catalog</span></div><div class="drop">Drop an external service</div></div>`;
+    for (const x of m.exts) {
+      const regs = x.in.map((r) => Build.sideName(m, r.dc, r.part));
+      h += bCard(x.id, P.it[x.id], BI.ext, "ext", x.name, `:${x.port} · ${regs.length ? "in " + regs.join(", ") : "not registered"}${Build.extNs(m, x) ? ` · ns ${Build.extNs(m, x)}` : ""}`, { port: true, bad: problems.has(x.id) });
+    }
+  }
+  const ax = X0 + (m.dcs.length + (P.ext ? 1 : 0)) * (DCW + GAP);
+  const maxH = Math.max(330, ...m.dcs.map((d) => P.dc[d.id].h), P.ext ? P.ext.h : 0);
   h += `<div class="adddc" data-drop="new" style="left:${ax}px;top:${Y0}px;width:190px;height:${maxH}px">${BI.dc}<span>Drop a Datacenter</span></div>`;
   const W = ax + 230, H = Y0 + maxH + 60;
 
@@ -339,7 +356,10 @@ function bCanvas() {
     const a = P.it[g.id], b = P.it[id];
     if (!a || !b) continue;
     const A = [a.x, a.y + CH / 2], B = [b.x, b.y + CH / 2];
-    s += `<path d="${curve(A, B, -1)}" fill="none" stroke="var(--ink-2)" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#bah-ink-2)"/>`;
+    // A gateway and what it fronts sit in one column, unless that's an
+    // external service.
+    const ext = Build.find(m, id), side = ext && ext.t === "ext" ? 0 : -1;
+    s += `<path d="${side ? curve(A, B, -1) : curve([a.x + a.w, A[1]], B)}" fill="none" stroke="var(--ink-2)" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#bah-ink-2)"/>`;
   }
   s += `<path id="blinkline" d="" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4"/></svg>`;
   let pick = "";
@@ -416,10 +436,12 @@ function bInspector() {
     if (n.svc) {
       const conn = [["", `default (${m.mesh ? "sidecar" : "none"})`], ...senum("Service", "connect", ["none", "sidecar", "tproxy"]).map((x) => [x, x])];
       const ups = n.svc.ups.map((u, i) => {
-        const t = Build.find(m, u.to);
+        const f0 = Build.find(m, u.to);
+        const e = f0 && f0.t === "ext" ? Build.extFor(m, f0.ext, f.dc, n.part) : null;
+        const t = e ? { dc: e.td, node: e.t } : f0;
         if (!t || !t.node) return "";
         const r = Build.route(m, f.dc, n, t.dc, t.node);
-        const how = { local: "", partition: `partition ${r.partition}`, dc: `dc ${r.dc}`, peer: `peer ${r.peer}`, none: `${t.dc.name}, not joined` }[r.kind];
+        const how = (e ? "external" + (r.kind === "local" ? "" : ", ") : "") + { local: "", partition: `partition ${r.partition}`, dc: `dc ${r.dc}`, peer: `peer ${r.peer}`, none: `${t.dc.name}, not joined` }[r.kind];
         return `<div class="up ${r.kind === "none" ? "bad" : ""}">${BI.up}<span>${esc(t.node.name)}${how ? ` <i>${esc(how)}</i>` : ""}</span><input data-f="upport" data-i="${i}" value="${u.port}" aria-label="Local port for ${esc(t.node.name)}" inputmode="numeric"><button class="x" data-f="rmup" data-i="${i}" title="Remove">✕</button></div>`;
       }).join("");
       body += fld("Port", `<input id="bf-port" data-f="port" value="${n.svc.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-port") +
@@ -431,12 +453,22 @@ function bInspector() {
   } else if (f.t === "gw") {
     const g = f.gw;
     title = `${g.kind[0].toUpperCase() + g.kind.slice(1)} gateway · ${esc(g.name)}`; where = f.dc.name + (g.part ? "/" + Build.partName(f.dc, g.part) : "");
-    const what = { mesh: "Carries calls between datacenters, peers and partitions; the builder sets proxy-defaults MeshGateway mode local where calls need it.", ingress: "Each route is an HTTP listener (8080, 8081, ...) for one service.", terminating: "Fronts services outside the mesh; the services it fronts run without a sidecar.", api: "Listens on 8081; each route is an http-route (by path prefix when there are several)." }[g.kind];
-    const routes = g.to.map((id, i) => { const t = Build.find(m, id); return t && t.node ? `<div class="up">${BI.up}<span>${esc(t.node.name)}</span><button class="x" data-f="rmroute" data-i="${i}" title="Remove">✕</button></div>` : ""; }).join("");
+    const what = { mesh: "Carries calls between datacenters, peers and partitions; the builder sets proxy-defaults MeshGateway mode local where calls need it.", ingress: "Each route is an HTTP listener (8080, 8081, ...) for one service.", terminating: "Fronts services outside the mesh: external services, and services here that run without a sidecar.", api: "Listens on 8081; each route is an http-route (by path prefix when there are several)." }[g.kind];
+    const routes = g.to.map((id, i) => { const t = Build.find(m, id); const x = t && (t.node || t.ext); return x ? `<div class="up">${BI.up}<span>${esc(x.name)}${t.ext ? " <i>external</i>" : ""}</span><button class="x" data-f="rmroute" data-i="${i}" title="Remove">✕</button></div>` : ""; }).join("");
     body = fld("Name", txt("name", g.name), "", "bf-name") + `<div class="hint">${esc(what)}</div>` +
       (g.kind !== "mesh" ? fld("Namespace", txt("gns", g.ns || "", "default"), sdoc("Gateway", "namespace"), "bf-gns", "Consul Enterprise.") : "") +
       (g.kind !== "mesh" ? `<div class="fld" style="align-items:start"><label>${g.kind === "terminating" ? "Fronts" : "Routes to"}</label><div class="ups">${routes || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Route to a service</button></div></div>` : "") +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove gateway</button></div>`;
+  } else if (f.t === "ext") {
+    const x = f.ext;
+    title = `External service · ${esc(x.name)}`; where = "outside Consul";
+    const regs = x.in.map((r, i) => `<div class="up">${BI.dc}<span>${esc(Build.sideName(m, r.dc, r.part))}</span><button class="x" data-f="rmreg" data-i="${i}" title="Remove">✕</button></div>`).join("");
+    body = fld("Name", txt("name", x.name), "", "bf-name") +
+      fld("Port", `<input id="bf-xport" data-f="xport" value="${x.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-xport") +
+      fld("Namespace", txt("xns", x.ns || "", m.defNs ? `${m.defNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-xns", "Consul Enterprise.") +
+      `<div class="fld" style="align-items:start"><label title="${esc(sdoc("External", "in"))}">Registered in</label><div class="ups">${regs || '<span class="hint">Nowhere yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Register in a datacenter</button><div class="hint doc">Linking a terminating gateway to it registers it in the gateway's datacenter and partition.</div></div></div>` +
+      `<div class="hint">One node outside Consul, with no agent, on the LAN of every datacenter that registers it. Each registers it on an external node that Parker health-checks from server-1, as consul-esm would. The mesh reaches it through a terminating gateway.</div>` +
+      `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(x.name)}</button></div>`;
   } else if (f.t === "peering") {
     const p = f.peering, a = Build.dcById(m, p.acceptor), d = Build.dcById(m, p.dialer);
     title = `Peering · ${esc(Build.peeringName(m, p))}`;
@@ -492,6 +524,17 @@ function bField(el) {
     } else if (t.t === "gw") {
       if (f === "rmroute") t.gw.to.splice(i, 1);
       if (f === "gns") { const x = v.trim(); if (x && !Build.NAME_RE.test(x)) throw new Error("Use lowercase letters, digits and single hyphens."); t.gw.ns = x; }
+    } else if (t.t === "ext") {
+      const x = t.ext;
+      if (f === "xport") x.port = num(v, 1, 65535);
+      if (f === "xns") { const y = v.trim(); if (y && !Build.NAME_RE.test(y)) throw new Error("Use lowercase letters, digits and single hyphens."); x.ns = y; }
+      if (f === "rmreg") {
+        const r = x.in[i];
+        x.in.splice(i, 1);
+        // Its gateways there no longer reach it.
+        const d = Build.dcById(m, r.dc);
+        if (d) d.gws.forEach((g) => { if ((g.part || "") === (r.part || "")) g.to = g.to.filter((y) => y !== x.id); });
+      }
     } else if (t.t === "peering") {
       const p = t.peering;
       if (f === "pmesh") p.mesh = v === "true";
@@ -525,6 +568,18 @@ function bAdd(kind, dcId, pid) {
       BL.sel = d.id; BL.fresh = "srv:" + d.id;
       return `Added ${d.name}.` + (m.dcs.length > 1 && !m.fed ? " Link it to another datacenter to federate or peer them." : "");
     }
+    if (kind === "ext") {
+      const used = new Set([...m.exts.map((x) => x.name), ...m.dcs.flatMap((x) => [...x.nodes.map((n) => n.name), ...x.gws.map((g) => g.name)])]);
+      let name = ["api", "legacy", "db", "mainframe", "partner"].find((x) => !used.has(x));
+      for (let i = 2; !name; i++) if (!used.has("external-" + i)) name = "external-" + i;
+      const x = Build.ext(name, Build.nextPort(m, 9000));
+      m.exts.push(x);
+      BL.sel = x.id; BL.fresh = x.id;
+      const d = Build.dcById(m, dcId);
+      if (d) return `Added the external service ${name}. ` + Build.register(m, x, d, pid || "") + " Link a terminating gateway to it.";
+      return `Added the external service ${name}. Link a terminating gateway to it, or link it to a datacenter, to register it.`;
+    }
+    if (dcId === "ext") throw new Error("Only external services go outside Consul; drop that into a datacenter.");
     const d = Build.dcById(m, dcId) || m.dcs[0];
     if (!d) throw new Error("Add a datacenter first.");
     pid = pid || "";
@@ -908,7 +963,7 @@ function bBind() {
     const it = t.closest("#bworld [data-bid]");
     if (it) { bClickItem(it.dataset.bid, e); return; }
     const rg = t.closest("#bworld [data-drop]");
-    if (rg && rg.dataset.drop !== "new") { const [d, pid] = rg.dataset.drop.split(":"); bClickItem(pid || d, e); return; }
+    if (rg && rg.dataset.drop !== "new" && rg.dataset.drop !== "ext:") { const [d, pid] = rg.dataset.drop.split(":"); bClickItem(pid || d, e); return; }
     if (t.closest("#bworld") && !t.closest(".bpick")) { BL.pick = null; if (BL.mode === "link" && BL.from) { BL.from = ""; } BL.sel = ""; bRender(); }
   });
   root.addEventListener("change", (e) => { if (e.target.matches("input[data-f],select[data-f]")) bField(e.target); });
@@ -997,7 +1052,7 @@ function bBind() {
     const [dropDC, dropPart] = tgt ? (tgt.dataset.drop || "").split(":") : [];
     const id = tgt ? tgt.dataset.bid || dropPart || dropDC || "" : "";
     BL.from = "";
-    if (!id || id === "new" || id === d.from || id === "lab") { bCanvas(); return; }
+    if (!id || id === "new" || id === "ext" || id === d.from || id === "lab") { bCanvas(); return; }
     const w = $("#bworld").getBoundingClientRect();
     bLink(d.from, id, [e.clientX - w.left, e.clientY - w.top]);
   });

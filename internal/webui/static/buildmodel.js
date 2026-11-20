@@ -37,11 +37,14 @@
   //     to: the called node's id
   // gw: {id, name, kind, part, to: [node ids], ns}
   //   ns: the namespace a terminating, ingress or API gateway registers in
+  // ext: {id, name, port, ns, in: [{dc, part}]}, an external service:
+  //   one node outside Consul, registered in the catalog of each side in
+  //   in (dc id, part id). Calls and gateways name it by id.
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
   function lab(name) {
-    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [] };
+    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [] };
   }
   function dc(name, servers) { return { id: uid("d"), name, servers: servers || 1, ui: false, parts: [], nodes: [], gws: [] }; }
   function node(name, port, opts) {
@@ -49,6 +52,7 @@
     return { id: uid("n"), name, part: o.part || "", agent: o.agent || "client", count: o.count || 1, svc: port ? { port, connect: o.connect || "", ups: [] } : null };
   }
   function gw(kind, name, part) { return { id: uid("g"), name: name || GW_NAME[kind], kind, part: part || "", to: [] }; }
+  function ext(name, port) { return { id: uid("x"), name, port: port || 0, ns: "", in: [] }; }
 
   // ---------- lookups ----------
   function find(m, id) {
@@ -59,6 +63,7 @@
       for (const g of d.gws) if (g.id === id) return { t: "gw", dc: d, gw: g };
     }
     for (const p of m.peerings) if (p.id === id) return { t: "peering", peering: p };
+    for (const x of m.exts || []) if (x.id === id) return { t: "ext", ext: x };
     return null;
   }
   const dcById = (m, id) => m.dcs.find((d) => d.id === id);
@@ -86,10 +91,46 @@
       if (x) n.svc.inhNs = x; else delete n.svc.inhNs;
     }
   }
-  const usesNs = (m) => m.dcs.some((d) => d.nodes.some((n) => nsOf(n)) || d.gws.some((g) => gwNs(g)));
+  const usesNs = (m) => m.dcs.some((d) => d.nodes.some((n) => nsOf(n)) || d.gws.some((g) => gwNs(g))) || (m.exts || []).some((x) => extNs(m, x));
   const ent = (m) => m.dcs.some((d) => d.parts.length > 0) || usesNs(m);
-  // Every name in a dc: nodes and gateways share one namespace.
-  const namesIn = (d) => new Set([...d.nodes.map((n) => n.name), ...d.gws.map((g) => g.name)]);
+  // Every name in a dc: nodes, gateways and the external services it
+  // registers share one namespace (m is optional).
+  const namesIn = (d, m) => new Set([...d.nodes.map((n) => n.name), ...d.gws.map((g) => g.name), ...(m ? m.exts || [] : []).filter((x) => x.in.some((r) => r.dc === d.id)).map((x) => x.name)]);
+
+  // ---------- external services ----------
+  // An external service's namespace: its own, else consul.defaults'.
+  const extNs = (m, x) => normNs(x.ns || m.defNs);
+  const regAt = (x, dcId, pid) => x.in.find((r) => r.dc === dcId && (r.part || "") === (pid || ""));
+  // extNode is an external service as one side registers it, shaped like
+  // a node so calls and gateways treat it as one: {td, t}.
+  function extNode(m, x, r) {
+    const td = dcById(m, r.dc);
+    return td && { td, t: { id: x.id, name: x.name, part: r.part || "", ext: x, svc: { port: x.port, ns: extNs(m, x), connect: "none", ups: [] } } };
+  }
+  // extFor picks where a caller in dc sd, partition part reaches x: its
+  // own partition, else its datacenter, else a peered side, else the first.
+  function extFor(m, x, sd, part) {
+    const r = regAt(x, sd.id, part) || x.in.find((y) => y.dc === sd.id) || x.in.find((y) => peerOf(m, sd.id, part, y.dc, y.part)) || x.in[0];
+    return r ? extNode(m, x, r) : null;
+  }
+  // targetsOf lists the services a gateway routes to, nodes and external
+  // services alike (as the gateway's side registers them).
+  function targetsOf(m, d, g) {
+    const out = [];
+    for (const id of g.to) {
+      const f = find(m, id);
+      if (f && f.t === "node" && f.node.svc) out.push(f.node);
+      else if (f && f.t === "ext") { const r = regAt(f.ext, d.id, g.part); const e = r && extNode(m, f.ext, r); if (e) out.push(e.t); }
+    }
+    return out;
+  }
+  // register adds a side to x's in, or throws why it can't.
+  function register(m, x, d, pid) {
+    if (regAt(x, d.id, pid)) throw new Error(`${x.name} is registered in ${sideName(m, d.id, pid)} already.`);
+    if ([...d.nodes, ...d.gws].some((y) => (y.part || "") === (pid || "") && y.name === x.name)) throw new Error(`${sideName(m, d.id, pid)} has a ${x.name} already, and Consul node names are unique in a partition.`);
+    x.in.push({ dc: d.id, part: pid || "" });
+    return `${x.name} is registered in ${sideName(m, d.id, pid)}'s catalog, on an external node Parker health-checks.`;
+  }
 
   // How an upstream from node src (in dc sd) reaches node t (in dc td).
   function route(m, sd, src, td, t) {
@@ -112,6 +153,7 @@
     for (const sd of m.dcs) for (const src of sd.nodes) for (const u of (src.svc && src.svc.ups) || []) {
       const f = find(m, u.to);
       if (f && f.t === "node" && f.node.svc) out.push({ sd, src, td: f.dc, t: f.node, port: u.port, r: route(m, sd, src, f.dc, f.node) });
+      else if (f && f.t === "ext") { const e = extFor(m, f.ext, sd, src.part); if (e) out.push({ sd, src, td: e.td, t: e.t, port: u.port, r: route(m, sd, src, e.td, e.t) }); }
     }
     return out;
   }
@@ -128,8 +170,8 @@
 
   // ---------- edits ----------
   // uniqueName picks base, base-2, ... not taken in dc d.
-  function uniqueName(d, base) {
-    const used = namesIn(d);
+  function uniqueName(d, base, m) {
+    const used = namesIn(d, m);
     if (!used.has(base)) return base;
     for (let i = 2; ; i++) if (!used.has(`${base}-${i}`)) return `${base}-${i}`;
   }
@@ -140,6 +182,7 @@
   function nextPort(m, from) {
     const used = new Set();
     m.dcs.forEach((d) => d.nodes.forEach((n) => { if (n.svc) { used.add(n.svc.port); n.svc.ups.forEach((u) => used.add(u.port)); (n.svc.held || []).forEach((p) => used.add(p)); } }));
+    (m.exts || []).forEach((x) => used.add(x.port));
     for (let p = from; ; p++) if (!used.has(p)) return p;
   }
   function nextUpPort(n) {
@@ -171,6 +214,37 @@
   function link(m, fromId, toId) {
     const a = find(m, fromId), b = find(m, toId);
     if (!a || !b || fromId === toId) throw new Error("Pick two different things to link.");
+    if (a.t === "ext" && b.t === "ext") throw new Error("External services don't call each other through Consul.");
+    // An external service with a datacenter or partition: it registers there.
+    if ((a.t === "ext" && (b.t === "dc" || b.t === "part")) || (b.t === "ext" && (a.t === "dc" || a.t === "part"))) {
+      const [x, s] = a.t === "ext" ? [a.ext, b] : [b.ext, a];
+      return register(m, x, s.dc, s.t === "part" ? s.part.id : "");
+    }
+    if (a.t === "ext") throw new Error(`${a.ext.name} is outside Consul and calls nothing through it. Link a service or a terminating gateway to ${a.ext.name} instead.`);
+    if (a.t === "node" && b.t === "ext") {
+      const x = b.ext;
+      if (!a.node.svc) throw new Error(`${a.node.name} runs no service, so it can't call anything. Give it a service first.`);
+      if (connectOf(m, a.node) === "none") throw new Error(`${a.node.name} is outside the mesh (connect: none), and upstreams go through a sidecar. Set its Connect to sidecar first.`);
+      if (a.node.svc.ups.some((u) => u.to === x.id)) throw new Error(`${a.node.name} already calls ${x.name}.`);
+      if (a.node.svc.ups.some((u) => { const f = find(m, u.to); return f && (f.node || f.ext).name === x.name; })) throw new Error(`${a.node.name} already calls a service named ${x.name}.`);
+      let note = "";
+      if (!x.in.length) note = " " + register(m, x, a.dc, a.node.part);
+      const u = { to: x.id, port: nextUpPort(a.node) };
+      a.node.svc.ups.push(u);
+      const e = extFor(m, x, a.dc, a.node.part);
+      const r = route(m, a.dc, a.node, e.td, e.t);
+      const how = { local: "", partition: ` in partition ${r.partition}`, dc: ` in ${e.td.name}`, none: ` in ${e.td.name}`, peer: ` over the peering ${r.peer}` }[r.kind];
+      const tgw = e.td.gws.some((g) => g.kind === "terminating" && (g.part || "") === e.t.part && g.to.includes(x.id));
+      return `${a.node.name} calls ${x.name}${how} on 127.0.0.1:${u.port}.${note}` + (tgw ? "" : ` Link a terminating gateway in ${sideName(m, e.td.id, e.t.part)} to ${x.name} so the mesh can reach it.`);
+    }
+    if (a.t === "gw" && b.t === "ext") {
+      const x = b.ext;
+      if (a.gw.kind !== "terminating") throw new Error(`Only a terminating gateway reaches an external service; the ${a.gw.kind} gateway routes to services in the mesh.`);
+      if (a.gw.to.includes(x.id)) throw new Error(`${a.gw.name} already routes to ${x.name}.`);
+      const note = regAt(x, a.dc.id, a.gw.part) ? "" : " " + register(m, x, a.dc, a.gw.part);
+      a.gw.to.push(x.id);
+      return `${a.gw.name} fronts ${x.name}. Services reach it with an upstream to ${x.name}.${note}`;
+    }
     if (a.t === "node" && b.t === "node") {
       if (!a.node.svc) throw new Error(`${a.node.name} runs no service, so it can't call anything. Give it a service first.`);
       if (!b.node.svc) throw new Error(`${b.node.name} runs no service to call.`);
@@ -208,7 +282,7 @@
       if (peerOf(m, a.dc.id, ap, b.dc.id, bp)) throw new Error(`${sideName(m, a.dc.id, ap)} and ${sideName(m, b.dc.id, bp)} are peered already.`);
       return joinDCs(m, a.t === "part" ? a.part.id : a.dc.id, b.t === "part" ? b.part.id : b.dc.id, "peering");
     }
-    throw new Error("Link a service to a service it calls, a gateway to a service, or two datacenters (or partitions in two datacenters).");
+    throw new Error("Link a service to a service it calls, a gateway to a service, an external service to where it registers, or two datacenters (or partitions in two datacenters).");
   }
 
   // joinHint says how to let a call between two sides through.
@@ -290,7 +364,11 @@
       f.dc.gws = f.dc.gws.filter((g) => g.id !== id);
     } else if (f.t === "peering") {
       m.peerings = m.peerings.filter((p) => p.id !== id);
+    } else if (f.t === "ext") {
+      m.exts = m.exts.filter((x) => x.id !== id);
     }
+    // Registrations in a removed datacenter or partition go with it.
+    if (f.t === "dc" || f.t === "part") for (const x of m.exts || []) x.in = x.in.filter((r) => r.dc !== id && r.part !== id);
     for (const d of m.dcs) {
       for (const n of d.nodes) if (n.svc) n.svc.ups = n.svc.ups.filter((u) => !drop.has(u.to));
       for (const g of d.gws) g.to = g.to.filter((t) => !drop.has(t));
@@ -310,10 +388,15 @@
       f.part.name = name;
     } else if (f.t === "node" || f.t === "gw") {
       const self = f.node || f.gw;
-      if (self.name !== name && namesIn(f.dc).has(name)) throw new Error(`${f.dc.name} has a ${name} already.`);
+      if (self.name !== name && namesIn(f.dc, m).has(name)) throw new Error(`${f.dc.name} has a ${name} already.`);
       self.name = name;
     } else if (f.t === "peering") {
       f.peering.name = name;
+    } else if (f.t === "ext") {
+      if (f.ext.name === name) return;
+      if (m.exts.some((x) => x !== f.ext && x.name === name)) throw new Error(`There's an external service ${name} already.`);
+      for (const r of f.ext.in) { const d = dcById(m, r.dc); if (d && [...d.nodes, ...d.gws].some((y) => (y.part || "") === (r.part || "") && y.name === name)) throw new Error(`${sideName(m, r.dc, r.part)} has a ${name} already.`); }
+      f.ext.name = name;
     }
   }
 
@@ -333,9 +416,18 @@
     const defs = {};
     if (m.tls) defs.tls = true;
     if (m.acl) defs.acl = true;
-    if (nodes.some((n) => n.svc)) defs.service_defaults = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
+    const exts = m.exts || [];
+    if (nodes.some((n) => n.svc) || exts.length) defs.service_defaults = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
     if (Object.keys(defs).length) consul.defaults = defs;
     if (m.fed && m.dcs.length > 1) consul.federation = { mode: m.fed };
+    if (exts.length) {
+      consul.external = {};
+      for (const x of exts) {
+        const sv = { port: x.port };
+        if (extNs(m, x) !== normNs(m.defNs)) sv.namespace = x.ns || "default";
+        consul.external[x.name] = { service: sv, in: x.in.map((r) => sideName(m, r.dc, r.part)) };
+      }
+    }
 
     const all = calls(m);
     if (m.peerings.length) {
@@ -383,8 +475,7 @@
     if (gws.length) {
       body.gateways = {};
       for (const g of gws) {
-        const targets = g.to.map((id) => find(m, id)).filter((f) => f && f.t === "node").map((f) => f.node.name);
-        const tnodes = g.to.map((id) => find(m, id)).filter((f) => f && f.t === "node").map((f) => f.node);
+        const tnodes = targetsOf(m, d, g), targets = tnodes.map((t) => t.name);
         const gns = gwNs(g);
         // A service a gateway names, with its namespace when it isn't the
         // gateway's own.
@@ -482,9 +573,8 @@
         src.Action = "allow";
         add(c.t, src);
       }
-      for (const g of gws) if (g.kind !== "mesh") for (const id of g.to) {
-        const f = find(m, id);
-        if (f && f.node && connectOf(m, f.node) !== "none") add(f.node, Object.assign({ Name: g.name }, srcNs(gwNs(g), f.node), { Action: "allow" }));
+      for (const g of gws) if (g.kind !== "mesh") for (const t of targetsOf(m, d, g)) {
+        if (connectOf(m, t) !== "none") add(t, Object.assign({ Name: g.name }, srcNs(gwNs(g), t), { Action: "allow" }));
       }
       for (const e of allow.values()) entries.push(Object.assign({ Kind: "service-intentions", Name: e.t.name }, nsOf(e.t) ? { Namespace: nsOf(e.t) } : {}, { Sources: e.srcs }));
     }
@@ -496,7 +586,7 @@
   function blockAt(path) {
     const p = path.join(".");
     return path.length <= 1 && p !== "versions" ||
-      /^consul(\.defaults|\.(datacenters|peering)(\.[^.]+)?)?$/.test(p) ||
+      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) ||
       /\.(nodes|partitions)(\.[^.]+)?$/.test(p) && !/\.nodes\.[^.]+\.service/.test(p);
   }
 
@@ -581,6 +671,7 @@
     const f = find(m, id);
     if (!f) return "";
     if (f.t === "peering") return `consul.peering.${peeringName(m, f.peering)}`;
+    if (f.t === "ext") return `consul.external.${f.ext.name}`;
     const base = `consul.datacenters.${f.dc.name}`;
     if (f.t === "dc") return base;
     const scope = (pid) => (f.dc.parts.length ? `${base}.partitions.${partName(f.dc, pid)}` : base);
@@ -595,6 +686,7 @@
     const each = (id) => { const p = pathOf(m, id); if (p && (path === p || path.startsWith(p + ".") || path.startsWith(p + "[")) && p.length > len) { best = id; len = p.length; } };
     for (const d of m.dcs) { each(d.id); d.parts.forEach((p) => each(p.id)); d.nodes.forEach((n) => each(n.id)); d.gws.forEach((g) => each(g.id)); }
     m.peerings.forEach((p) => each(p.id));
+    (m.exts || []).forEach((x) => each(x.id));
     return best;
   }
 
@@ -612,6 +704,19 @@
     for (const d of m.dcs) {
       for (const n of d.nodes) if (n.svc && n.svc.ns && !NAME_RE.test(n.svc.ns)) out.push({ message: `${n.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: n.id });
       for (const g of d.gws) if (g.ns && !NAME_RE.test(g.ns)) out.push({ message: `${g.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: g.id });
+    }
+    for (const x of m.exts || []) {
+      if (!NAME_RE.test(x.name)) out.push({ message: `${x.name}: external service names want lowercase letters, digits and single hyphens.`, id: x.id });
+      if (!(x.port > 0)) out.push({ message: `${x.name} wants a port.`, id: x.id });
+      if (x.ns && !NAME_RE.test(x.ns)) out.push({ message: `${x.name}'s namespace wants lowercase letters, digits and single hyphens.`, id: x.id });
+      if (!x.in.length) out.push({ message: `${x.name} isn't registered anywhere. Link it to a datacenter or partition, or link a terminating gateway to it.`, id: x.id });
+    }
+    const unfronted = new Set();
+    for (const c of calls(m)) if (c.t.ext && c.r.kind !== "none") {
+      const k = c.t.ext.id + "@" + c.td.id + "/" + c.t.part;
+      if (unfronted.has(k) || c.td.gws.some((g) => g.kind === "terminating" && (g.part || "") === c.t.part && g.to.includes(c.t.ext.id))) continue;
+      unfronted.add(k);
+      out.push({ message: `${c.src.name} calls ${c.t.name}, but no terminating gateway in ${sideName(m, c.td.id, c.t.part)} fronts it. Link one to ${c.t.name}.`, id: c.t.ext.id });
     }
     for (const p of m.peerings) {
       const a = dcById(m, p.acceptor), d = dcById(m, p.dialer);
@@ -637,6 +742,7 @@
     const f = find(m, id);
     if (!f) return null;
     if (f.t === "peering") return ["consul", "peering", peeringName(m, f.peering)];
+    if (f.t === "ext") return ["consul", "external", f.ext.name];
     const base = ["consul", "datacenters", f.dc.name];
     if (f.t === "dc") return base;
     const scope = (pid) => (f.dc.parts.length ? [...base, "partitions", partName(f.dc, pid)] : base);
@@ -655,6 +761,7 @@
     if (prev) {
       for (const d of prev.dcs) { ids.set(dot(segs(prev, d.id)), d.id); for (const x of [...d.parts, ...d.nodes, ...d.gws]) ids.set(dot(segs(prev, x.id)), x.id); }
       for (const p of prev.peerings) ids.set(dot(segs(prev, p.id)), p.id);
+      for (const x of prev.exts || []) ids.set(dot(segs(prev, x.id)), x.id);
     }
     const keep = (x, path) => { const id = ids.get(dot(path)); if (id) x.id = id; return x; };
     const m = lab(typeof t.name === "string" ? t.name : "lab");
@@ -668,6 +775,7 @@
     const sdOf = (x) => (x && isMap(x.service_defaults) ? x.service_defaults : {});
     m.tls = !!defs.tls; m.acl = !!defs.acl;
     m.mesh = !!sdOf(defs).connect && sdOf(defs).connect !== "none";
+    if (typeof sdOf(defs).namespace === "string" && normNs(sdOf(defs).namespace)) m.defNs = sdOf(defs).namespace;
     if (isMap(c.federation) && c.federation.mode) m.fed = String(c.federation.mode);
     const pending = []; // upstreams and routes, resolved once every node exists
     for (const [dn, dvRaw] of Object.entries(isMap(c.datacenters) ? c.datacenters : {})) {
@@ -692,7 +800,14 @@
           if (kind === "api") for (const ce of Array.isArray(sv.config_entries) ? sv.config_entries : []) {
             if (ce && ce.Kind === "http-route" && (ce.Parents || []).some((p) => p && p.Name === gn)) for (const r of ce.Rules || []) for (const x of (r && r.Services) || []) names.push(x && x.Name);
           }
-          pending.push(() => { for (const nm of names) { const n = d.nodes.find((x) => x.name === nm && (x.part || "") === pid); if (n && !g.to.includes(n.id)) g.to.push(n.id); } });
+          pending.push(() => {
+            for (const nm of names) {
+              const n = d.nodes.find((x) => x.name === nm && (x.part || "") === pid);
+              const x = !n && kind === "terminating" && m.exts.find((y) => y.name === nm && regAt(y, d.id, pid));
+              const id = (n || x || {}).id;
+              if (id && !g.to.includes(id)) g.to.push(id);
+            }
+          });
         }
         for (const [nn, nvRaw] of Object.entries(isMap(sv.nodes) ? sv.nodes : {})) {
           const nv = isMap(nvRaw) ? nvRaw : {};
@@ -723,7 +838,9 @@
                 const cands = td.nodes.filter((x) => x.name === un && (x.part || "") === tp && x.svc);
                 const want = normNs(typeof u.namespace === "string" ? u.namespace : nsOf(n));
                 const t = cands.find((x) => nsOf(x) === want) || cands[0];
-                if (t) n.svc.ups.push({ to: t.id, port: Number(u.port) || 0 });
+                // Else an external service of that name.
+                const x = !t && m.exts.find((y) => y.name === un);
+                if (t || x) n.svc.ups.push({ to: (t || x).id, port: Number(u.port) || 0 });
                 // An upstream to something the canvas doesn't show (an
                 // external service) stays in the file; keep its port taken.
                 else (n.svc.held = n.svc.held || []).push(Number(u.port) || 0);
@@ -757,6 +874,19 @@
       const a = side(pv.acceptor), d = side(pv.dialer);
       if (a && d) m.peerings.push(keep({ id: uid("p"), name: pn, acceptor: a[0].id, dialer: d[0].id, accPart: a[1], dialPart: d[1], mesh: !!pv.via_mesh_gateways }, ["consul", "peering", pn]));
     }
+    for (const [xn, xvRaw] of Object.entries(isMap(c.external) ? c.external : {})) {
+      const xv = isMap(xvRaw) ? xvRaw : {};
+      const sv = isMap(xv.service) ? xv.service : {};
+      const x = keep(ext(xn, Number(sv.port) || 0), ["consul", "external", xn]);
+      if (typeof sv.namespace === "string" && sv.namespace) x.ns = sv.namespace;
+      for (const v of Array.isArray(xv.in) ? xv.in : []) {
+        const [dn, part] = String(v || "").split("/");
+        const d = m.dcs.find((y) => y.name === dn);
+        const pid = !d || !part || part === "default" ? "" : (d.parts.find((y) => y.name === part) || {}).id;
+        if (d && pid !== undefined) x.in.push({ dc: d.id, part: pid });
+      }
+      m.exts.push(x);
+    }
     pending.forEach((f) => f());
     return m;
   }
@@ -784,7 +914,7 @@
     const varAt = (p) => { let v = src; for (const k of p) { if (typeof v === "string") break; if (v === null || typeof v !== "object" || !(k in v)) return ""; v = v[k]; } return typeof v === "string" && v.includes("${") ? v : ""; };
     const da = toDoc(a), db = toDoc(b);
     // Renames first, parents before children, so the paths after them line up.
-    const order = (m) => [...m.dcs.map((d) => d.id), ...m.dcs.flatMap((d) => d.parts.map((p) => p.id)), ...m.peerings.map((p) => p.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws].map((x) => x.id))];
+    const order = (m) => [...m.dcs.map((d) => d.id), ...m.dcs.flatMap((d) => d.parts.map((p) => p.id)), ...m.peerings.map((p) => p.id), ...(m.exts || []).map((x) => x.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws].map((x) => x.id))];
     for (const id of order(b)) {
       const pa = segs(a, id), pb = segs(b, id);
       if (!pa || !pb) continue;
@@ -934,7 +1064,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);
