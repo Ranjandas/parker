@@ -3,8 +3,6 @@ package expand
 import (
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"strconv"
 
 	"github.com/Ranjandas/parker/internal/spec"
@@ -17,11 +15,12 @@ const MeshGatewayPort = 8443
 // gatewayNode is one gateway node: a client agent plus the gateway's
 // Envoy, registered by `consul connect envoy -register`.
 type gatewayNode struct {
-	group string // key under gateways:
-	name  string // node name (group, or group-N with count)
-	kind  string
-	count int
-	wan   bool
+	group     string // key under gateways:
+	partition string // as under partitions: ("" outside them)
+	name      string // node name (group, or group-N with count)
+	kind      string
+	count     int
+	wan       bool
 }
 
 func (g gatewayNode) process() string { return g.kind + "-gateway" }
@@ -37,8 +36,9 @@ func (g gatewayNode) service() string {
 
 // gatewayEntry is a config entry Parker writes for a gateway.
 type gatewayEntry struct {
-	label string
-	entry spec.ConfigEntry
+	label     string
+	entry     spec.ConfigEntry
+	partition string // written into this partition ("" for the default)
 }
 
 // gatewayNodes resolves each datacenter's gateways (sorted by node name)
@@ -55,9 +55,16 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 	for _, dcName := range dcNames {
 		dc := c.Datacenters[dcName]
 		wanMesh := false
-		for _, group := range slices.Sorted(maps.Keys(dc.Gateways)) {
-			g := dc.Gateways[group]
+		nodeNames := map[string]bool{} // by partition/name
+		for _, n := range dc.AllNodes() {
+			nodeNames[n.Partition+"/"+n.Name] = true
+		}
+		for _, placed := range dc.AllGateways() {
+			group, g := placed.Name, placed.Gateway
 			where := fmt.Sprintf("consul.datacenters.%s.gateways.%s", dcName, group)
+			if placed.Partition != "" {
+				where = fmt.Sprintf("consul.datacenters.%s.partitions.%s.gateways.%s", dcName, placed.Partition, group)
+			}
 			if g == nil {
 				g = &spec.Gateway{}
 			}
@@ -78,7 +85,7 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 				errs = append(errs, fmt.Errorf("%s: entry: mesh gateways have no config entry of their own; set MeshGateway in proxy-defaults under config_entries", where))
 				continue
 			}
-			if _, ok := dc.Nodes[group]; ok {
+			if nodeNames[placed.Partition+"/"+group] {
 				errs = append(errs, fmt.Errorf("%s: a node is already named %s", where, group))
 				continue
 			}
@@ -97,7 +104,7 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 				if g.Count > 1 {
 					name = group + "-" + strconv.Itoa(k+1)
 				}
-				gn = gatewayNode{group: group, name: name, kind: kind, count: g.Count, wan: wan}
+				gn = gatewayNode{group: group, partition: placed.Partition, name: name, kind: kind, count: g.Count, wan: wan}
 				out[dcName] = append(out[dcName], gn)
 			}
 			if entryKind != "" {
@@ -106,7 +113,7 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 					e[k] = v
 				}
 				e["Kind"], e["Name"] = entryKind, gn.service()
-				entries[dcName] = append(entries[dcName], gatewayEntry{label: where + ".entry", entry: e})
+				entries[dcName] = append(entries[dcName], gatewayEntry{label: where + ".entry", entry: e, partition: partitionName(placed.Partition)})
 			}
 		}
 		if meshFed {

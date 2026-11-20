@@ -84,7 +84,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table grouped by datacenter (servers, then clients) with state and role, `←`/`→` fold and unfold a node (`space` toggles, `z` all; nodes fold on their own when the lab overflows the screen, unless something is wrong on them), `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:dc NAME`, `:q`. Faults on the selected node: `K` kill, `R` restart, `S` stop/start, `P` pause/resume, `x` partition it from the rest, `H` heal (disruptive ones ask first), or `:kill SELECTOR`, `:partition GROUP...` etc.; `:run [SCENARIO]` plays a scenario and streams its steps; `:pf [LOCAL:]REMOTE` port-forwards from the selected node while the TUI runs. `NO_COLOR` or `PARKER_TUI_STATIC=1` keeps the logo still. |
 | `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
-| `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker` or `server-1.dc1.<lab>.parker`; only lab addresses are reachable. |
+| `parker proxy` | Local SOCKS5 + HTTP proxy (`127.0.0.1:1080`) into every running lab through the daemon, like `kubectl proxy`. Node names resolve as `<node>.<lab>.parker`, `server-1.dc1.<lab>.parker` or, inside an admin partition, `billing-1.team-a.dc1.<lab>.parker` (the short form works while only one partition has that name); only lab addresses are reachable. |
 | `parker port-forward FILE\|LAB NODE [LOCAL:]PORT` | Forward a local port to a node's port. |
 | `parker daemon [stop\|status\|credentials]` | Run the daemon in the foreground (`--listen :7443` for remote clients), stop it (labs keep running), check it, or print what a remote client needs. |
 | `parker version` | Client version, commit and build date, plus the daemon's when one answers. |
@@ -177,8 +177,11 @@ with selectors that follow the YAML tree:
 | `dc1` | every node of the datacenter |
 | `dc1/servers`, `dc1/clients`, `dc1/gateways` | a role group |
 | `dc1/server-2`, `dc1/web-1` | one node (`dc1/default/web-1` works too) |
-| `dc1/web` | a node group: every copy of `nodes.web` (`count: N`) |
+| `dc1/web` | a node group: every copy of `nodes.web` (`count: N`), in every partition |
 | `svc:api`, `svc:dc2/api` | the nodes that run service `api` |
+| `dc1/team-a/billing-1`, `dc1/team-a/billing` | a node or group inside admin partition `team-a` |
+| `part:team-a`, `part:dc1/team-a` | the client agents in a partition (`part:default` for the rest) |
+| `ns:payments`, `ns:dc1/payments` | the nodes that register a service in namespace `payments` |
 | `dc1/leader`, `dc1/followers` | raft roles, asked of the running servers |
 | `toxiproxy`, `dc1-server-1` | a node by its expanded name |
 
@@ -312,6 +315,50 @@ in the lab's run dir, hands agents its path as `CONSUL_LICENSE_PATH`, and
 removes it on `down` or when `up` fails. It never goes into `parker expand`
 output, the saved topology, `describe` or logs. See
 [examples/enterprise.yaml](examples/enterprise.yaml).
+
+### Admin partitions and namespaces
+
+A datacenter can split its nodes and gateways into `partitions:` (the
+default one is `default`; without other partitions, nodes stay straight
+under the dc). Each partition takes `client`, `service_defaults`, `nodes`,
+`gateways` and `config_entries`, and a service picks its namespace with
+`namespace:`:
+
+```yaml
+dc1:
+  servers: 3
+  partitions:
+    default:
+      nodes:
+        frontend:
+          service:
+            port: 8080
+            connect: sidecar
+            upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
+    team-a:
+      service_defaults: { connect: sidecar, namespace: payments }
+      gateways: { mesh: true }
+      nodes:
+        billing: { count: 2, service: { port: 9000 } }
+    team-b:          # the same billing again, to fail over to
+      service_defaults: { connect: sidecar, namespace: payments }
+      gateways: { mesh: true }
+      nodes:
+        billing: { service: { port: 9000 } }
+```
+
+Parker creates the partitions and namespaces as soon as the leader is up
+(the `tenancy` process on `server-1`), joins each agent to its partition,
+registers services, checks and sidecars in their namespace, and writes a
+partition's `config_entries` into it. With ACLs each partition gets its own
+agent token. Partitions can reuse a node name, as Consul allows: nodes
+outside the default partition expand to `<dc>-<partition>-<name>`, so
+`billing-1` above is `dc1-team-a-billing-1` (and `billing-1` to Consul).
+`dc1/team-a/billing-1` or `billing-1.team-a.dc1.<lab>.parker` name it. Partitions and namespaces need an
+Enterprise pin, and can't be combined with federation or peering yet. See
+[examples/partitions.yaml](examples/partitions.yaml): frontend calls
+team-a's billing and fails over to team-b's when team-a's is stopped.
+`make e2e-ent` runs it too.
 
 ## Supported so far
 

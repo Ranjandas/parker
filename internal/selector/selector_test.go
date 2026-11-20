@@ -82,7 +82,7 @@ func TestResolveErrors(t *testing.T) {
 		"svc:nope":         "matches no nodes",
 		"dc1/gateways":     "matches no nodes",
 		"nope":             "matches no nodes",
-		"dc1/team-a/web-1": "partitions are not supported",
+		"dc1/team-a/web-1": "matches no nodes",
 		"dc1/":             "want dc, dc/name",
 		"a/b/c/d":          "want dc, dc/name",
 		"dc2/leader":       "no leader",
@@ -116,5 +116,34 @@ func TestLeaderByAddr(t *testing.T) {
 	}
 	if _, err := LeaderByAddr(low, "dc1", "10.1.0.100:8300"); err == nil {
 		t.Error("a client as leader accepted")
+	}
+}
+
+func TestResolvePartitions(t *testing.T) {
+	low := lab()
+	billing := node("dc1", "billing-1", "client", "billing", "10.1.0.110", "billing")
+	billing.Labels.Partition, billing.Labels.Namespaces = "team-a", []string{"payments"}
+	low.Nodes["dc1-billing-1"] = billing
+	low.Nodes["dc1-api"].Labels.Namespaces = []string{"payments"}
+	for sel, want := range map[string]string{
+		"part:team-a":           "dc1-billing-1",
+		"part:dc1/team-a":       "dc1-billing-1",
+		"part:default":          "dc1-api dc1-bare dc1-web-1 dc1-web-2 dc2-api",
+		"ns:payments":           "dc1-api dc1-billing-1",
+		"ns:dc2/payments":       "",
+		"dc1/team-a/billing-1":  "dc1-billing-1",
+		"dc1/team-a/billing":    "dc1-billing-1",
+		"dc1/default/billing-1": "",
+	} {
+		got, err := Resolve(low, sel, raft)
+		if want == "" {
+			if err == nil || !strings.Contains(err.Error(), "matches no nodes") {
+				t.Errorf("%q = %v, %v; want no match", sel, got, err)
+			}
+			continue
+		}
+		if err != nil || strings.Join(got, " ") != want {
+			t.Errorf("%q = %v, %v; want %s", sel, got, err, want)
+		}
 	}
 }

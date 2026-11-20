@@ -149,7 +149,22 @@ func TestValidate(t *testing.T) {
 		{"override key", func(f *File) {
 			f.Consul.Datacenters["dc1"].Servers.Overrides = map[string]*ServerOverride{"s2": {}}
 		}, "keys are server names"},
-		{"partitions", func(f *File) { f.Consul.Datacenters["dc1"].Partitions = map[string]any{"p": 1} }, "partitions: not supported"},
+		{"partitions beside nodes", func(f *File) {
+			f.Versions["consul"] = "1.22.7+ent"
+			f.Consul.Datacenters["dc1"].Partitions = map[string]*Partition{"team-a": {}}
+		}, "move them under partitions.default"},
+		{"partition name", func(f *File) {
+			f.Versions["consul"] = "1.22.7+ent"
+			dc := f.Consul.Datacenters["dc1"]
+			dc.Partitions, dc.Nodes = map[string]*Partition{"Team_A": {}}, nil
+		}, "partition names are lowercase"},
+		{"partitions need ent", func(f *File) {
+			dc := f.Consul.Datacenters["dc1"]
+			dc.Partitions, dc.Nodes = map[string]*Partition{"team-a": {Nodes: dc.Nodes}}, nil
+		}, "pin versions.consul to an Enterprise build such as 1.22.7+ent"},
+		{"namespace needs ent", func(f *File) {
+			f.Consul.Datacenters["dc1"].Nodes["web"].Service = &Service{Namespace: "payments"}
+		}, "partitions and namespaces need Consul Enterprise"},
 		{"node name", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["Web"] = &Node{} }, "invalid node name"},
 		{"reserved node", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["server-9"] = &Node{} }, "reserved for servers"},
 		{"agent", func(f *File) { f.Consul.Datacenters["dc1"].Nodes["web"].Agent = "bogus" }, "must be client or none"},

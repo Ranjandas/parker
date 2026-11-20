@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/selector"
@@ -48,16 +49,17 @@ const ACLReadyLine = "parker: ACLs set up"
 
 type secrets struct{ management, agent, gossip string }
 
-func newSecrets() (secrets, error) {
-	uuid := func() (string, error) {
-		b := make([]byte, 16)
-		if _, err := io.ReadFull(Rand, b); err != nil {
-			return "", err
-		}
-		b[6] = b[6]&0x0f | 0x40
-		b[8] = b[8]&0x3f | 0x80
-		return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+func uuid() (string, error) {
+	b := make([]byte, 16)
+	if _, err := io.ReadFull(Rand, b); err != nil {
+		return "", err
 	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+}
+
+func newSecrets() (secrets, error) {
 	var s secrets
 	var err error
 	if s.management, err = uuid(); err != nil {
@@ -487,15 +489,41 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				deps[r] = &spec.Dep{Condition: "ready"}
 			}
 			out.Nodes[dcName+"-server-1"].Processes[ACLSetup] = &spec.Process{
-				Run:       spec.Command{VarParker, ACLSetup, "--agent-token", sec.agent},
+				Run:       aclSetupCmd(sec.agent, c.UsesTenancy()),
 				Env:       apiEnv(token, tls),
 				DependsOn: deps,
 				ReadyWhen: &spec.Ready{Log: ACLReadyLine, Timeout: "60s"},
 			}
 		}
 
-		if len(dc.ConfigEntries) > 0 || len(gwEntries[dcName]) > 0 {
-			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, gwEntries[dcName], serverRefs, aclDeps, apiEnv(token, tls)); err != nil {
+		// Partitions and namespaces, and an agent token in each partition.
+		ten := tenancyFor(c, dc)
+		agentToken := map[string]string{"": sec.agent}
+		if acl {
+			for _, p := range ten.Partitions {
+				id, err := uuid()
+				if err != nil {
+					return err
+				}
+				agentToken[p] = id
+				ten.AgentTokens = append(ten.AgentTokens, AgentToken{Partition: p, SecretID: id})
+			}
+		}
+		setupDeps := maps.Clone(aclDeps) // what clients and config entries wait for
+		if !ten.empty() {
+			deps := map[string]*spec.Dep{}
+			for _, r := range serverRefs {
+				deps[r] = &spec.Dep{Condition: "ready"}
+			}
+			maps.Copy(deps, aclDeps)
+			s1 := out.Nodes[dcName+"-server-1"]
+			s1.Files[TenancyManifest] = mustJSON(ten)
+			s1.Processes[Tenancy] = tenancyProcess(deps, apiEnv(token, tls))
+			setupDeps[dcName+"-server-1/"+Tenancy] = &spec.Dep{Condition: "ready"}
+		}
+
+		if hasEntries(dc) || len(gwEntries[dcName]) > 0 {
+			if err := expandConfigEntries(out.Nodes[dcName+"-server-1"], dcName, dc, gwEntries[dcName], serverRefs, setupDeps, apiEnv(token, tls)); err != nil {
 				return err
 			}
 		}
@@ -541,20 +569,27 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		}
 
 		clientOff := 100
-		nodes := maps.Clone(dc.Nodes)
-		if nodes == nil {
-			nodes = map[string]*spec.Node{}
-		}
-		gwOf := map[string]gatewayNode{}
+		nodes := dc.AllNodes()
+		gwOf := map[string]gatewayNode{} // by partition/group
 		for _, g := range gws[dcName] {
-			nodes[g.group] = &spec.Node{Count: g.count}
-			gwOf[g.group] = g
+			if _, ok := gwOf[g.partition+"/"+g.group]; !ok {
+				nodes = append(nodes, spec.PlacedNode{Name: g.group, Node: &spec.Node{Count: g.count}, Partition: g.partition, Part: dc.Partitions[g.partition]})
+			}
+			gwOf[g.partition+"/"+g.group] = g
 		}
-		for _, nodeName := range slices.Sorted(maps.Keys(nodes)) {
-			node := nodes[nodeName]
-			gw, isGW := gwOf[nodeName]
+		slices.SortFunc(nodes, func(a, b spec.PlacedNode) int {
+			return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
+		})
+		for _, placed := range nodes {
+			nodeName, node, part := placed.Name, placed.Node, partitionName(placed.Partition)
+			gw, isGW := gwOf[placed.Partition+"/"+nodeName]
 			if node == nil {
 				node = &spec.Node{}
+			}
+			var partSD *spec.Service
+			var partClient *spec.AgentSettings
+			if placed.Part != nil {
+				partSD, partClient = placed.Part.ServiceDefaults, placed.Part.Client
 			}
 			count := max(node.Count, 1)
 			for k := range count {
@@ -564,7 +599,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				}
 				ip := ipAt(clientOff)
 				clientOff++
-				key := dcName + "-" + name
+				key := spec.NodeKey(dcName, placed.Partition, name)
+				if _, clash := out.Nodes[key]; clash {
+					return fmt.Errorf("consul.datacenters.%s: two nodes expand to %s (rename one, e.g. a default-partition node named like <partition>-<node>)", dcName, key)
+				}
 				rn := &spec.RawNode{
 					Networks:  map[string]*spec.Attachment{lan: {IP: ip}},
 					Files:     map[string]string{},
@@ -589,15 +627,20 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				sidecars := 0
 				transparentNode := false
 				for _, s := range services {
-					if mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, s).Connect == "tproxy" {
+					if mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, s).Connect == "tproxy" {
 						transparentNode = true
 					}
 				}
 				for _, svcName := range slices.Sorted(maps.Keys(services)) {
-					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
-					reg, proc := expandService(svcName, svc, check, SidecarPort+sidecars)
+					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
+					svcCheck := check
+					svcCheck.Partition = part
+					if svc.Namespace != spec.DefaultNamespace {
+						svcCheck.Namespace = svc.Namespace
+					}
+					reg, proc := expandService(svcName, svc, svcCheck, SidecarPort+sidecars)
 					if acl {
-						reg["token"] = sec.agent // registers and syncs the service
+						reg["token"] = agentToken[part] // registers and syncs the service
 					}
 					regs = append(regs, reg)
 					if proc != nil {
@@ -606,14 +649,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if inMesh(svc) {
 						sc := sidecar{svc: svcName, key: key, admin: SidecarAdminPort + sidecars, port: SidecarPort + sidecars,
 							tls: tls, marked: transparentNode, transparent: svc.Connect == "tproxy"}
-						rn.Processes[svcName+SidecarSuffix] = sc.process(apiEnv(token, tls))
+						rn.Processes[svcName+SidecarSuffix] = sc.process(tenantEnv(apiEnv(token, tls), part, svcCheck.Namespace))
 						sidecars++
 					}
 				}
 				if isGW {
 					g := gw
 					g.name = name
-					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, apiEnv(token, tls), tls)
+					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(token, tls), part, ""), tls)
 					if meshFed && dcName != primary && gwWANIP != "" {
 						// Ready once the primary reaches this datacenter,
 						// which goes through this gateway: ask a primary
@@ -641,6 +684,12 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						"log_level":            logLevel(defaults, dc, true),
 						"disable_update_check": true,
 					}
+					if part != "" {
+						cfg["partition"] = part
+					}
+					if partClient != nil && partClient.LogLevel != "" {
+						cfg["log_level"] = partClient.LogLevel
+					}
 					if len(node.Meta) > 0 {
 						cfg["node_meta"] = node.Meta
 					}
@@ -648,11 +697,11 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						cfg["services"] = regs
 					}
 					if acl {
-						tokens := map[string]any{"agent": sec.agent}
+						tokens := map[string]any{"agent": agentToken[part]}
 						if transparentNode {
 							// The node's DNS goes to this agent, and lookups
 							// under default deny need a token.
-							tokens["dns"] = sec.agent
+							tokens["dns"] = agentToken[part]
 						}
 						cfg["acl"] = map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true,
 							"tokens": tokens}
@@ -674,7 +723,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						}
 						cfg["ports"] = ports
 					}
-					deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Client.Cfg(), dc.Client.Cfg(), node.Config)
+					deepMerge(cfg, defaults.Agents.Cfg(), dc.Agents.Cfg(), defaults.Client.Cfg(), dc.Client.Cfg(), partClient.Cfg(), node.Config)
 					rn.Files["consul.json"] = mustJSON(cfg)
 					deps := map[string]*spec.Dep{}
 					serverCond := "ready"
@@ -686,7 +735,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					for _, r := range serverRefs {
 						deps[r] = &spec.Dep{Condition: serverCond}
 					}
-					maps.Copy(deps, aclDeps)
+					maps.Copy(deps, setupDeps)
 					rn.Processes["consul"] = &spec.Process{
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
 						DependsOn: deps,
@@ -714,7 +763,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				if isGW {
 					role = "gateway"
 				}
-				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services))}
+				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services)),
+					Partition: placed.Partition, Namespaces: nodeNamespaces(c, dc, placed.Part, services)}
 				out.Nodes[key] = rn
 			}
 		}
@@ -726,6 +776,9 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 // service has a run: command, the process that runs it.
 func expandService(name string, svc *spec.Service, agent spec.ConsulCheck, sidecarPort int) (map[string]any, *spec.Process) {
 	reg := map[string]any{"name": name}
+	if svc.Namespace != "" && svc.Namespace != spec.DefaultNamespace {
+		reg["namespace"] = svc.Namespace
+	}
 	if svc.Port > 0 {
 		reg["port"] = svc.Port
 	}
@@ -816,6 +869,9 @@ func mergeService(layers ...*spec.Service) *spec.Service {
 		}
 		if l.Connect != "" {
 			out.Connect = l.Connect
+		}
+		if l.Namespace != "" {
+			out.Namespace = l.Namespace
 		}
 		if len(l.Upstreams) > 0 {
 			if out.Upstreams == nil {
@@ -934,30 +990,56 @@ const (
 type EntryRef struct {
 	File  string `json:"file"`
 	Label string `json:"label"`
+	// Partition the entry is written into ("" for the default).
+	Partition string `json:"partition,omitempty"`
 }
 
 func expandConfigEntries(srv *spec.RawNode, dcName string, dc *spec.Datacenter, gen []gatewayEntry, serverRefs []string, aclDeps map[string]*spec.Dep, env map[string]string) error {
 	var refs []EntryRef
-	for i, e := range dc.ConfigEntries {
+	add := func(e spec.ConfigEntry, src *spec.EntrySource, label, partition string) error {
 		var name, body string
-		if i < len(dc.EntrySources) && dc.EntrySources[i].HCL != "" {
-			name, body = fmt.Sprintf("config-entry-%d.hcl", i), dc.EntrySources[i].HCL
+		if src != nil && src.HCL != "" {
+			name, body = fmt.Sprintf("config-entry-%d.hcl", len(refs)), src.HCL
 		} else {
 			b, err := json.MarshalIndent(e, "", "  ")
 			if err != nil {
-				return fmt.Errorf("%s: %w", dc.EntryLabel(dcName, i), err)
+				return fmt.Errorf("%s: %w", label, err)
 			}
-			name, body = fmt.Sprintf("config-entry-%d.json", i), string(b)
+			name, body = fmt.Sprintf("config-entry-%d.json", len(refs)), string(b)
 		}
 		srv.Files[name] = body
-		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: dc.EntryLabel(dcName, i)})
+		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: label, Partition: partition})
+		return nil
+	}
+	source := func(srcs []spec.EntrySource, i int) *spec.EntrySource {
+		if i < len(srcs) {
+			return &srcs[i]
+		}
+		return nil
+	}
+	for i, e := range dc.ConfigEntries {
+		if err := add(e, source(dc.EntrySources, i), dc.EntryLabel(dcName, i), ""); err != nil {
+			return err
+		}
+	}
+	// Each partition's entries are written into it.
+	for _, pn := range slices.Sorted(maps.Keys(dc.Partitions)) {
+		part := dc.Partitions[pn]
+		if part == nil {
+			continue
+		}
+		for i, e := range part.ConfigEntries {
+			if err := add(e, source(part.EntrySources, i), part.EntryLabel(dcName, pn, i), partitionName(pn)); err != nil {
+				return err
+			}
+		}
 	}
 	// Gateways' own entries last: their listeners need the protocols that
 	// service-defaults in config_entries set.
 	for i, g := range gen {
 		name := fmt.Sprintf("gateway-entry-%d.json", i)
 		srv.Files[name] = mustJSON(g.entry)
-		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: g.label})
+		refs = append(refs, EntryRef{File: VarNodeDir + "/" + name, Label: g.label, Partition: g.partition})
 	}
 	srv.Files[ConfigEntriesManifest] = mustJSON(refs)
 	deps := map[string]*spec.Dep{}
@@ -1000,10 +1082,14 @@ func meshServices(c *spec.Consul) (bool, error) {
 	var errs []error
 	for _, dcName := range slices.Sorted(maps.Keys(c.Datacenters)) {
 		dc := c.Datacenters[dcName]
-		for _, nodeName := range slices.Sorted(maps.Keys(dc.Nodes)) {
-			node := dc.Nodes[nodeName]
+		for _, placed := range dc.AllNodes() {
+			nodeName, node := placed.Name, placed.Node
 			if node == nil {
 				continue
+			}
+			var partSD *spec.Service
+			if placed.Part != nil {
+				partSD = placed.Part.ServiceDefaults
 			}
 			services := node.Services
 			if node.Service != nil {
@@ -1011,7 +1097,7 @@ func meshServices(c *spec.Consul) (bool, error) {
 			}
 			transparent := ""
 			for _, svcName := range slices.Sorted(maps.Keys(services)) {
-				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, services[svcName])
+				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
 				where := fmt.Sprintf("consul.datacenters.%s.nodes.%s: service %s", dcName, nodeName, svcName)
 				switch svc.Connect {
 				case "", "none":

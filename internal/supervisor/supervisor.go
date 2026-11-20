@@ -554,7 +554,7 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 			if err != nil {
 				return fmt.Errorf("consul agent: %w", err)
 			}
-			entries, _, err := c.Health().Service(svc, "", true, nil)
+			entries, _, err := c.Health().Service(svc, "", true, &api.QueryOptions{Partition: r.Consul.Partition, Namespace: r.Consul.Namespace})
 			if err != nil {
 				return fmt.Errorf("consul health of %s: %w", svc, err)
 			}

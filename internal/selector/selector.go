@@ -5,6 +5,9 @@
 //	dc1/server-2, dc1/web-1      one node (dc1/default/web-1 also works)
 //	dc1/web                      a node group: every copy of nodes.web
 //	svc:api, svc:dc2/api         nodes that run service api
+//	part:team-a, part:dc1/team-a nodes in an admin partition (Enterprise)
+//	ns:payments, ns:dc1/payments nodes running a service in a namespace
+//	dc1/team-a/billing-1         a node, scoped to its partition
 //	dc1/leader, dc1/followers    raft roles, asked of the servers when resolved
 //	toxiproxy, dc1-server-1      a node by its expanded name
 //
@@ -63,6 +66,31 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		}
 	}
 
+	// partOf is a node's partition, "default" outside partitions:.
+	partOf := func(l *spec.NodeLabels) string {
+		if l.Partition == "" {
+			return spec.DefaultPartition
+		}
+		return l.Partition
+	}
+	for prefix, match := range map[string]func(*spec.NodeLabels, string) bool{
+		"part:": func(l *spec.NodeLabels, v string) bool { return l.DC != "" && l.Role != "server" && partOf(l) == v },
+		"ns:":   func(l *spec.NodeLabels, v string) bool { return slices.Contains(l.Namespaces, v) },
+	} {
+		rest, ok := strings.CutPrefix(sel, prefix)
+		if !ok {
+			continue
+		}
+		dc, v, scoped := strings.Cut(rest, "/")
+		if !scoped {
+			dc, v = "", rest
+		}
+		if dc != "" && !dcs[dc] {
+			return nil, fmt.Errorf("selector %q: no datacenter %q", sel, dc)
+		}
+		return none(filter(func(_ string, l *spec.NodeLabels) bool { return (dc == "" || l.DC == dc) && match(l, v) }), nil)
+	}
+
 	if rest, ok := strings.CutPrefix(sel, "svc:"); ok {
 		dc, svc, scoped := strings.Cut(rest, "/")
 		if !scoped {
@@ -86,10 +114,9 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		}
 		return none(nil, nil)
 	}
+	partition := ""
 	if len(parts) == 3 {
-		if parts[1] != "default" {
-			return nil, fmt.Errorf("selector %q: partitions are not supported yet", sel)
-		}
+		partition = parts[1]
 		parts = []string{parts[0], parts[2]}
 	}
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -100,7 +127,9 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		return nil, fmt.Errorf("selector %q: no datacenter %q", sel, dc)
 	}
 	inDC := func(keep func(*spec.NodeLabels) bool) []string {
-		return filter(func(_ string, l *spec.NodeLabels) bool { return l.DC == dc && keep(l) })
+		return filter(func(_ string, l *spec.NodeLabels) bool {
+			return l.DC == dc && (partition == "" || partOf(l) == partition) && keep(l)
+		})
 	}
 	switch what {
 	case "servers":
@@ -122,10 +151,9 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		}
 		return none(filter(func(n string, l *spec.NodeLabels) bool { return l.DC == dc && l.Role == "server" && n != leader }), nil)
 	}
-	if one := inDC(func(l *spec.NodeLabels) bool { return l.Name == what }); len(one) > 0 {
-		return one, nil
-	}
-	return none(inDC(func(l *spec.NodeLabels) bool { return l.Group == what }), nil)
+	// A node or a node group. Without a partition this spans them all, so
+	// dc1/billing is every billing node in every partition.
+	return none(inDC(func(l *spec.NodeLabels) bool { return l.Name == what || l.Group == what }), nil)
 }
 
 // One resolves a selector that must name exactly one node.

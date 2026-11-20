@@ -57,6 +57,11 @@ if grep -rlF "$NEEDLE" /run/parker | grep -vxF "$lic"; then echo "license leaked
 if $P describe "$F" "$first" | grep -qF "$NEEDLE"; then echo "license in describe" >&2; exit 1; fi
 echo "only $lic"
 
+if grep "^scenario:" "$F" >/dev/null; then
+  echo "--- scenario"
+  $P run --no-up "$F"
+fi
+
 echo "--- down removes it"
 $P down "$F"
 [ ! -e "$lic" ] || { echo "license left after down" >&2; exit 1; }

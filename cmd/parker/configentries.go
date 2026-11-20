@@ -46,19 +46,23 @@ func configEntriesCmd() *cobra.Command {
 	}
 }
 
-func consulWrite(ctx context.Context, file string) (string, error) {
-	out, err := exec.CommandContext(ctx, "consul", "config", "write", file).CombinedOutput()
+func consulWrite(ctx context.Context, r expand.EntryRef) (string, error) {
+	args := []string{"config", "write"}
+	if r.Partition != "" {
+		args = append(args, "-partition", r.Partition)
+	}
+	out, err := exec.CommandContext(ctx, "consul", append(args, r.File)...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
 // transient errors are retried: the cluster is still settling.
 var transient = regexp.MustCompile(`(?i)no cluster leader|connection refused|EOF|rpc error making call: (ACL not found|Permission denied)`)
 
-func applyEntries(ctx context.Context, refs []expand.EntryRef, write func(context.Context, string) (string, error), patience time.Duration, log io.Writer) error {
+func applyEntries(ctx context.Context, refs []expand.EntryRef, write func(context.Context, expand.EntryRef) (string, error), patience time.Duration, log io.Writer) error {
 	for _, r := range refs {
 		deadline := time.Now().Add(patience)
 		for {
-			out, err := write(ctx, r.File)
+			out, err := write(ctx, r)
 			if err == nil {
 				fmt.Fprintf(log, "applied %s\n", r.Label)
 				break

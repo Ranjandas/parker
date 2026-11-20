@@ -42,7 +42,7 @@ func (f *fakeACL) TokenCreate(t *api.ACLToken, _ *api.WriteOptions) (*api.ACLTok
 func TestEnsureAgentToken(t *testing.T) {
 	f := &fakeACL{policies: map[string]*api.ACLPolicy{}, tokens: map[string]*api.ACLToken{}}
 	const secret = "11111111-2222-4333-8444-555555555555"
-	if err := ensureAgentToken(f, secret); err != nil {
+	if err := ensureAgentToken(f, secret, aclAgentRules, ""); err != nil {
 		t.Fatal(err)
 	}
 	tok := f.tokens[secret]
@@ -53,7 +53,7 @@ func TestEnsureAgentToken(t *testing.T) {
 		t.Error("policy rules")
 	}
 	// A second run (restart) creates nothing.
-	if err := ensureAgentToken(f, secret); err != nil || f.creates != 2 {
+	if err := ensureAgentToken(f, secret, aclAgentRules, ""); err != nil || f.creates != 2 {
 		t.Errorf("rerun: err %v, creates %d", err, f.creates)
 	}
 }
@@ -65,7 +65,7 @@ func (failingACL) PolicyReadByName(string, *api.QueryOptions) (*api.ACLPolicy, *
 }
 
 func TestEnsureAgentTokenNoLeader(t *testing.T) {
-	if err := ensureAgentToken(&failingACL{}, "x"); err == nil {
+	if err := ensureAgentToken(&failingACL{}, "x", aclAgentRules, ""); err == nil {
 		t.Error("want error without a leader, so acl-setup retries")
 	}
 }
