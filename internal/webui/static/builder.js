@@ -309,7 +309,8 @@ function bCanvas() {
     h += `<div class="breg bext" data-drop="ext:" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"><div class="lbl">Outside Consul<span>registered in the catalog</span></div><div class="drop">Drop an external service</div></div>`;
     for (const x of m.exts) {
       const regs = x.in.map((r) => Build.sideName(m, r.dc, r.part));
-      h += bCard(x.id, P.it[x.id], BI.ext, "ext", x.name, `:${x.port} · ${regs.length ? "in " + regs.join(", ") : "not registered"}${Build.extNs(m, x) ? ` · ns ${Build.extNs(m, x)}` : ""}`, { port: true, bad: problems.has(x.id) });
+      const fos = (m.fails || []).filter((fo) => fo.svc === x.id);
+      h += bCard(x.id, P.it[x.id], BI.ext, "ext", x.name, `:${x.port} · ${regs.length ? "in " + regs.join(", ") : "not registered"}${Build.extNs(m, x) ? ` · ns ${Build.extNs(m, x)}` : ""}${fos.length ? " · failover" : ""}`, { port: true, bad: problems.has(x.id) });
     }
   }
   const ax = X0 + (m.dcs.length + (P.ext ? 1 : 0)) * (DCW + GAP);
@@ -354,6 +355,19 @@ function bCanvas() {
     s += `<path d="${d}" fill="none" stroke="var(--${color})" stroke-opacity=".14" stroke-width="7"/><path d="${d}" fill="none" stroke="var(--${color})" stroke-width="2" class="flow" marker-end="url(#bah-${color})"/>`;
     const lx = Math.abs(a.x - b.x) < 5 ? A[0] + Math.max(40, Math.abs(B[1] - A[1]) * 0.35) * 0.75 : (A[0] + B[0]) / 2;
     labels.push(pill(lx, (A[1] + B[1]) / 2, `${c.t.name} :${c.port}`, color, c.src.id));
+  }
+  // Failovers: dashed, from a service to its copy (an external service's
+  // show on its card).
+  for (const fo of m.fails || []) for (const t of fo.to) {
+    const a0 = Build.svcAt(m, fo.svc, fo.dc, fo.part), b0 = Build.svcAt(m, fo.svc, t.dc, t.part);
+    if (!a0 || !b0 || a0.t.ext) continue;
+    const a = P.it[a0.t.id], b = P.it[b0.t.id];
+    if (!a || !b) continue;
+    const ok = !!Build.foTarget(m, fo, t), color = ok ? "peer" : "bad";
+    const A = [a.x + a.w / 2, a.y + CH], B = [b.x + b.w / 2, b.y + CH];
+    const lo = Math.max(A[1], B[1]) + 34;
+    s += `<path d="M${A[0]},${A[1]} C${A[0]},${lo} ${B[0]},${lo} ${B[0]},${B[1]}" fill="none" stroke="var(--${color})" stroke-width="1.8" stroke-dasharray="7 5" marker-end="url(#bah-${color})"/>`;
+    labels.push(pill((A[0] + B[0]) / 2, lo - 6, `fails over`, color, a0.t.id));
   }
   for (const d of m.dcs) for (const g of d.gws) for (const id of g.to) {
     const a = P.it[g.id], b = P.it[id];
@@ -451,7 +465,8 @@ function bInspector() {
       body += fld("Port", `<input id="bf-port" data-f="port" value="${n.svc.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-port") +
         fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
         fld("Connect", `<select data-f="connect" id="bf-connect">${conn.map(([v, l]) => `<option value="${v}" ${n.svc.connect === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Service", "connect"), "bf-connect") +
-        `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Service", "upstreams"))}">Upstreams</label><div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button><div class="hint doc">dc:, peer: or partition: follow from where the two services sit.</div></div></div>`;
+        `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Service", "upstreams"))}">Upstreams</label><div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button><div class="hint doc">dc:, peer: or partition: follow from where the two services sit.</div></div></div>` +
+        bFailFld(n.id, f.dc.id, n.part);
     }
     body += `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(n.name)}</button></div>`;
   } else if (f.t === "gw") {
@@ -471,6 +486,7 @@ function bInspector() {
       fld("Port", `<input id="bf-xport" data-f="xport" value="${x.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-xport") +
       fld("Namespace", txt("xns", x.ns || "", m.defNs ? `${m.defNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-xns", "Consul Enterprise.") +
       `<div class="fld" style="align-items:start"><label title="${esc(sdoc("External", "in"))}">Registered in</label><div class="ups">${regs || '<span class="hint">Nowhere yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Register in a datacenter</button><div class="hint doc">Linking a terminating gateway to it registers it in the gateway's datacenter and partition.</div></div></div>` +
+      x.in.map((r) => bFailFld(x.id, r.dc, r.part, `From ${esc(Build.sideName(m, r.dc, r.part))}`)).join("") +
       `<div class="hint">One node outside Consul, with no agent, on the LAN of every datacenter that registers it. Each registers it on an external node that Parker health-checks from server-1, as consul-esm would. The mesh reaches it through a terminating gateway.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(x.name)}</button></div>`;
   } else if (f.t === "peering") {
@@ -492,6 +508,24 @@ function bInspector() {
   if (og === "import") body = body.replace(/<button class="btn sm danger" data-bact="remove">[^<]*<\/button>/, "").replace('id="bf-name"', 'id="bf-name" readonly');
   if (og) body = `<div class="hint onote">${og === "import" ? "This comes from an import. Rename or remove it in the module; what you change here goes in this file and overrides it." : `Made from ${esc(og)}. What you set here goes on this node and overrides the template.`}</div>` + body;
   el.innerHTML = `<div class="hd"><h3>${title}</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${esc(where)}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">${body}</div>`;
+}
+
+// ---------- failover ----------
+// bFailFld is the "Fails over to" field of service id in side (dcId,
+// part): the resolver's targets in order, its ConnectTimeout, and a
+// picker for another side that has the service.
+function bFailFld(id, dcId, part, label) {
+  const m = BL.m, fo = (m.fails || []).find((x) => x.svc === id && x.dc === dcId && (x.part || "") === (part || ""));
+  const k = `${dcId}:${part || ""}`;
+  const rows = fo ? fo.to.map((t, i) => {
+    const tg = Build.foTarget(m, fo, t);
+    const how = tg ? Object.entries(tg).map(([a, b]) => `${a} ${b}`).join(", ") : "not joined";
+    return `<div class="up ${tg ? "" : "bad"}">${BI.peer}<span>${i + 1}. ${esc(Build.sideName(m, t.dc, t.part))} <i>${esc(how)}</i></span><button class="x" data-f="fomove" data-fo="${fo.id}" data-i="${i}" title="Earlier" ${i ? "" : "disabled"}>↑</button><button class="x" data-f="form" data-fo="${fo.id}" data-i="${i}" title="Remove">✕</button></div>`;
+  }).join("") : "";
+  const left = Build.foSides(m, id, dcId, part).filter((t) => !fo || !fo.to.some((x) => x.dc === t.dc && (x.part || "") === (t.part || "")));
+  const pick = left.length ? `<select data-f="foadd" data-sk="${k}" aria-label="Fail over to"><option value="">+ Fail over to…</option>${left.map((t) => `<option value="${t.dc}:${t.part}">${esc(Build.sideName(m, t.dc, t.part))}</option>`).join("")}</select>` : "";
+  if (!rows && !pick) return "";
+  return `<div class="fld" style="align-items:start"><label title="A service-resolver: when every instance here is unhealthy, calls go to the next target">${label || "Fails over to"}</label><div class="ups">${rows || ""}${pick}${fo ? `<label class="sf inl"><span>ConnectTimeout</span><input data-f="fotimeout" data-fo="${fo.id}" value="${esc(fo.timeout || "")}" placeholder="Consul's default (5s)" spellcheck="false"></label>` : ""}<div class="hint doc">Each target gets the service exported and its callers allowed, as a call there would.</div></div></div>`;
 }
 
 // ---------- scenario ----------
@@ -612,6 +646,19 @@ function bField(el) {
     }
     const id = t.t === "dc" ? t.dc.id : sel;
     if (f === "name") return Build.rename(m, id, v);
+    if (f === "foadd") {
+      if (!v) return;
+      const [dcId, part] = el.dataset.sk.split(":"), [toDc, toPart] = v.split(":");
+      return Build.failover(m, id, dcId, part, toDc, toPart);
+    }
+    if (f === "fomove" || f === "form" || f === "fotimeout") {
+      const fo = m.fails.find((x) => x.id === el.dataset.fo);
+      if (!fo) return;
+      if (f === "fomove") [fo.to[i - 1], fo.to[i]] = [fo.to[i], fo.to[i - 1]];
+      if (f === "form") { fo.to.splice(i, 1); if (!fo.to.length) m.fails = m.fails.filter((x) => x !== fo); }
+      if (f === "fotimeout") { const x = v.trim(); if (x && !/^\d+(\.\d+)?(ms|s|m)$/.test(x)) throw new Error("A duration, e.g. 2s or 500ms."); fo.timeout = x; }
+      return;
+    }
     if (t.t === "dc") {
       if (f === "servers") t.dc.servers = Math.max(1, Math.min(7, t.dc.servers + +v));
       if (f === "ui") t.dc.ui = v === "true";
@@ -640,6 +687,7 @@ function bField(el) {
         // Its gateways there no longer reach it.
         const d = Build.dcById(m, r.dc);
         if (d) d.gws.forEach((g) => { if ((g.part || "") === (r.part || "")) g.to = g.to.filter((y) => y !== x.id); });
+        Build.pruneFails(m);
       }
     } else if (t.t === "peering") {
       const p = t.peering;

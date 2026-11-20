@@ -95,7 +95,8 @@ for (const how of ["mesh-gateways", "peering"]) {
 
 // An external service behind terminating gateways in two peered
 // datacenters, as on the canvas: web calls api, each terminating gateway
-// fronts it (registering it there), and the datacenters are peered.
+// fronts it (registering it there), the datacenters are peered, and dc1
+// fails api over to dc2 (examples/terminating-failover.yaml).
 {
   const m = B.lab("externals"); m.acl = true; m.tls = true;
   const d1 = B.dc("dc1", 3), d2 = B.dc("dc2", 3); m.dcs.push(d1, d2);
@@ -106,8 +107,11 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.link(m, t1.id, api.id); B.link(m, t2.id, api.id);
   B.joinDCs(m, d1.id, d2.id, "peering");
   B.link(m, web.id, api.id);
+  // dc1 fails api over to dc2: a resolver, dc2's export and intention.
+  B.failover(m, api.id, d1.id, "", d2.id, "");
+  m.fails[0].timeout = "2s";
   // A scenario made from the canvas: stop dc1's gateway, check, start it.
-  for (const [id, kind] of [[d1.id, "wait"], [d2.id, "wait"], [web.id, "call"], [t1.id, "stop"], [t1.id, "start"], [api.id, "healthy"]]) B.addStep(m, B.stepFor(m, id, kind));
+  for (const [id, kind] of [[d1.id, "wait"], [d2.id, "wait"], [web.id, "call"], [t1.id, "stop"], [web.id, "call"], [t1.id, "start"], [api.id, "healthy"]]) B.addStep(m, B.stepFor(m, id, kind));
   B.nameStep(m.scenario.steps[2], "web reaches api");
   write("externals", m);
 }

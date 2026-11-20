@@ -17,6 +17,7 @@ consul:
       acceptor: dc2
       dialer: dc1
       via_mesh_gateways: true
+      exports: { dc2: [api] }
   datacenters:
     dc1:
       servers: 3
@@ -28,6 +29,14 @@ consul:
         web:
           service: { port: 8080, upstreams: { api: 9091 } }
       config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+        - Kind: service-resolver
+          Name: api
+          ConnectTimeout: 2s
+          Failover:
+            "*": { Targets: [{ Peer: dc1-dc2 }] }
         - Kind: service-intentions
           Name: api
           Sources: [{ Name: web, Action: allow }]
@@ -37,6 +46,10 @@ consul:
         terminating:
           entry: { Services: [{ Name: api }] }
         mesh: true
+      config_entries:
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Peer: dc1-dc2, Action: allow }]
 scenario:
   steps:
     - wait: dc1 ready
@@ -44,5 +57,6 @@ scenario:
     - name: web reaches api
       assert: { call: { on: dc1/web, reaches: api }, within: 60s }
     - stop: dc1/terminating
+    - assert: { call: { on: dc1/web, reaches: api }, within: 60s }
     - start: dc1/terminating
     - assert: { consul: { dc: dc1, service_healthy: api }, within: 60s }
