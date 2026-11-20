@@ -22,7 +22,7 @@ import (
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
-var varFlags []string
+var varFlags, overlayFlags, setFlags []string
 
 func main() {
 	root := &cobra.Command{
@@ -37,6 +37,8 @@ func main() {
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringArrayVar(&varFlags, "var", nil, "set a variable (name=value); repeatable")
+	root.PersistentFlags().StringArrayVar(&overlayFlags, "overlay", nil, "merge an overlay file over FILE (maps merge, lists replace); repeatable, in order")
+	root.PersistentFlags().StringArrayVar(&setFlags, "set", nil, "set a value over FILE and overlays: PATH=VALUE or SELECTOR:PATH=VALUE (dc1/web:service.port=9000); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
 	root.AddCommand(versionCmd(), tuiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), runCmd(), faultCmd(), sidecarCmd())
 	if err := root.Execute(); err != nil {
@@ -45,16 +47,25 @@ func main() {
 	}
 }
 
-func load(path string) (*spec.File, *spec.File, error) {
+// layers are the --overlay, --var and --set flags.
+func layers() (spec.Layers, error) {
 	vars := map[string]string{}
 	for _, kv := range varFlags {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			return nil, nil, fmt.Errorf("--var %q: want name=value", kv)
+			return spec.Layers{}, fmt.Errorf("--var %q: want name=value", kv)
 		}
 		vars[k] = v
 	}
-	f, err := spec.Load(path, vars)
+	return spec.Layers{Overlays: overlayFlags, Vars: vars, Sets: setFlags}, nil
+}
+
+func load(path string) (*spec.File, *spec.File, error) {
+	l, err := layers()
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := spec.LoadWith(path, l)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,7 +85,11 @@ func firstNode(f *spec.File) string {
 
 func labName(arg string) (string, error) {
 	if _, err := os.Stat(arg); err == nil {
-		f, err := spec.Load(arg, nil)
+		l, err := layers()
+		if err != nil {
+			return "", err
+		}
+		f, err := spec.LoadWith(arg, l)
 		if err != nil {
 			return "", err
 		}
@@ -84,11 +99,27 @@ func labName(arg string) (string, error) {
 }
 
 func expandCmd() *cobra.Command {
-	return &cobra.Command{
+	var merged bool
+	c := &cobra.Command{
 		Use:   "expand FILE",
 		Short: "Print the fully expanded, low-level form of a topology (itself valid input)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if merged {
+				l, err := layers()
+				if err != nil {
+					return err
+				}
+				if _, err := spec.LoadWith(args[0], l); err != nil {
+					return err
+				}
+				text, err := spec.Merged(args[0], l)
+				if err != nil {
+					return err
+				}
+				os.Stdout.Write(text)
+				return nil
+			}
 			_, low, err := load(args[0])
 			if err != nil {
 				return err
@@ -102,6 +133,8 @@ func expandCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&merged, "merged", false, "print FILE with --overlay and --set applied, before expansion")
+	return c
 }
 
 func validateCmd() *cobra.Command {

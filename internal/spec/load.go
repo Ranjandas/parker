@@ -17,26 +17,102 @@ var varRef = regexp.MustCompile(`\$\{(vars|env)\.([A-Za-z_][A-Za-z0-9_]*)\}`)
 // (with overrides from --var), decodes it strictly and validates it.
 // Runtime variables such as ${run_dir} are left in place.
 func Load(path string, overrides map[string]string) (*File, error) {
-	raw, err := os.ReadFile(path)
+	return LoadWith(path, Layers{Vars: overrides})
+}
+
+// Layers are what goes on top of a base file: overlay files merged in
+// order, --var values and --set paths, applied last.
+type Layers struct {
+	Overlays []string
+	Vars     map[string]string
+	Sets     []string
+}
+
+func (l Layers) empty() bool { return len(l.Overlays) == 0 && len(l.Sets) == 0 }
+
+// LoadWith is Load with overlays and --set.
+func LoadWith(path string, l Layers) (*File, error) {
+	text, err := Merged(path, l)
 	if err != nil {
 		return nil, err
 	}
+	label := path
+	if !l.empty() {
+		label = path + " (with overlays and --set)"
+	}
+	return decode(path, label, text)
+}
 
-	// Pass 1: just the vars block.
-	var head struct {
-		Vars map[string]any `yaml:"vars"`
-	}
-	if err := yaml.Unmarshal(raw, &head); err != nil {
-		return nil, fmt.Errorf("%s:\n%s", path, yaml.FormatError(err, false, true))
-	}
+// Merged is the base file with vars substituted and overlays and --set
+// applied: the input LoadWith decodes. Without overlays or --set it is the
+// base file's own text.
+func Merged(path string, l Layers) ([]byte, error) {
+	paths := append([]string{path}, l.Overlays...)
+	raws := make([][]byte, len(paths))
+	// Pass 1: the vars blocks; a later file's value wins, --var over all.
 	vars := map[string]string{}
-	for k, v := range head.Vars {
-		vars[k] = fmt.Sprint(v)
+	for i, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		raws[i] = raw
+		var head struct {
+			Vars map[string]any `yaml:"vars"`
+		}
+		if err := yaml.Unmarshal(raw, &head); err != nil {
+			return nil, fmt.Errorf("%s:\n%s", p, yaml.FormatError(err, false, true))
+		}
+		for k, v := range head.Vars {
+			vars[k] = fmt.Sprint(v)
+		}
 	}
-	for k, v := range overrides {
+	for k, v := range l.Vars {
 		vars[k] = v
 	}
+	texts := make([][]byte, len(paths))
+	for i, raw := range raws {
+		t, err := substitute(paths[i], raw, vars)
+		if err != nil {
+			return nil, err
+		}
+		texts[i] = t
+	}
+	if l.empty() {
+		return texts[0], nil
+	}
+	var doc any
+	for i, t := range texts {
+		// Unknown keys are reported against the file that has them.
+		if errs := CheckKeys(t); len(errs) > 0 {
+			msgs := make([]string, len(errs))
+			for j, e := range errs {
+				msgs[j] = e.Error()
+			}
+			return nil, fmt.Errorf("%s:\n  - %s", paths[i], strings.Join(msgs, "\n  - "))
+		}
+		var v any
+		if err := yaml.UnmarshalWithOptions(t, &v, yaml.UseOrderedMap()); err != nil {
+			return nil, fmt.Errorf("%s:\n%s", paths[i], yaml.FormatError(err, false, true))
+		}
+		if v == nil {
+			continue
+		}
+		if _, ok := v.(yaml.MapSlice); !ok {
+			return nil, fmt.Errorf("%s: want a YAML map at the top", paths[i])
+		}
+		doc = Merge(doc, dedupe(v))
+	}
+	for _, set := range l.Sets {
+		var err error
+		if doc, err = ApplySet(doc, set); err != nil {
+			return nil, err
+		}
+	}
+	return yaml.MarshalWithOptions(doc, yaml.UseLiteralStyleIfMultiline(true), yaml.IndentSequence(true))
+}
 
+func substitute(path string, raw []byte, vars map[string]string) ([]byte, error) {
 	var missing []string
 	text := varRef.ReplaceAllFunc(raw, func(m []byte) []byte {
 		sub := varRef.FindSubmatch(m)
@@ -57,17 +133,22 @@ func Load(path string, overrides map[string]string) (*File, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("%s: undefined variables: %s", path, strings.Join(missing, ", "))
 	}
+	return text, nil
+}
 
+// decode checks, decodes and validates text; path places relative files
+// and names the lab, label prefixes errors.
+func decode(path, label string, text []byte) (*File, error) {
 	if errs := CheckKeys(text); len(errs) > 0 {
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
 			msgs[i] = e.Error()
 		}
-		return nil, fmt.Errorf("%s:\n  - %s", path, strings.Join(msgs, "\n  - "))
+		return nil, fmt.Errorf("%s:\n  - %s", label, strings.Join(msgs, "\n  - "))
 	}
 	var f File
 	if err := yaml.NewDecoder(bytes.NewReader(text), yaml.Strict()).Decode(&f); err != nil {
-		return nil, fmt.Errorf("%s:\n%s", path, yaml.FormatError(err, false, true))
+		return nil, fmt.Errorf("%s:\n%s", label, yaml.FormatError(err, false, true))
 	}
 	if f.Name == "" {
 		f.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -83,10 +164,30 @@ func Load(path string, overrides map[string]string) (*File, error) {
 		}
 	}
 	if err := resolveConfigEntries(&f, text, filepath.Dir(path)); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	if label != path && f.Consul != nil {
+		// Lines in merged text match no file the user wrote.
+		drop := func(srcs []EntrySource) {
+			for i := range srcs {
+				if srcs[i].File == "" {
+					srcs[i].Line = 0
+				}
+			}
+		}
+		for _, dc := range f.Consul.Datacenters {
+			if dc != nil {
+				drop(dc.EntrySources)
+				for _, p := range dc.Partitions {
+					if p != nil {
+						drop(p.EntrySources)
+					}
+				}
+			}
+		}
 	}
 	if err := f.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	return &f, nil
 }
