@@ -317,6 +317,7 @@ dialog label{display:flex;gap:8px;align-items:center;color:var(--ink-2)}
 .ico svg{width:16px;height:16px}
 .ico.srv{background:var(--accent-soft);color:var(--accent)}
 .ico.gw{background:color-mix(in srgb,var(--fed) 14%,transparent);color:var(--fed)}
+.ico.ext{background:color-mix(in srgb,var(--ink-2) 12%,transparent);color:var(--ink-2)}
 .ico.svc{background:var(--ok-soft);color:var(--ok)}
 .nd .nm{font-weight:650;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nd .sub{font:11.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -383,6 +384,8 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .breg.sel{border-color:var(--accent);border-style:solid}
 .breg.linksrc{border-color:var(--peer);border-style:solid}
 .breg.bad{border-color:var(--bad)}
+.breg.bext{border-style:dotted;background:transparent}
+.breg.bext .lbl{color:var(--ink-2);cursor:default}
 .breg .lbl{position:absolute;top:-12px;left:16px;background:var(--bg);padding:0 8px;display:flex;gap:8px;align-items:center;font:600 13px var(--f-mono);color:var(--accent);cursor:pointer;border-radius:6px}
 .breg .lbl span{font:500 11.5px var(--f-ui);color:var(--muted)}
 .breg .drop{position:absolute;left:14px;right:14px;bottom:12px;height:46px;border:1.5px dashed var(--accent-line);border-radius:10px;display:none;align-items:center;justify-content:center;color:var(--accent);font-weight:600;font-size:12.5px;background:var(--panel);pointer-events:none}

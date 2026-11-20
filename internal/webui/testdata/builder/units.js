@@ -30,3 +30,36 @@ const vt = {
   assert.strictEqual(B.minorOf("v2.1.0+ent"), "2.1");
 }
 console.log("ok");
+
+// External services: registered where they're linked, fronted by
+// terminating gateways only, and read back from a file.
+{
+  const m = B.lab("x");
+  const d = B.dc("dc1", 1); m.dcs.push(d);
+  const pa = { id: "pa", name: "part-a" }; d.parts.push(pa);
+  const web = B.node("web", 8080, { part: pa.id }); d.nodes.push(web);
+  const api = B.ext("api", 9000); m.exts.push(api);
+  assert.match(B.link(m, web.id, api.id), /registered in dc1\/part-a.*Link a terminating gateway in dc1\/part-a/);
+  assert.deepStrictEqual(api.in, [{ dc: d.id, part: pa.id }]);
+  assert.ok(B.checks(m).some((c) => /no terminating gateway in dc1\/part-a fronts it/.test(c.message)));
+  const ing = B.gw("ingress", "", pa.id), tgw = B.gw("terminating", "", pa.id);
+  d.gws.push(ing, tgw);
+  assert.throws(() => B.link(m, ing.id, api.id), /Only a terminating gateway/);
+  assert.match(B.link(m, tgw.id, api.id), /fronts api/);
+  assert.ok(!B.checks(m).some((c) => /fronts it/.test(c.message)));
+  assert.throws(() => B.link(m, api.id, pa.id), /registered in dc1\/part-a already/);
+  assert.match(B.link(m, d.id, api.id), /registered in dc1's catalog/);
+  api.ns = "app";
+  const doc = B.toDoc(m);
+  assert.deepStrictEqual(doc.consul.external, { api: { service: { port: 9000, namespace: "app" }, in: ["dc1/part-a", "dc1"] } });
+  assert.deepStrictEqual(doc.consul.datacenters.dc1.partitions["part-a"].gateways.terminating.entry, { Services: [{ Name: "api", Namespace: "app" }] });
+  const back = B.fromTree(JSON.parse(JSON.stringify(doc)), m);
+  assert.ok(B.same(B.toDoc(back), doc), "reads back");
+  assert.strictEqual(back.exts[0].id, api.id, "keeps its id");
+  assert.throws(() => B.rename(m, api.id, "web"), /dc1\/part-a has a web already/);
+  B.remove(m, pa.id);
+  assert.deepStrictEqual(api.in, [{ dc: d.id, part: "" }]);
+  B.remove(m, api.id);
+  assert.strictEqual(m.exts.length, 0);
+}
+console.log("ok externals");
