@@ -63,3 +63,38 @@ console.log("ok");
   assert.strictEqual(m.exts.length, 0);
 }
 console.log("ok externals");
+
+// Scenarios: steps made from the canvas, selectors that follow renames,
+// and the file's own steps kept as they are.
+{
+  const m = B.lab("s");
+  const d = B.dc("dc1", 1); m.dcs.push(d);
+  const pa = { id: "pa", name: "team-a" }; d.parts.push(pa);
+  const web = B.node("web", 8080, { part: pa.id }), api = B.node("api", 9090, { part: pa.id });
+  d.nodes.push(web, api);
+  B.link(m, web.id, api.id);
+  assert.strictEqual(B.sel(m, web.id), "dc1/team-a/web");
+  assert.strictEqual(B.sel(m, "srv:" + d.id), "dc1/servers");
+  B.addStep(m, B.stepFor(m, d.id, "wait"));
+  B.addStep(m, B.stepFor(m, api.id, "stop"));
+  B.addStep(m, B.stepFor(m, web.id, "call"));
+  B.addStep(m, B.stepFor(m, api.id, "healthy"));
+  assert.deepStrictEqual(m.scenario.steps, [
+    { wait: "dc1 ready" },
+    { stop: "dc1/team-a/api" },
+    { assert: { call: { on: "dc1/team-a/web", reaches: "api" }, within: "60s" } },
+    { assert: { consul: { service_healthy: "api" }, within: "60s" } },
+  ]);
+  assert.strictEqual(B.stepFor(m, "srv:" + d.id, "call"), null, "servers answer no calls");
+  B.rename(m, api.id, "backend");
+  B.rename(m, pa.id, "team-b");
+  B.rename(m, d.id, "east");
+  assert.deepStrictEqual(m.scenario.steps.map((s) => s.stop || s.wait || (s.assert.call || s.assert.consul)), [
+    "east ready", "east/team-b/backend", { on: "east/team-b/web", reaches: "backend" }, { service_healthy: "backend" }]);
+  const y = B.toYAML(m).text;
+  assert.match(y, /\nscenario:\n  steps:\n    - wait: east ready\n    - stop: east\/team-b\/backend\n    - assert: { call: { on: east\/team-b\/web, reaches: backend }, within: 60s }\n/);
+  const back = B.fromTree(JSON.parse(JSON.stringify(B.toDoc(m))), m);
+  assert.ok(B.same(B.toDoc(back), B.toDoc(m)), "reads back");
+  assert.strictEqual(B.stepText({ assert: { exec: { on: "dc1/web", run: "x", output: "ok" }, within: "9s" } }), "exec on dc1/web shows ok within 9s");
+}
+console.log("ok scenario");

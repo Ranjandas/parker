@@ -174,7 +174,7 @@ function renderBuild() {
           <div class="btools">
             <div class="seg" id="bmodes"><button data-bmode="select" title="Select and drag (V)">Select <span class="faint mono">V</span></button><button data-bmode="link" title="Click two things to link them (L)">Link <span class="faint mono">L</span></button></div>
             <div class="seg"><button data-bact="undo" title="Undo (Ctrl+Z)">↶</button><button data-bact="redo" title="Redo (Ctrl+Shift+Z)">↷</button></div>
-            <div class="seg"><button data-bact="lab" title="Lab settings">Lab settings</button></div>
+            <div class="seg"><button data-bact="lab" title="Lab settings">Lab settings</button><button data-bact="scenario" id="bscbtn" title="Steps that break the lab and check it: faults and checks">Scenario</button></div>
             <span class="bhint" id="bhint"></span>
           </div>
           <div class="bworld" id="bworld"></div>
@@ -208,6 +208,9 @@ function bRender() {
   bCanvas();
   bInspector();
   bYAML();
+  const n = BL.m.scenario && Array.isArray(BL.m.scenario.steps) ? BL.m.scenario.steps.length : 0;
+  const sb = $("#bscbtn");
+  if (sb) { sb.innerHTML = `Scenario${n ? ` <span class="faint mono">${n}</span>` : ""}`; sb.classList.toggle("on", BL.sel === "scenario"); }
 }
 
 const bLabel = (id) => { const f = Build.find(BL.m, id); return f ? (f.node || f.gw || f.ext || f.part || f.dc || {}).name || "it" : "it"; };
@@ -372,7 +375,7 @@ function bCanvas() {
       <button data-join="" class="cancel"><span>Cancel</span></button></div>`;
   }
   const world = $("#bworld");
-  world.innerHTML = s + h + `<svg class="edges labels" width="${W}" height="${H}">${labels.join("")}</svg>` + pick;
+  world.innerHTML = s + h + `<svg class="edges labels" width="${W}" height="${H}">${labels.join("")}</svg>` + pick + bMenuHTML();
   world.style.width = W + "px"; world.style.height = H + "px";
   BL.fresh = "";
 }
@@ -400,6 +403,7 @@ function bInspector() {
   const m = BL.m;
   el.hidden = !BL.sel;
   if (!BL.sel) return;
+  if (BL.sel === "scenario") { el.innerHTML = bScenario(); return; }
   const f = BL.sel === "lab" ? null : BL.sel.startsWith("srv:") ? { t: "dc", dc: Build.dcById(m, BL.sel.slice(4)) } : Build.find(m, BL.sel);
   let title, where = "", body;
   const yes = [["true", "on"], ["false", "off"]];
@@ -483,10 +487,90 @@ function bInspector() {
       `<div class="hint">Exports follow from the calls: a service called over this peering is exported by its partition. Each side's partition gets a mesh gateway, in its default namespace; through mesh gateways the control plane uses each datacenter's default-partition gateway.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove peering</button></div>`;
   }
+  if (f && f.t && f.t !== "peering" && f.t !== "part") body += bStepBtns(BL.sel);
   const og = f && f.t ? bOrigin(BL.sel) : "";
   if (og === "import") body = body.replace(/<button class="btn sm danger" data-bact="remove">[^<]*<\/button>/, "").replace('id="bf-name"', 'id="bf-name" readonly');
   if (og) body = `<div class="hint onote">${og === "import" ? "This comes from an import. Rename or remove it in the module; what you change here goes in this file and overrides it." : `Made from ${esc(og)}. What you set here goes on this node and overrides the template.`}</div>` + body;
   el.innerHTML = `<div class="hd"><h3>${title}</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${esc(where)}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">${body}</div>`;
+}
+
+// ---------- scenario ----------
+const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", exec: "Check a command" };
+// bStepKinds lists the steps that fit a thing.
+const bStepKinds = (id) => Object.keys(STEP_LABEL).filter((k) => Build.stepFor(BL.m, id, k));
+function bStepBtns(id) {
+  const ks = bStepKinds(id);
+  if (!ks.length) return "";
+  const faults = ks.filter((k) => Build.FAULTS.includes(k) || k === "fault" || k === "unfault"), checks = ks.filter((k) => !faults.includes(k));
+  const row = (l) => l.map((k) => `<button class="btn sm" data-step="${k}" data-sid="${esc(id)}">${STEP_LABEL[k]}</button>`).join("");
+  return `<div class="fld" style="align-items:start"><label title="Adds a step to the lab's scenario; right-click it on the canvas too">Scenario</label><div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}<div class="hint doc">Adds a step on <span class="mono">${esc(Build.sel(BL.m, id))}</span> to the scenario.</div></div></div>`;
+}
+// bLeaves lists a step's editable values: [{path, v, k}], k str, num,
+// bool, list (of scalars) or ro (edit it in the YAML).
+function bLeaves(st) {
+  const out = [];
+  const walk = (v, path) => {
+    if (Array.isArray(v)) { out.push({ path, v: v.every((x) => !x || typeof x !== "object") ? v.join(", ") : JSON.stringify(v), k: v.every((x) => !x || typeof x !== "object") ? "list" : "ro" }); return; }
+    if (v && typeof v === "object") { Object.entries(v).forEach(([k, x]) => walk(x, [...path, k])); return; }
+    out.push({ path, v: v === null || v === undefined ? "" : String(v), k: typeof v === "number" ? "num" : typeof v === "boolean" ? "bool" : "str" });
+  };
+  Object.entries(st).forEach(([k, v]) => { if (k !== "name") walk(v, [k]); });
+  // A check retries for within: offer it when it's missing.
+  if (st.assert && typeof st.assert === "object" && !("within" in st.assert)) out.push({ path: ["assert", "within"], v: "", k: "str" });
+  return out;
+}
+function bScenario() {
+  const m = BL.m, sc = m.scenario || { steps: [] }, steps = Array.isArray(sc.steps) ? sc.steps : [];
+  const up = S.labs.some((l) => l.name === m.name && l.namespaces);
+  const list = steps.map((st, i) => {
+    const open = BL.step === i, ok = st && typeof st === "object" && !Array.isArray(st);
+    const fields = open && ok ? bLeaves(st).map((x) => `<label class="sf"><span class="mono">${esc(x.path.join("."))}</span>${x.k === "ro" ? `<i class="faint mono">${esc(x.v)}</i>` : x.k === "bool" ? `<select data-f="sfield" data-i="${i}" data-p="${esc(x.path.join("."))}" data-k="bool"><option ${x.v === "true" ? "selected" : ""}>true</option><option ${x.v === "false" ? "selected" : ""}>false</option></select>` : `<input data-f="sfield" data-i="${i}" data-p="${esc(x.path.join("."))}" data-k="${x.k}" value="${esc(x.v)}" spellcheck="false" autocomplete="off"${x.path.join(".") === "assert.within" ? ' placeholder="once"' : ""}>`}</label>`).join("") : "";
+    return `<div class="bstep ${open ? "open" : ""}"><div class="sh"><span class="sn mono">${i + 1}</span><button class="st" data-f="sopen" data-i="${i}" title="${esc(Build.stepText(st))}"><b>${esc((ok && st.name) || Build.stepText(st))}</b>${ok && st.name ? `<small class="mono">${esc(Build.stepText(st))}</small>` : ""}</button>
+      <button class="x" data-f="smove" data-i="${i}" data-v="-1" title="Up" ${i ? "" : "disabled"}>↑</button><button class="x" data-f="smove" data-i="${i}" data-v="1" title="Down" ${i + 1 < steps.length ? "" : "disabled"}>↓</button><button class="x" data-f="srm" data-i="${i}" title="Remove">✕</button></div>
+      ${open && ok ? `<div class="sb"><label class="sf"><span>name</span><input data-f="sname" data-i="${i}" value="${esc(st.name || "")}" placeholder="${esc(Build.stepText(st))}" spellcheck="false"></label>${fields}</div>` : ""}</div>`;
+  }).join("");
+  const dcs = m.dcs.map((d) => `<button class="btn sm" data-step="wait" data-sid="${esc(d.id)}">Wait for ${esc(d.name)}</button>`).join("");
+  return `<div class="hd"><h3>Scenario</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${steps.length} step${steps.length === 1 ? "" : "s"}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">
+    ${m.named ? `<div class="hint onote">The file has named scenarios: too. This edits scenario:; edit the others in the YAML pane.</div>` : ""}
+    <div class="bsteps">${list || '<div class="hint">No steps yet. Select a node, gateway or service and use its Scenario buttons, or right-click it on the canvas.</div>'}</div>
+    <div class="stepbtns">${dcs}<button class="btn sm" data-step="sleep" data-sid="lab">Sleep</button><button class="btn sm" data-step="heal" data-sid="lab">Heal cuts</button></div>
+    ${steps.length ? fld("On failure", seg("onfail", [["keep", "keep the lab"], ["teardown", "tear down"]], sc.on_failure || "keep"), sdoc("Scenario", "on_failure")) : ""}
+    <div class="row-btns"><button class="btn primary sm" data-bact="runsc" ${up && steps.length ? "" : "disabled"} title="${up ? "Plays the steps against the running lab" : `Bring ${esc(m.name)} up first`}">Run scenario</button>${up ? "" : `<span class="hint">Runs once ${esc(m.name)} is up.</span>`}</div></div>`;
+}
+// bAddStep adds a step of kind for a thing and opens it in the panel.
+function bAddStep(kind, id) {
+  BL.menu = null;
+  bEdit((m) => {
+    const st = id === "lab" ? (kind === "sleep" ? { sleep: "10s" } : { name: "heal", heal: "all" }) : Build.stepFor(m, id, kind);
+    if (!st) throw new Error("That step doesn't fit there.");
+    BL.step = Build.addStep(m, st);
+    BL.sel = "scenario";
+    return `Added step ${BL.step + 1}: ${Build.stepText(st)}.`;
+  });
+}
+// bRunScenario plays the canvas's scenario against the running lab.
+async function bRunScenario() {
+  const m = BL.m, name = m.name;
+  const d = bDialog(`<div class="bd-in"><h3>Running ${esc(name)}'s scenario</h3><pre class="brun" id="bd-log"></pre>
+    <div class="bd-row end"><span class="faint" id="bd-st">Running…</span><div class="grow"></div><button class="btn sm" data-close>Close</button></div></div>`, "bd-run");
+  const log = $("#bd-log", d), st = $("#bd-st", d);
+  const ctl = new AbortController();
+  d.addEventListener("close", () => ctl.abort(), { once: true });
+  try {
+    await stream("Run", { lab: name, inline: JSON.stringify(m.scenario) }, (x) => { log.textContent += (x.line || "") + "\n"; log.scrollTop = log.scrollHeight; }, ctl.signal);
+    st.textContent = "Passed.";
+  } catch (e) {
+    if (ctl.signal.aborted) return;
+    log.textContent += e.message + "\n";
+    st.textContent = "Failed; see above.";
+  }
+}
+// bMenu is the right-click menu of a thing: the steps that fit it.
+function bMenuHTML() {
+  if (!BL.menu) return "";
+  const ks = bStepKinds(BL.menu.id);
+  if (!ks.length) return "";
+  return `<div class="card bpick bmenu" style="left:${BL.menu.x}px;top:${BL.menu.y}px"><div class="hd"><h3>Add to the scenario</h3></div>${ks.map((k) => `<button data-step="${k}" data-sid="${esc(BL.menu.id)}"><span><b>${STEP_LABEL[k]}</b><small class="mono">${esc(Build.stepText(Build.stepFor(BL.m, BL.menu.id, k)))}</small></span></button>`).join("")}<button class="cancel" data-step=""><span>Cancel</span></button></div>`;
 }
 
 // bField applies one inspector field.
@@ -494,6 +578,28 @@ function bField(el) {
   const f = el.dataset.f, v = el.dataset.v !== undefined ? el.dataset.v : el.value, i = +el.dataset.i;
   const sel = BL.sel;
   const num = (x, lo, hi) => { const n = parseInt(x, 10); if (!(n >= lo && n <= hi)) throw new Error(`Want a number from ${lo} to ${hi}.`); return n; };
+  if (sel === "scenario") {
+    if (f === "sopen") { BL.step = BL.step === i ? -1 : i; bInspector(); return; }
+    bEdit((m) => {
+      const steps = m.scenario.steps;
+      if (f === "sname") Build.nameStep(steps[i], v.trim());
+      if (f === "srm") { steps.splice(i, 1); BL.step = -1; if (!steps.length && Object.keys(m.scenario).length === 1) m.scenario = null; }
+      if (f === "smove") { const j = i + +v; [steps[i], steps[j]] = [steps[j], steps[i]]; BL.step = j; }
+      if (f === "onfail") { if (v === "keep") delete m.scenario.on_failure; else m.scenario.on_failure = v; }
+      if (f === "sfield") {
+        const path = el.dataset.p.split("."), k = el.dataset.k;
+        let o = steps[i];
+        for (const p of path.slice(0, -1)) o = o[p] = o[p] && typeof o[p] === "object" ? o[p] : {};
+        const last = path[path.length - 1], x = v.trim();
+        if (x === "" && k !== "list") delete o[last];
+        else if (k === "num") o[last] = num(x, -1e9, 1e9);
+        else if (k === "bool") o[last] = x === "true";
+        else if (k === "list") o[last] = x.split(",").map((y) => y.trim()).filter(Boolean);
+        else o[last] = x;
+      }
+    });
+    return;
+  }
   bEdit((m) => {
     const t = sel === "lab" ? null : sel.startsWith("srv:") ? { t: "dc", dc: Build.dcById(m, sel.slice(4)) } : Build.find(m, sel);
     if (!t) {
@@ -952,6 +1058,9 @@ function bBind() {
     if (md) { bMode(md.dataset.bmode); return; }
     const ba = t.closest("[data-bact]");
     if (ba) { bAct(ba.dataset.bact); return; }
+    const sb = t.closest("[data-step]");
+    if (sb) { if (sb.dataset.step) bAddStep(sb.dataset.step, sb.dataset.sid); else { BL.menu = null; bCanvas(); } return; }
+    if (BL.menu && !t.closest(".bmenu")) { BL.menu = null; bCanvas(); }
     const jn = t.closest("[data-join]");
     if (jn) { const p = BL.pick; BL.pick = null; if (jn.dataset.join) bEdit((m) => Build.joinDCs(m, p.a, p.b, jn.dataset.join)); else bCanvas(); return; }
     const fb = t.closest("button[data-f]");
@@ -965,6 +1074,17 @@ function bBind() {
     const rg = t.closest("#bworld [data-drop]");
     if (rg && rg.dataset.drop !== "new" && rg.dataset.drop !== "ext:") { const [d, pid] = rg.dataset.drop.split(":"); bClickItem(pid || d, e); return; }
     if (t.closest("#bworld") && !t.closest(".bpick")) { BL.pick = null; if (BL.mode === "link" && BL.from) { BL.from = ""; } BL.sel = ""; bRender(); }
+  });
+  // Right-click a thing for the steps that fit it.
+  root.addEventListener("contextmenu", (e) => {
+    const it = e.target.closest("#bworld [data-bid]");
+    if (!it) return;
+    const id = it.dataset.bid;
+    if (!bStepKinds(id).length) return;
+    e.preventDefault();
+    const w = $("#bworld").getBoundingClientRect();
+    BL.menu = { id, x: e.clientX - w.left, y: e.clientY - w.top };
+    bCanvas();
   });
   root.addEventListener("change", (e) => { if (e.target.matches("input[data-f],select[data-f]")) bField(e.target); });
   // The YAML pane: typing edits the file (a lab written from the canvas
@@ -1089,6 +1209,8 @@ function bAct(a) {
     case "redo": bHistory(false); return;
     case "lab": BL.sel = BL.sel === "lab" ? "" : "lab"; bRender(); return;
     case "deselect": BL.sel = ""; bRender(); return;
+    case "scenario": BL.sel = BL.sel === "scenario" ? "" : "scenario"; bRender(); return;
+    case "runsc": bRunScenario(); return;
     case "linkfrom": BL.mode = "link"; BL.from = BL.sel; bRender(); return;
     case "remove": {
       const id = BL.sel.replace(/^srv:/, "");

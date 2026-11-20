@@ -40,6 +40,8 @@
   // ext: {id, name, port, ns, in: [{dc, part}]}, an external service:
   //   one node outside Consul, registered in the catalog of each side in
   //   in (dc id, part id). Calls and gateways name it by id.
+  // scenario: null or the file's scenario: as is ({steps: [...], ...}).
+  //   named: the file has scenarios: too (the builder edits scenario: only)
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
@@ -379,6 +381,14 @@
   function rename(m, id, name) {
     const f = find(m, id);
     name = String(name || "").trim();
+    const before = sel(m, id), oldName = f && (f.dc && f.t === "dc" ? f.dc : f.node || f.gw || f.ext || f.part || {}).name;
+    renameOnly(m, f, name);
+    const after = sel(m, id);
+    retarget(m, before, after, (f.t === "node" && f.node.svc) || f.t === "ext" ? [oldName, name] : null);
+    // A partition's nodes: dc1/team-a/web.
+    if (f.t === "part") retarget(m, `${f.dc.name}/${oldName}`, `${f.dc.name}/${name}`);
+  }
+  function renameOnly(m, f, name) {
     if (!NAME_RE.test(name)) throw new Error("Use lowercase letters, digits and single hyphens.");
     if (f.t === "dc") {
       if (m.dcs.some((d) => d !== f.dc && d.name === name)) throw new Error(`There's a ${name} already.`);
@@ -398,6 +408,99 @@
       for (const r of f.ext.in) { const d = dcById(m, r.dc); if (d && [...d.nodes, ...d.gws].some((y) => (y.part || "") === (r.part || "") && y.name === name)) throw new Error(`${sideName(m, r.dc, r.part)} has a ${name} already.`); }
       f.ext.name = name;
     }
+  }
+
+  // ---------- scenario ----------
+  // sel is the scenario selector for a thing on the canvas ("srv:" + dc id
+  // is the dc's servers).
+  function sel(m, id) {
+    if (id.startsWith("srv:")) { const d = dcById(m, id.slice(4)); return d ? `${d.name}/servers` : ""; }
+    const f = find(m, id);
+    if (!f) return "";
+    if (f.t === "ext") return f.ext.name;
+    if (f.t === "dc") return f.dc.name;
+    if (f.t === "part") return `part:${f.dc.name}/${f.part.name}`;
+    const x = f.node || f.gw;
+    if (!x) return "";
+    return x.part ? `${f.dc.name}/${partName(f.dc, x.part)}/${x.name}` : `${f.dc.name}/${x.name}`;
+  }
+  // FAULTS are the steps that act on a selector, in menu order.
+  const FAULTS = ["stop", "start", "restart", "kill", "pause", "resume", "partition"];
+  // stepFor makes a step for a thing: a fault, or a check (wait, call,
+  // healthy, exec). It returns null when the kind doesn't fit the thing.
+  function stepFor(m, id, kind) {
+    const s = sel(m, id), f = find(m, id.replace(/^srv:/, ""));
+    if (!s) return null;
+    const svcName = f && f.t === "node" && f.node.svc ? f.node.name : f && f.t === "ext" ? f.ext.name : "";
+    const dcName = id.startsWith("srv:") ? dcById(m, id.slice(4)).name : f && f.dc ? f.dc.name : f && f.t === "ext" && f.ext.in.length ? (dcById(m, f.ext.in[0].dc) || {}).name || "" : "";
+    switch (kind) {
+      case "stop": case "start": case "restart": case "kill": case "pause": case "resume": return { [kind]: s };
+      case "partition": return { partition: [s] };
+      case "heal": return { heal: "all" };
+      case "wait": return { wait: `${dcName || s} ready` };
+      case "sleep": return { sleep: "10s" };
+      case "call": {
+        if (!(f && f.t === "node" && f.node.svc)) return null;
+        const up = f.node.svc.ups.map((u) => find(m, u.to)).filter(Boolean)[0];
+        const c = { on: s };
+        if (up) c.reaches = (up.node || up.ext).name;
+        return { assert: { call: c, within: "60s" } };
+      }
+      case "healthy": return svcName ? { assert: { consul: Object.assign(m.dcs.length > 1 && dcName ? { dc: dcName } : {}, { service_healthy: svcName }), within: "60s" } } : null;
+      case "exec": return f && (f.t === "node" || f.t === "gw") ? { assert: { exec: { on: s, run: "true", output: "" }, within: "30s" } } : null;
+      case "fault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, health: { code: 503 } } } : null;
+      case "unfault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, reset: true } } : null;
+    }
+    return null;
+  }
+  // nameStep sets (or, with "", clears) a step's name, written first.
+  function nameStep(st, name) {
+    const rest = Object.entries(st).filter(([k]) => k !== "name");
+    Object.keys(st).forEach((k) => delete st[k]);
+    if (name) st.name = name;
+    rest.forEach(([k, v]) => { st[k] = v; });
+  }
+  // addStep appends a step to the scenario, making one when there's none.
+  function addStep(m, st) {
+    if (!m.scenario) m.scenario = { steps: [] };
+    if (!Array.isArray(m.scenario.steps)) m.scenario.steps = [];
+    m.scenario.steps.push(st);
+    return m.scenario.steps.length - 1;
+  }
+  // stepText is a one-line summary of a step.
+  function stepText(st) {
+    if (!isMap(st)) return String(st);
+    for (const k of FAULTS.concat(["heal", "wait", "sleep", "snapshot"])) if (k in st) return `${k} ${Array.isArray(st[k]) ? flow(st[k]) : st[k]}`;
+    if (isMap(st.fake)) return `fake ${st.fake.on || ""}${st.fake.reset ? " reset" : ""}${st.fake.health ? ` health ${st.fake.health.code}` : ""}`;
+    if (isMap(st.upgrade)) return `upgrade ${st.upgrade.on || ""} to ${st.upgrade.to || ""}`;
+    if (isMap(st.exec)) return `exec on ${st.exec.on || ""}`;
+    if (isMap(st.assert)) {
+      const a = st.assert, w = a.within ? ` within ${a.within}` : "";
+      if (isMap(a.call)) return `call ${a.call.on || ""}${a.call.reaches ? ` reaches ${a.call.reaches}` : ""}${a.call.code ? ` code ${a.call.code}` : ""}${w}`;
+      if (isMap(a.exec)) return `exec on ${a.exec.on || ""}${a.exec.output ? ` shows ${a.exec.output}` : ""}${w}`;
+      if (isMap(a.consul)) return `consul ${Object.entries(a.consul).map(([k, v]) => `${k} ${v}`).join(", ")}${w}`;
+    }
+    return Object.keys(st).filter((k) => k !== "name" && k !== "at").join(", ");
+  }
+  // Step keys whose values are selectors.
+  const SEL_KEYS = new Set([...FAULTS, "heal", "wait", "on"]);
+  // retarget makes the scenario's selectors follow a rename: from and to
+  // are selectors (dc1, dc1/web); bare is a service's old and new name.
+  function retarget(m, from, to, bare) {
+    if (!m.scenario || from === to) return;
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(^|[\\s,:])${esc(from)}(?=$|[\\s,/])`, "g");
+    const fix = (v) => (typeof v === "string" ? v.replace(re, `$1${to}`) : Array.isArray(v) ? v.map(fix) : v);
+    const walk = (o) => {
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      if (!isMap(o)) return;
+      for (const [k, v] of Object.entries(o)) {
+        if (SEL_KEYS.has(k) || (k === "dc" && !from.includes("/"))) o[k] = fix(v);
+        else if (bare && (k === "reaches" || k === "service_healthy") && v === bare[0]) o[k] = bare[1];
+        else walk(v);
+      }
+    };
+    walk(m.scenario.steps);
   }
 
   // ---------- YAML ----------
@@ -461,6 +564,7 @@
       consul.datacenters[d.name] = out;
     }
     doc.consul = consul;
+    if (m.scenario && Array.isArray(m.scenario.steps) && m.scenario.steps.length) doc.scenario = JSON.parse(JSON.stringify(m.scenario));
     return doc;
   }
 
@@ -586,16 +690,19 @@
   function blockAt(path) {
     const p = path.join(".");
     return path.length <= 1 && p !== "versions" ||
-      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) ||
+      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) || p === "scenario" ||
       /\.(nodes|partitions)(\.[^.]+)?$/.test(p) && !/\.nodes\.[^.]+\.service/.test(p);
   }
 
   function scalar(v) {
     if (v === true || v === false || typeof v === "number") return String(v);
     const s = String(v);
-    if (/^[A-Za-z0-9_./+][A-Za-z0-9_./+-]*$/.test(s) && !/^(true|false|null|yes|no|on|off|~)$/i.test(s) && !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return s;
+    // Plain when it reads back as the same string (spaces inside too).
+    if (/^[A-Za-z0-9_./+]([A-Za-z0-9_./+ -]*[A-Za-z0-9_./+-])?$/.test(s) && !/^(true|false|null|yes|no|on|off|~)$/i.test(s) && !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return s;
     return JSON.stringify(s);
   }
+  // A key: as scalar, but on: is a plain key (YAML 1.2, as Parker reads it).
+  const skey = (k) => (k === "on" ? k : scalar(k));
   const isMap = (v) => v && typeof v === "object" && !Array.isArray(v);
   function mapDepth(v) {
     if (Array.isArray(v)) return Math.max(0, ...v.map(mapDepth));
@@ -604,7 +711,7 @@
   }
   function flow(v) {
     if (Array.isArray(v)) return `[${v.map(flow).join(", ")}]`;
-    if (isMap(v)) { const e = Object.entries(v); return e.length ? `{ ${e.map(([k, x]) => `${scalar(k)}: ${flow(x)}`).join(", ")} }` : "{}"; }
+    if (isMap(v)) { const e = Object.entries(v); return e.length ? `{ ${e.map(([k, x]) => `${skey(k)}: ${flow(x)}`).join(", ")} }` : "{}"; }
     return scalar(v);
   }
 
@@ -623,11 +730,11 @@
       if (!isMap(v) && !Array.isArray(v)) { lines.push(pad + lead + scalar(v)); return mark(path, start); }
       const f = flow(v);
       const empty = isMap(v) ? !Object.keys(v).length : !v.length;
-      const block = isMap(v) ? blockAt(path) || mapDepth(v) > 2 : v.some(isMap) && (/config_entries$/.test(key(path)) || mapDepth(v) > 2);
+      const block = isMap(v) ? blockAt(path) || mapDepth(v) > 2 : v.some(isMap) && (/config_entries$|^scenario\.steps$/.test(key(path)) || mapDepth(v) > 2);
       if (empty || (!block && pad.length + lead.length + f.length <= 80)) { lines.push(pad + lead + f); return markAll(v, path, start); }
       lines.push(pad + lead.slice(0, -1));
       const inner = ind + (lead.startsWith("- ") ? 4 : 2);
-      if (isMap(v)) for (const [k, x] of Object.entries(v)) emit(x, [...path, k], inner, scalar(k) + ": ");
+      if (isMap(v)) for (const [k, x] of Object.entries(v)) emit(x, [...path, k], inner, skey(k) + ": ");
       else v.forEach((x, i) => emitItem(x, [...path, i], inner));
       return mark(path, start);
     }
@@ -635,12 +742,12 @@
     function emitItem(x, path, ind) {
       const pad = " ".repeat(ind);
       const start = lines.length + 1;
-      const entry = /config_entries\[\d+\]$/.test(key(path));
+      const entry = /config_entries\[\d+\]$|^scenario\.steps\[\d+\]$/.test(key(path));
       if (!isMap(x) || !Object.keys(x).length || (!entry && mapDepth(x) <= 2 && pad.length + 2 + flow(x).length <= 80)) {
         lines.push(pad + "- " + flow(x));
         return markAll(x, path, start);
       }
-      Object.entries(x).forEach(([k, v], i) => emit(v, [...path, k], i ? ind + 2 : ind, (i ? "" : "- ") + scalar(k) + ": "));
+      Object.entries(x).forEach(([k, v], i) => emit(v, [...path, k], i ? ind + 2 : ind, (i ? "" : "- ") + skey(k) + ": "));
       return mark(path, start);
     }
     function markAll(v, path, start) {
@@ -770,6 +877,8 @@
     if (v.consul) m.consul = String(v.consul);
     if (v.envoy) m.envoy = String(v.envoy);
     if (v["consul-dataplane"]) m.dataplane = String(v["consul-dataplane"]);
+    if (isMap(t.scenario)) m.scenario = JSON.parse(JSON.stringify(t.scenario));
+    if (isMap(t.scenarios) && Object.keys(t.scenarios).length) m.named = true;
     if (!c) { m.raw = !!(t.nodes || t.networks); m.mesh = false; return m; }
     const defs = isMap(c.defaults) ? c.defaults : {};
     const sdOf = (x) => (x && isMap(x.service_defaults) ? x.service_defaults : {});
@@ -1064,7 +1173,7 @@
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
   ];
 
-  const api = { ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);
