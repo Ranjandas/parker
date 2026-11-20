@@ -22,46 +22,62 @@ import (
 	"github.com/Ranjandas/parker/internal/supervisor"
 )
 
-// consulRole asks the Consul agent inside the node's netns whether it is
-// the raft leader, a follower or a client. "" when there's no answer.
-// cc says how to reach it (token, TLS).
-func consulRole(labName, node string, ips []string, cc *spec.ConsulCheck) string {
+// agentInfo is what a node's Consul agent says about itself.
+type agentInfo struct {
+	role         string // leader | follower | no-leader | client | ""
+	alive, total int    // LAN members it sees alive, of all it knows
+}
+
+// consulAgent asks the Consul agent inside the node's netns whether it is
+// the raft leader, a follower or a client, and how many members it sees.
+// Zero when there's no answer. cc says how to reach it (token, TLS).
+func consulAgent(labName, node string, ips []string, cc *spec.ConsulCheck) agentInfo {
 	dial := supervisor.DialerIn(netsetup.NetnsPath(labName, node))
 	hc := &http.Client{Timeout: 700 * time.Millisecond, Transport: &http.Transport{DialContext: dial, DisableKeepAlives: true}}
 	cfg, err := supervisor.ConsulConfig(cc, hc, supervisor.NodeDir(RunDir(labName), node))
 	if err != nil {
-		return ""
+		return agentInfo{}
 	}
-	return roleFrom(cfg.HttpClient, cfg.Scheme+"://"+cfg.Address, ips, cc.Token)
+	base := cfg.Scheme + "://" + cfg.Address
+	info := agentInfo{role: roleFrom(cfg.HttpClient, base, ips, cc.Token)}
+	if info.role != "" {
+		info.alive, info.total = membersFrom(cfg.HttpClient, base, cc.Token)
+	}
+	return info
+}
+
+// agentGet decodes GET base+path into v.
+func agentGet(hc *http.Client, base, path, token string, v any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	if token != "" {
+		req.Header.Set("X-Consul-Token", token)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: %s", path, resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(v)
 }
 
 // roleFrom asks the agent API at base; ips are the node's own addresses.
 func roleFrom(hc *http.Client, base string, ips []string, token string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	get := func(path string, v any) error {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
-		if token != "" {
-			req.Header.Set("X-Consul-Token", token)
-		}
-		resp, err := hc.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return json.NewDecoder(resp.Body).Decode(v)
-	}
 	var self struct {
 		Config struct{ Server bool }
 	}
-	if err := get("/v1/agent/self", &self); err != nil {
+	if err := agentGet(hc, base, "/v1/agent/self", token, &self); err != nil {
 		return ""
 	}
 	if !self.Config.Server {
 		return "client"
 	}
 	var leader string
-	if err := get("/v1/status/leader", &leader); err != nil || leader == "" {
+	if err := agentGet(hc, base, "/v1/status/leader", token, &leader); err != nil || leader == "" {
 		return "no-leader"
 	}
 	host, _, _ := net.SplitHostPort(leader)
@@ -71,6 +87,21 @@ func roleFrom(hc *http.Client, base string, ips []string, token string) string {
 		}
 	}
 	return "follower"
+}
+
+// membersFrom counts the LAN members the agent at base knows, and those
+// alive (serf status 1).
+func membersFrom(hc *http.Client, base, token string) (alive, total int) {
+	var ms []struct{ Status int }
+	if err := agentGet(hc, base, "/v1/agent/members", token, &ms); err != nil {
+		return 0, 0
+	}
+	for _, m := range ms {
+		if m.Status == 1 {
+			alive++
+		}
+	}
+	return alive, len(ms)
 }
 
 // ServerClients returns an API client for each server of dc, by node

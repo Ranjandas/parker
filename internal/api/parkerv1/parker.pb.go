@@ -542,7 +542,18 @@ type NodeStatus struct {
 	Processes []*ProcessStatus       `protobuf:"bytes,4,rep,name=processes,proto3" json:"processes,omitempty"`
 	// Consul role from the node's agent: leader, follower, client; "" if the
 	// node has no reachable agent.
-	Role          string `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
+	Role string `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
+	// Where the node sits (from its labels): datacenter and admin partition
+	// ("" outside partitions:).
+	Dc        string `protobuf:"bytes,6,opt,name=dc,proto3" json:"dc,omitempty"`
+	Partition string `protobuf:"bytes,7,opt,name=partition,proto3" json:"partition,omitempty"`
+	// LAN members the node's agent sees alive, of all it knows; 0/0 without
+	// an agent.
+	MembersAlive int32 `protobuf:"varint,8,opt,name=members_alive,json=membersAlive,proto3" json:"members_alive,omitempty"`
+	MembersTotal int32 `protobuf:"varint,9,opt,name=members_total,json=membersTotal,proto3" json:"members_total,omitempty"`
+	// Catalog health of the node's service instances, by service name
+	// (web, web-sidecar-proxy, mesh-gateway): passing, warning or critical.
+	Health        map[string]string `protobuf:"bytes,10,rep,name=health,proto3" json:"health,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -610,6 +621,41 @@ func (x *NodeStatus) GetRole() string {
 		return x.Role
 	}
 	return ""
+}
+
+func (x *NodeStatus) GetDc() string {
+	if x != nil {
+		return x.Dc
+	}
+	return ""
+}
+
+func (x *NodeStatus) GetPartition() string {
+	if x != nil {
+		return x.Partition
+	}
+	return ""
+}
+
+func (x *NodeStatus) GetMembersAlive() int32 {
+	if x != nil {
+		return x.MembersAlive
+	}
+	return 0
+}
+
+func (x *NodeStatus) GetMembersTotal() int32 {
+	if x != nil {
+		return x.MembersTotal
+	}
+	return 0
+}
+
+func (x *NodeStatus) GetHealth() map[string]string {
+	if x != nil {
+		return x.Health
+	}
+	return nil
 }
 
 type ProcessStatus struct {
@@ -1724,14 +1770,23 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\n" +
 	"supervised\x18\x03 \x01(\bR\n" +
 	"supervised\x12+\n" +
-	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\x9c\x01\n" +
+	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\x8a\x03\n" +
 	"\n" +
 	"NodeStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ips\x18\x02 \x03(\tR\x03ips\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\bR\tnamespace\x126\n" +
 	"\tprocesses\x18\x04 \x03(\v2\x18.parker.v1.ProcessStatusR\tprocesses\x12\x12\n" +
-	"\x04role\x18\x05 \x01(\tR\x04role\"\xd9\x01\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\x12\x0e\n" +
+	"\x02dc\x18\x06 \x01(\tR\x02dc\x12\x1c\n" +
+	"\tpartition\x18\a \x01(\tR\tpartition\x12#\n" +
+	"\rmembers_alive\x18\b \x01(\x05R\fmembersAlive\x12#\n" +
+	"\rmembers_total\x18\t \x01(\x05R\fmembersTotal\x129\n" +
+	"\x06health\x18\n" +
+	" \x03(\v2!.parker.v1.NodeStatus.HealthEntryR\x06health\x1a9\n" +
+	"\vHealthEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd9\x01\n" +
 	"\rProcessStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03pid\x18\x02 \x01(\x05R\x03pid\x12\x14\n" +
@@ -1824,7 +1879,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -1853,43 +1908,45 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*DialResponse)(nil),     // 24: parker.v1.DialResponse
 	(*DialOpened)(nil),       // 25: parker.v1.DialOpened
 	(*RunRequest)(nil),       // 26: parker.v1.RunRequest
+	nil,                      // 27: parker.v1.NodeStatus.HealthEntry
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
 	10, // 1: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
 	11, // 2: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
-	19, // 3: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
-	20, // 4: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
-	20, // 5: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
-	23, // 6: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
-	25, // 7: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
-	0,  // 8: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 9: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 10: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 11: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 12: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 13: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
-	14, // 14: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	18, // 15: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	22, // 16: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
-	16, // 17: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	26, // 18: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
-	1,  // 19: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 20: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 21: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 22: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 23: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 24: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	15, // 25: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	21, // 26: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	24, // 27: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	17, // 28: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	3,  // 29: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
-	19, // [19:30] is the sub-list for method output_type
-	8,  // [8:19] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	27, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
+	19, // 4: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
+	20, // 5: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
+	20, // 6: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
+	23, // 7: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
+	25, // 8: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
+	0,  // 9: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 10: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 11: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 12: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 13: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 14: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
+	14, // 15: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	18, // 16: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	22, // 17: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	16, // 18: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	26, // 19: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	1,  // 20: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 21: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 22: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 23: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 24: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 25: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	15, // 26: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	21, // 27: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	24, // 28: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	17, // 29: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 30: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	20, // [20:31] is the sub-list for method output_type
+	9,  // [9:20] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -1923,7 +1980,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

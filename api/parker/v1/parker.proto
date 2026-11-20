@@ -113,6 +113,17 @@ message NodeStatus {
   // Consul role from the node's agent: leader, follower, client; "" if the
   // node has no reachable agent.
   string role = 5;
+  // Where the node sits (from its labels): datacenter and admin partition
+  // ("" outside partitions:).
+  string dc = 6;
+  string partition = 7;
+  // LAN members the node's agent sees alive, of all it knows; 0/0 without
+  // an agent.
+  int32 members_alive = 8;
+  int32 members_total = 9;
+  // Catalog health of the node's service instances, by service name
+  // (web, web-sidecar-proxy, mesh-gateway): passing, warning or critical.
+  map<string, string> health = 10;
 }
 
 message ProcessStatus {

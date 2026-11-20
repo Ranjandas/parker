@@ -26,7 +26,10 @@ func tuiCmd() *cobra.Command {
 			"· esc back · q quit\n\n" +
 			"Faults on the selected node: K kill · R restart · S stop/start · P pause/resume\n" +
 			"· x partition it from the rest · H heal all (disruptive ones ask y/n first).\n\n" +
-			"Commands: :labs · :lab NAME · :dc NAME · :run [SCENARIO] (watch it live; esc stops it)\n" +
+			"Labs with several datacenters (or admin partitions) open on them: enter one for its nodes.\n" +
+			"The CONSUL column shows each agent's members (alive/known) and each service's catalog health.\n\n" +
+			"Commands: :labs · :lab NAME · :dc [NAME[/PARTITION]] · :svc (services and their instances)\n" +
+			"· :run [SCENARIO] (watch it live; esc stops it)\n" +
 			"· :kill|:stop|:start|:restart|:pause|:resume [SELECTOR] · :partition GROUP... · :heal [SELECTOR]\n" +
 			"· :pf [LOCAL:]REMOTE (port-forward from the selected node; :pf lists, :pf stop) · :q",
 		Args: cobra.MaximumNArgs(1),
