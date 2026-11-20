@@ -52,7 +52,7 @@ func ResolveAddress(address, scopeLab string) (string, error) {
 	if parts[len(parts)-1] == "parker" {
 		parts = parts[:len(parts)-1]
 	}
-	var node, labName string
+	var node, labName, part string
 	switch len(parts) {
 	case 1:
 		node, labName = parts[0], scopeLab
@@ -60,15 +60,17 @@ func ResolveAddress(address, scopeLab string) (string, error) {
 		node, labName = parts[0], parts[1]
 	case 3:
 		node, labName = parts[1]+"-"+parts[0], parts[2]
+	case 4: // <name>.<partition>.<dc>.<lab>, like the dc/partition/name selector
+		node, part, labName = parts[2]+"-"+parts[0], parts[1], parts[3]
 	default:
-		return "", fmt.Errorf("%q: want <node>.<lab>.parker or <name>.<dc>.<lab>.parker", host)
+		return "", fmt.Errorf("%q: want <node>.<lab>.parker, <name>.<dc>.<lab>.parker or <name>.<partition>.<dc>.<lab>.parker", host)
 	}
 	var found []string
 	for ln, low := range labs {
 		if labName != "" && ln != labName {
 			continue
 		}
-		if n, ok := low.Nodes[node]; ok {
+		if n, ok := low.Nodes[node]; ok && (part == "" || nodePartition(n) == part) {
 			for _, ip := range lab.NodeIPs(n) {
 				found = append(found, net.JoinHostPort(ip, port))
 				break
@@ -143,4 +145,13 @@ func (s *Server) Dial(ctx context.Context, stream *connect.BidiStream[parkerv1.D
 			return nil
 		}
 	}
+}
+
+// nodePartition is the admin partition a node's agent joins ("default"
+// when it names none).
+func nodePartition(n *spec.RawNode) string {
+	if n.Labels != nil && n.Labels.Partition != "" {
+		return n.Labels.Partition
+	}
+	return spec.DefaultPartition
 }

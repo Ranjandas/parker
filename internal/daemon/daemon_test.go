@@ -177,7 +177,39 @@ func TestResolveAddress(t *testing.T) {
 	if got, err := ResolveAddress("a:1", "t"); err != nil || got != "10.77.0.10:1" {
 		t.Errorf("bare node with lab: %q %v", got, err)
 	}
-	for _, bad := range []string{"192.168.1.1:22", "127.0.0.1:8500", "zzz.t.parker:1", "a.other.parker:1"} {
+	for _, bad := range []string{"192.168.1.1:22", "127.0.0.1:8500", "zzz.t.parker:1", "a.other.parker:1", "a.b.c.d.e.parker:1"} {
+		if _, err := ResolveAddress(bad, ""); err == nil {
+			t.Errorf("%s: want refusal", bad)
+		}
+	}
+}
+
+func TestResolvePartitionNames(t *testing.T) {
+	dir := fakeLab(t)
+	part := topo + `  dc1-billing-1:
+    networks: { lan: { ip: 10.77.0.12 } }
+    labels: { dc: dc1, name: billing-1, role: client, partition: team-a }
+  dc1-web-1:
+    networks: { lan: { ip: 10.77.0.13 } }
+    labels: { dc: dc1, name: web-1, role: client }
+`
+	if err := os.WriteFile(filepath.Join(dir, lab.TopologyFile), []byte(part), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Partitioned nodes keep their dc-unique name; the partition form
+	// mirrors the dc1/team-a/billing-1 selector.
+	for in, want := range map[string]string{
+		"billing-1.dc1.t.parker:80":        "10.77.0.12:80",
+		"dc1-billing-1.t.parker:80":        "10.77.0.12:80",
+		"billing-1.team-a.dc1.t.parker:80": "10.77.0.12:80",
+		"web-1.default.dc1.t.parker:80":    "10.77.0.13:80",
+	} {
+		got, err := ResolveAddress(in, "")
+		if err != nil || got != want {
+			t.Errorf("%s: got %q %v, want %s", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"billing-1.default.dc1.t.parker:1", "web-1.team-a.dc1.t.parker:1"} {
 		if _, err := ResolveAddress(bad, ""); err == nil {
 			t.Errorf("%s: want refusal", bad)
 		}
