@@ -5,6 +5,7 @@
   </picture>
 </p>
 <p align="center"><strong>Consul repros at probe speed.</strong></p>
+<p align="center"><a href="https://ranjandas.github.io/parker/">Website</a> · <a href="https://ranjandas.github.io/parker/start.html">Get started</a></p>
 
 Parker is named after the Parker Solar Probe, the fastest object humans have
 ever built. Speed is the point: a Consul topology should go from a few lines
@@ -42,7 +43,14 @@ Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/sc
 
 ## Install
 
-Download a release (static binaries for Linux amd64/arm64; the macOS build is
+The install script picks the latest release for your OS and CPU, checks it
+against `SHA256SUMS` and installs `parker` into `/usr/local/bin`:
+
+```console
+$ curl -fsSL https://ranjandas.github.io/parker/install.sh | sh
+```
+
+Or do the same by hand: download a release (static binaries for Linux amd64/arm64; the macOS build is
 a client for a daemon on a Linux host) and check it against `SHA256SUMS`:
 
 ```console

@@ -64,6 +64,8 @@ var (
 		{"hack/e2eplan/", nil},
 		{"hack/genschema/", nil},
 		{"docs/", nil},
+		{"site/", nil},
+		{".github/workflows/pages.yml", nil},
 		{".github/ISSUE_TEMPLATE/", nil},
 		{"LICENSE", nil},
 		{".gitignore", nil},
