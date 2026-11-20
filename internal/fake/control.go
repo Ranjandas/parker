@@ -167,3 +167,9 @@ func (f Faults) Summary() string {
 	}
 	return strings.Join(parts, " · ")
 }
+
+// Injected reports whether any fault is in force: failing health, errors,
+// latency or a rate limit.
+func (f Faults) Injected() bool {
+	return f.HealthCode >= 400 || f.ErrorRate > 0 || f.P50 > 0 || f.P90 > 0 || f.P99 > 0 || f.RateLimit > 0
+}

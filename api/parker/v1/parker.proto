@@ -59,6 +59,10 @@ service ParkerService {
   // Run plays a scenario of a running lab, streaming its progress. A
   // failed step ends the stream with FAILED_PRECONDITION.
   rpc Run(RunRequest) returns (stream LogLine);
+
+  // Fake lists, changes or resets the fake services (run: fake-service)
+  // on a lab's nodes, or sends one request to a fake from inside its node.
+  rpc Fake(FakeRequest) returns (FakeResponse);
 }
 
 message VersionRequest {}
@@ -295,4 +299,42 @@ message RunRequest {
   // A scenario as YAML ({steps: [...]}) to play instead of the lab's own;
   // parker fault sends one step this way.
   string inline = 3;
+}
+
+message FakeRequest {
+  string lab = 1;
+  // Nodes to act on, as a selector (dc1/web, dc1/*); empty for all.
+  string selector = 2;
+  // One fake service on those nodes; empty for all of them.
+  string service = 3;
+  // list (the default), set, reset or call.
+  string action = 4;
+  // set: the change, a fake: block as JSON ({"errors":{"rate":0.3}}).
+  string change_json = 5;
+  // call: the path to request (default /) and extra headers, such as
+  // X-Parker-Fault. call needs the selector to name one node.
+  string path = 6;
+  map<string, string> headers = 7;
+}
+
+message FakeService {
+  string node = 1;
+  string service = 2;
+  int32 port = 3;
+  // http, grpc or tcp.
+  string protocol = 4;
+  // The faults in force, as JSON (fake.Faults).
+  string faults_json = 5;
+  // The faults in one line: "health 503 · errors 30% (503) · ...".
+  string summary = 6;
+  // Set when any fault is injected (failing health, errors, latency or a
+  // rate limit).
+  bool faulted = 7;
+}
+
+message FakeResponse {
+  repeated FakeService services = 1;
+  // call: the answer's body (a fake's JSON) and HTTP status.
+  string call_body = 2;
+  int32 call_status = 3;
 }

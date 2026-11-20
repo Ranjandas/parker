@@ -53,6 +53,9 @@ type Response struct {
 	// Cycle is set when this service was already on the request's path:
 	// its upstreams aren't called again.
 	Cycle bool `json:"cycle,omitempty"`
+	// Fact is a short space fact, a new one each answer (fake: {facts:
+	// false} drops it).
+	Fact string `json:"fact,omitempty"`
 }
 
 // Server is a fake service.
@@ -72,6 +75,7 @@ type Server struct {
 	mu     sync.RWMutex
 	faults Faults
 	inj    *injector
+	facts  *factTeller
 }
 
 func New(cfg *Config) *Server {
@@ -86,6 +90,7 @@ func New(cfg *Config) *Server {
 		sleep:   sleepCtx,
 		faults:  cfg.Faults,
 		inj:     newInjector(cfg.Seed),
+		facts:   newFactTeller(cfg.Version, uint64(cfg.Seed)),
 	}
 }
 
@@ -126,6 +131,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.serve)
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/ready", s.ready)
+	mux.HandleFunc("/ui", s.ui)
+	mux.HandleFunc("/ui/", s.ui)
+	mux.HandleFunc(UIControlPath, refuseControl)
 	if s.cfg.Protocol == "grpc" {
 		s.grpcHandlers(mux)
 	}
@@ -180,6 +188,9 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 		Name: s.cfg.Name, Node: s.cfg.Node, DC: s.cfg.DC, Version: s.cfg.Version,
 		URI: r.URL.RequestURI(), Type: typ, IPAddresses: s.ips, From: r.RemoteAddr,
 		Body: body(s.cfg.Message), Code: http.StatusOK,
+	}
+	if s.cfg.Facts {
+		resp.Fact = s.facts.fact()
 	}
 	var trail []string
 	if t := r.Header.Get(HeaderTrail); t != "" {

@@ -39,6 +39,8 @@ scenario:
       assert:
         exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/", output: '"body":"rows"' }
         within: 60s
+    - name: a call assertion sees the chain reach db
+      assert: { call: { on: dc1/web, reaches: dc1/db, body: rows }, within: 30s }
     - name: every hop answered 200
       assert:
         exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/ | grep -o '\"code\":200' | wc -l | grep -qx 5" }

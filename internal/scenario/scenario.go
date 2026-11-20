@@ -3,6 +3,7 @@ package scenario
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,9 @@ type Lab interface {
 	// Fake changes (or, for an empty step, reads) the faults of the fake
 	// services on node and returns a line per service.
 	Fake(ctx context.Context, node string, st *spec.FakeStep) ([]string, error)
+	// Call sends one request to a fake service on node (svc "" for its
+	// only one) and returns the status and body.
+	Call(ctx context.Context, node, svc, path string, hdr map[string]string) (int, []byte, error)
 }
 
 // Upgrades lists a scenario's upgrade steps, so their binaries can be
@@ -161,8 +165,17 @@ func validateStep(st *spec.Step) error {
 		return errors.New("exec: needs on: and run:")
 	}
 	if a := st.Assert; a != nil {
-		if (a.Consul == nil) == (a.Exec == nil) {
-			return errors.New("assert: needs exactly one of consul: or exec:")
+		n := 0
+		for _, set := range []bool{a.Consul != nil, a.Exec != nil, a.Call != nil} {
+			if set {
+				n++
+			}
+		}
+		if n != 1 {
+			return errors.New("assert: needs exactly one of consul:, exec: or call:")
+		}
+		if a.Call != nil && a.Call.On == "" {
+			return errors.New("assert.call: needs on:")
 		}
 		if a.Exec != nil && (a.Exec.On == "" || len(a.Exec.Run) == 0) {
 			return errors.New("assert.exec: needs on: and run:")
@@ -258,6 +271,9 @@ func Selectors(sc *spec.Scenario) []string {
 		if st.Assert != nil && st.Assert.Exec != nil {
 			out = append(out, st.Assert.Exec.On)
 		}
+		if st.Assert != nil && st.Assert.Call != nil {
+			out = append(out, st.Assert.Call.On)
+		}
 		for _, g := range st.Partition {
 			out = append(out, g...)
 		}
@@ -312,6 +328,8 @@ func Label(st *spec.Step) string {
 		return "exec on " + st.Exec.On
 	case st.Assert != nil && st.Assert.Consul != nil:
 		return "assert consul"
+	case st.Assert != nil && st.Assert.Call != nil:
+		return "assert call " + st.Assert.Call.On
 	case st.Assert != nil:
 		return "assert exec on " + st.Assert.Exec.On
 	case st.Snapshot != "":
@@ -425,6 +443,9 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		if e := st.Assert.Exec; e != nil {
 			check = func() error { return assertExec(ctx, l, e) }
 		}
+		if c := st.Assert.Call; c != nil {
+			check = func() error { return assertCall(ctx, l, c, say) }
+		}
 		return retry(ctx, clk, within, check)
 
 	case st.Snapshot != "":
@@ -519,6 +540,56 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		return errors.Join(errs...)
 	}
 	return errors.New("no action")
+}
+
+// assertCall sends the request and checks the code, a hop and the body.
+// The last answer's chain is shown when it passes.
+func assertCall(ctx context.Context, l Lab, c *spec.CallAssert, say func(string, ...any)) error {
+	nodes, err := l.Resolve(c.On)
+	if err != nil {
+		return err
+	}
+	if len(nodes) != 1 {
+		return fmt.Errorf("call: on: %s matches %d nodes; name one", c.On, len(nodes))
+	}
+	status, body, err := l.Call(ctx, nodes[0], c.Service, c.Path, c.Header)
+	if err != nil {
+		return err
+	}
+	want := c.Code
+	if want == 0 {
+		want = 200
+	}
+	var r fake.Response
+	if json.Unmarshal(body, &r) != nil || r.Name == "" {
+		return fmt.Errorf("%s answered %d, not with a fake service's JSON: %s", nodes[0], status, lastLine(string(body)))
+	}
+	if status != want {
+		return fmt.Errorf("%s answered %d, want %d: %s", nodes[0], status, want, fake.Oneline(&r))
+	}
+	if c.Reaches != "" && !reaches(&r, c.Reaches) {
+		return fmt.Errorf("the chain doesn't reach %s: %s", c.Reaches, fake.Oneline(&r))
+	}
+	if c.Body != "" && !strings.Contains(string(body), c.Body) {
+		return fmt.Errorf("the answer has no %q: %s", c.Body, fake.Oneline(&r))
+	}
+	say("  %s", fake.Oneline(&r))
+	return nil
+}
+
+// reaches tells whether some hop is want: a service name, dc/name or a
+// node name.
+func reaches(r *fake.Response, want string) bool {
+	dc, name, scoped := strings.Cut(want, "/")
+	for _, h := range fake.Hops(r) {
+		switch {
+		case scoped && h.DC == dc && h.Name == name:
+			return true
+		case !scoped && (h.Name == want || h.Node == want):
+			return true
+		}
+	}
+	return false
 }
 
 func assertExec(ctx context.Context, l Lab, e *spec.ExecAssert) error {

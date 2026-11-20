@@ -15,8 +15,26 @@ import (
 	"time"
 
 	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/lab"
+	"github.com/Ranjandas/parker/internal/netsetup"
+	"github.com/Ranjandas/parker/internal/supervisor"
 )
+
+// isFakePort tells whether port on node is a fake service (run:
+// fake-service) in a running lab.
+func isFakePort(labName, node string, port int) bool {
+	low, err := lab.LoadTopology(labName)
+	if err != nil {
+		return false
+	}
+	for _, f := range lab.FakeInfos(low, node) {
+		if f.Port == port {
+			return true
+		}
+	}
+	return false
+}
 
 // AppPrefix is where the daemon proxies HTTP to a port inside a lab:
 // /app/<lab>/<node>/<scheme>/<port>/<path>. The web UI sends app UIs
@@ -103,16 +121,33 @@ func AppProxy() http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if t.scheme == "http" && strings.HasPrefix(t.rest, fake.UIControlPath) {
+			fakeUIControl(w, r, t)
+			return
+		}
 		addr, err := ResolveAddress(net.JoinHostPort(t.node, strconv.Itoa(t.port)), t.lab)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
+		dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "tcp", addr)
+		}
+		if t.scheme == "http" && isFakePort(t.lab, t.node, t.port) {
+			// A fake behind a transparent proxy only takes mesh traffic
+			// on its node IP; its own page is reached on the node's
+			// loopback, which the proxy leaves alone.
+			in := supervisor.DialerIn(netsetup.NetnsPath(t.lab, t.node))
+			loop := net.JoinHostPort("127.0.0.1", strconv.Itoa(t.port))
+			dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				return in(ctx, "tcp", loop)
+			}
+		}
 		tr := &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 5 * time.Second}
-				return d.DialContext(ctx, "tcp", addr)
-			},
+			DialContext:           dial,
 			ResponseHeaderTimeout: time.Minute, // Consul blocking queries wait up to 5m, but in chunks
 		}
 		if t.scheme == "https" {

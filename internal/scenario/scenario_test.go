@@ -35,6 +35,7 @@ type fakeLab struct {
 	mu       sync.Mutex
 	procs    []string // "action node", in any order
 	procFail string   // node whose Proc fails
+	calls    []string // bodies Call answers in turn (status 200, or 503 when it has "503")
 }
 
 func (f *fakeLab) Resolve(sel string) ([]string, error) {
@@ -127,6 +128,21 @@ func (f *fakeLab) Fake(_ context.Context, node string, st *spec.FakeStep) ([]str
 		return nil, errors.New("no control socket")
 	}
 	return []string{node + "/api: health 503"}, nil
+}
+
+func (f *fakeLab) Call(_ context.Context, node, svc, path string, hdr map[string]string) (int, []byte, error) {
+	f.log = append(f.log, "call "+node+path)
+	if len(f.calls) == 0 {
+		return 0, nil, errors.New("connection refused")
+	}
+	b := f.calls[0]
+	if len(f.calls) > 1 {
+		f.calls = f.calls[1:]
+	}
+	if strings.Contains(b, `"code":503`) {
+		return 503, []byte(b), nil
+	}
+	return 200, []byte(b), nil
 }
 
 func parse(t *testing.T, y string) *spec.Scenario {
@@ -248,7 +264,7 @@ func TestValidate(t *testing.T) {
 		`[{at: "+3x", sleep: 1s}]`:        "at:",
 		`[{sleep: soon}]`:                 "sleep:",
 		`[{exec: {on: dc1}}]`:             "exec: needs on: and run:",
-		`[{assert: {within: 3s}}]`:        "exactly one of consul: or exec:",
+		`[{assert: {within: 3s}}]`:        "exactly one of consul:, exec: or call:",
 		`[{assert: {consul: {dc: dc1}}}]`: "nothing to check",
 		`[{assert: {consul: {leader: true}, within: x}}]`: "assert.within",
 		`[{snapshot: everything}]`:                        "want logs",
@@ -410,6 +426,49 @@ func TestFakeStep(t *testing.T) {
 		}
 	}
 	if got := Selectors(parse(t, "steps:\n  - fake: { on: dc1/api }\n")); !slices.Equal(got, []string{"dc1/api"}) {
+		t.Errorf("Selectors = %v", got)
+	}
+}
+
+func TestCallAssert(t *testing.T) {
+	dc1 := `{"name":"web","dc":"dc1","code":200,"upstream_calls":{"x":{"name":"api","dc":"dc1","node":"dc1-api","code":200}}}`
+	dc2 := `{"name":"web","dc":"dc1","code":200,"upstream_calls":{"x":{"name":"api","dc":"dc2","node":"dc2-api","code":200}}}`
+	down := `{"name":"web","dc":"dc1","code":503,"upstream_calls":{"x":{"name":"api","dc":"dc1","code":503}}}`
+	// Retried until api answers from dc2.
+	f := &fakeLab{clk: &fakeClock{}, calls: []string{down, dc1, dc2}}
+	out, err := run(t, parse(t, "steps:\n  - assert: { call: { on: dc1/leader, path: /x, reaches: dc2/api }, within: 10s }\n"), f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(f.log) != 3 || f.log[0] != "call dc1-server-1/x" {
+		t.Errorf("log = %v", f.log)
+	}
+	if !strings.Contains(out, "step 1: assert call dc1/leader") || !strings.Contains(out, "web@dc1 → api@dc2") {
+		t.Errorf("output:\n%s", out)
+	}
+	for y, want := range map[string]string{
+		"{ on: dc1/leader }":                              "answered 503, want 200",
+		"{ on: dc1/leader, code: 503, reaches: dc2-api }": "doesn't reach dc2-api",
+		"{ on: dc1/leader, code: 503, body: rows }":       `no "rows"`,
+		"{ on: dc1/web }":                                 "matches 2 nodes",
+	} {
+		f := &fakeLab{clk: &fakeClock{}, calls: []string{down}}
+		if _, err := run(t, parse(t, "steps:\n  - assert: { call: "+y+" }\n"), f); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", y, err, want)
+		}
+	}
+	if _, err := run(t, parse(t, "steps:\n  - assert: { call: { on: dc1/leader, code: 503, reaches: api } }\n"), &fakeLab{clk: &fakeClock{}, calls: []string{down}}); err != nil {
+		t.Errorf("reaches by name: %v", err)
+	}
+	for bad, want := range map[string]string{
+		"assert: { call: { path: / } }":                                 "needs on:",
+		"assert: { call: { on: dc1 }, exec: { on: dc1, run: [true] } }": "exactly one",
+	} {
+		if err := Validate(parse(t, "steps:\n  - "+bad+"\n")); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	if got := Selectors(parse(t, "steps:\n  - assert: { call: { on: dc1/api } }\n")); !slices.Equal(got, []string{"dc1/api"}) {
 		t.Errorf("Selectors = %v", got)
 	}
 }
