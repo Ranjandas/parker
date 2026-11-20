@@ -63,6 +63,7 @@ type proc struct {
 	isReady  bool
 	restarts int
 	logPath  string
+	logFrom  int64         // the log's size when the current run started
 	held     bool          // stopped on purpose: no restarts until started
 	paused   bool          // SIGSTOPped
 	kick     chan struct{} // asks supervise to start it now (buffered 1)
@@ -297,8 +298,13 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 		if err != nil {
 			return nil, err
 		}
+		var from int64
+		if fi, err := lf.Stat(); err == nil {
+			from = fi.Size() // a ready_when.log line must come from this run
+		}
 		p.mu.Lock()
 		argv := slices.Clone(p.argv)
+		p.logFrom = from
 		p.mu.Unlock()
 		cmd := exec.Command(argv[0], argv[1:]...)
 		cmd.Dir = dir
@@ -436,7 +442,10 @@ func waitReady(ctx context.Context, p *proc, exited <-chan struct{}, nsPath stri
 
 	var last error
 	for {
-		last = checkOnce(ctx, r, dial, httpc, logPath)
+		p.mu.Lock()
+		from := p.logFrom
+		p.mu.Unlock()
+		last = checkOnce(ctx, r, dial, httpc, logPath, from)
 		if last == nil {
 			return nil
 		}
@@ -454,7 +463,7 @@ func waitReady(ctx context.Context, p *proc, exited <-chan struct{}, nsPath stri
 }
 
 func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, string, string) (net.Conn, error),
-	httpc *http.Client, logPath string) error {
+	httpc *http.Client, logPath string, logFrom int64) error {
 	if r.Port > 0 {
 		c, err := dial(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", r.Port))
 		if err != nil {
@@ -478,6 +487,9 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 	}
 	if r.Log != "" {
 		b, _ := os.ReadFile(logPath)
+		if logFrom > 0 && logFrom <= int64(len(b)) {
+			b = b[logFrom:] // lines from earlier runs (a re-up appends) don't count
+		}
 		if !bytes.Contains(b, []byte(r.Log)) {
 			return fmt.Errorf("log line %q not seen yet", r.Log)
 		}
