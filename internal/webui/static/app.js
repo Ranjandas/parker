@@ -167,6 +167,7 @@ const ICON = {
   grid: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
   topo: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="3.5" cy="8" r="2"/><circle cx="12.5" cy="3.5" r="2"/><circle cx="12.5" cy="12.5" r="2"/><path d="M5.3 7.1l5.4-2.7M5.3 8.9l5.4 2.7"/></svg>',
   list: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 3.5h11M2.5 6.5h8M2.5 9.5h11M2.5 12.5h6"/></svg>',
+  build: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/><path d="M7 4.5h2.5a2 2 0 0 1 2 2V9M11.5 2v5M9 4.5h5"/></svg>',
   sun: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg>',
   search: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/></svg>',
   term: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 4.5l3 3-3 3M8 11.5h5"/></svg>',
@@ -215,6 +216,8 @@ function shell() {
       <nav id="labnav"></nav>
       <h6 id="labhead"></h6>
       <nav id="viewnav"></nav>
+      <h6>Build</h6>
+      <nav id="buildnav"></nav>
       <div class="foot"><div class="daemon"><span class="labdot"></span><b>daemon</b><span>${esc(S.info.where || "")}</span><span id="foot-ver"></span></div></div>
     </aside>
     <main>
@@ -230,6 +233,7 @@ function renderNav() {
     const on = l.name === S.route.lab;
     return `<a href="#/lab/${encodeURIComponent(l.name)}" class="labrow ${st} ${on ? "on" : ""}"><span class="labdot"></span>${esc(l.name)}<span class="count">${l.namespaces ? l.namespaces + " nodes" : "down"}</span></a>`;
   }).join("") : `<a class="labrow" style="opacity:.6">No labs yet</a>`;
+  $("#buildnav").innerHTML = `<a href="#/build" class="${S.route.view === "build" ? "on" : ""}">${ICON.build}Lab builder</a>`;
   const lab = S.route.lab;
   $("#labhead").textContent = lab || "";
   $("#labhead").hidden = !lab;
@@ -257,7 +261,9 @@ function renderTop() {
   const lab = S.route.lab;
   let h = "";
   const theme = `<button class="btn icon ghost" data-act="theme" title="Switch light and dark">${ICON.sun}</button>`;
-  if (!lab) {
+  if (S.route.view === "build") {
+    h = `<div class="crumb"><span>Build</span><span class="sep">/</span><b>Lab builder</b></div><div class="meta"><span class="tag">writes a topology file; nothing starts until you run parker up</span></div><div class="grow"></div>${theme}`;
+  } else if (!lab) {
     h = `<div class="crumb"><b>Labs</b></div><div class="grow"></div>${theme}`;
   } else if (S.route.node) {
     h = `<div class="crumb"><a href="#/lab/${encodeURIComponent(lab)}" style="color:inherit;text-decoration:none">${esc(lab)}</a><span class="sep">/</span><span>${esc(nodeByName(S.route.node) ? groupKey(nodeByName(S.route.node)) : "")}</span><span class="sep">/</span><b>${esc(S.route.node)}</b></div><div class="grow"></div>${theme}`;
@@ -973,6 +979,7 @@ function parseRoute() {
   const [path, query] = h.split("?");
   const parts = path.split("/").map(decodeURIComponent);
   const r = { lab: "", node: "", view: "" };
+  if (parts[0] === "build") r.view = "build";
   if (parts[0] === "lab") {
     r.lab = parts[1] || "";
     if (parts[2] === "node") r.node = parts[3] || "";
@@ -987,7 +994,8 @@ function render() {
   if (!S.info) return;
   renderNav();
   renderTop();
-  $("#view").classList.toggle("full", S.route.view === "topology");
+  $("#view").classList.toggle("full", S.route.view === "topology" || S.route.view === "build");
+  if (S.route.view === "build") { stopLogs(); S.logs.key = ""; renderBuild(); return; }
   if (S.route.node) renderNode();
   else {
     stopLogs(); S.logs.key = "";
@@ -1039,14 +1047,15 @@ async function poll() {
   // updates itself as lines stream in.
   // The topology redraws only on change too, and never mid-drag.
   const still = (S.route.node || S.route.view === "topology") && S.unchanged;
-  if (!selecting && !still && !T.drag) { if (typing) S.focusFilter = true; render(); }
+  if (S.route.view === "build") renderNav(); // the builder draws itself
+  else if (!selecting && !still && !T.drag) { if (typing) S.focusFilter = true; render(); }
   S.unchanged = false;
   pollTimer = setTimeout(poll, document.hidden ? 10000 : 2000);
 }
 
 function onRoute() {
   const r = parseRoute();
-  if (!r.lab && S.labs.length) {
+  if (!r.lab && r.view !== "build" && S.labs.length) {
     location.replace("#/lab/" + encodeURIComponent(S.labs[0].name));
     return;
   }

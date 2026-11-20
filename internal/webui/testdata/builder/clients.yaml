@@ -1,0 +1,16 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up clients.yaml
+parker: v1alpha1
+name: clients
+versions: { consul: 1.22.7 }
+consul:
+  defaults:
+    service_defaults: { run: fake-service }
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          count: 2
+          service: { port: 8080 }
+        client: {}

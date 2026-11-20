@@ -1,0 +1,9 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up minimal.yaml
+parker: v1alpha1
+name: minimal
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3

@@ -47,6 +47,8 @@ const (
 	ParkerServiceDescribeProcedure = "/parker.v1.ParkerService/Describe"
 	// ParkerServiceGraphProcedure is the fully-qualified name of the ParkerService's Graph RPC.
 	ParkerServiceGraphProcedure = "/parker.v1.ParkerService/Graph"
+	// ParkerServiceValidateProcedure is the fully-qualified name of the ParkerService's Validate RPC.
+	ParkerServiceValidateProcedure = "/parker.v1.ParkerService/Validate"
 	// ParkerServiceLogsProcedure is the fully-qualified name of the ParkerService's Logs RPC.
 	ParkerServiceLogsProcedure = "/parker.v1.ParkerService/Logs"
 	// ParkerServiceExecProcedure is the fully-qualified name of the ParkerService's Exec RPC.
@@ -79,6 +81,9 @@ type ParkerServiceClient interface {
 	// node's datacenter, partition and role, which services call which (and
 	// through which mesh gateways), and WAN federation and peering links.
 	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
+	// Validate checks a topology given inline, as `parker validate` does
+	// (decode, expand, compatibility warnings), for the web UI's builder.
+	Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest]) (*connect.ServerStreamForClient[parkerv1.LogChunk], error)
 	// Exec runs a command inside a node's network namespace. The first
@@ -150,6 +155,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Graph")),
 			connect.WithClientOptions(opts...),
 		),
+		validate: connect.NewClient[parkerv1.ValidateRequest, parkerv1.ValidateResponse](
+			httpClient,
+			baseURL+ParkerServiceValidateProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Validate")),
+			connect.WithClientOptions(opts...),
+		),
 		logs: connect.NewClient[parkerv1.LogsRequest, parkerv1.LogChunk](
 			httpClient,
 			baseURL+ParkerServiceLogsProcedure,
@@ -192,6 +203,7 @@ type parkerServiceClient struct {
 	status   *connect.Client[parkerv1.StatusRequest, parkerv1.StatusResponse]
 	describe *connect.Client[parkerv1.DescribeRequest, parkerv1.DescribeResponse]
 	graph    *connect.Client[parkerv1.GraphRequest, parkerv1.GraphResponse]
+	validate *connect.Client[parkerv1.ValidateRequest, parkerv1.ValidateResponse]
 	logs     *connect.Client[parkerv1.LogsRequest, parkerv1.LogChunk]
 	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
 	dial     *connect.Client[parkerv1.DialRequest, parkerv1.DialResponse]
@@ -232,6 +244,11 @@ func (c *parkerServiceClient) Describe(ctx context.Context, req *connect.Request
 // Graph calls parker.v1.ParkerService.Graph.
 func (c *parkerServiceClient) Graph(ctx context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
 	return c.graph.CallUnary(ctx, req)
+}
+
+// Validate calls parker.v1.ParkerService.Validate.
+func (c *parkerServiceClient) Validate(ctx context.Context, req *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error) {
+	return c.validate.CallUnary(ctx, req)
 }
 
 // Logs calls parker.v1.ParkerService.Logs.
@@ -279,6 +296,9 @@ type ParkerServiceHandler interface {
 	// node's datacenter, partition and role, which services call which (and
 	// through which mesh gateways), and WAN federation and peering links.
 	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
+	// Validate checks a topology given inline, as `parker validate` does
+	// (decode, expand, compatibility warnings), for the web UI's builder.
+	Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error
 	// Exec runs a command inside a node's network namespace. The first
@@ -346,6 +366,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Graph")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceValidateHandler := connect.NewUnaryHandler(
+		ParkerServiceValidateProcedure,
+		svc.Validate,
+		connect.WithSchema(parkerServiceMethods.ByName("Validate")),
+		connect.WithHandlerOptions(opts...),
+	)
 	parkerServiceLogsHandler := connect.NewServerStreamHandler(
 		ParkerServiceLogsProcedure,
 		svc.Logs,
@@ -392,6 +418,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceDescribeHandler.ServeHTTP(w, r)
 		case ParkerServiceGraphProcedure:
 			parkerServiceGraphHandler.ServeHTTP(w, r)
+		case ParkerServiceValidateProcedure:
+			parkerServiceValidateHandler.ServeHTTP(w, r)
 		case ParkerServiceLogsProcedure:
 			parkerServiceLogsHandler.ServeHTTP(w, r)
 		case ParkerServiceExecProcedure:
@@ -437,6 +465,10 @@ func (UnimplementedParkerServiceHandler) Describe(context.Context, *connect.Requ
 
 func (UnimplementedParkerServiceHandler) Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Graph is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Validate is not implemented"))
 }
 
 func (UnimplementedParkerServiceHandler) Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error {

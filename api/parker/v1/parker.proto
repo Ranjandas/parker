@@ -35,6 +35,10 @@ service ParkerService {
   // through which mesh gateways), and WAN federation and peering links.
   rpc Graph(GraphRequest) returns (GraphResponse);
 
+  // Validate checks a topology given inline, as `parker validate` does
+  // (decode, expand, compatibility warnings), for the web UI's builder.
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+
   // Logs of one process: the last lines, then (with follow) new ones.
   rpc Logs(LogsRequest) returns (stream LogChunk);
 
@@ -153,6 +157,24 @@ message DescribeRequest {
 message DescribeResponse {
   string node = 1; // resolved name
   string yaml = 2;
+}
+
+message ValidateRequest {
+  string yaml = 1;
+}
+
+message ValidateResponse {
+  bool ok = 1;
+  repeated ValidateProblem errors = 2;
+  repeated string warnings = 3;
+  int32 networks = 4; // when ok, what the lab expands to
+  int32 nodes = 5;
+}
+
+message ValidateProblem {
+  string message = 1;
+  int32 line = 2; // 1-based, when the error names one; 0 otherwise
+  string path = 3; // the YAML path it names (consul.datacenters.dc1...), if any
 }
 
 message GraphRequest {

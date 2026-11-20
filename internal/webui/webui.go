@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 //go:embed static
@@ -42,6 +44,7 @@ var allowed = map[string]bool{
 	"/parker.v1.ParkerService/Status":   true,
 	"/parker.v1.ParkerService/Describe": true,
 	"/parker.v1.ParkerService/Graph":    true,
+	"/parker.v1.ParkerService/Validate": true,
 	"/parker.v1.ParkerService/Logs":     true,
 	"/parker.v1.ParkerService/Run":      true,
 	"/parker.v1.ParkerService/Down":     true,
@@ -95,6 +98,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.session(w, r)
 	case r.URL.Path == "/ui/info":
 		h.info(w, r)
+	case r.URL.Path == "/ui/schema.json":
+		// The topology schema (`parker schema`): the builder's inspector
+		// reads field docs, types and enums from it.
+		w.Header().Set("Content-Type", "application/schema+json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(spec.Schema)
 	case strings.HasPrefix(r.URL.Path, Prefix+"/"):
 		h.api(w, r)
 	default:

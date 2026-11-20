@@ -163,14 +163,40 @@ func TestNewTokenIsRandom(t *testing.T) {
 	}
 }
 
-// Every call the UI makes goes through, Graph included.
+// Every call the UI makes goes through, Graph and Validate included.
 func TestAPIGatewayAllowsTheUIsCalls(t *testing.T) {
 	h, api := newTest(t)
 	cookie := login(t, h)
-	for _, p := range []string{"Version", "ListLabs", "Status", "Describe", "Graph", "Logs", "Run", "Down"} {
+	for _, p := range []string{"Version", "ListLabs", "Status", "Describe", "Graph", "Validate", "Logs", "Run", "Down"} {
 		w := do(h, "POST", Prefix+"/parker.v1.ParkerService/"+p, `{}`, map[string]string{"Cookie": cookie})
 		if w.Code != 200 || api.path != "/parker.v1.ParkerService/"+p {
 			t.Errorf("%s: %d, reached %q", p, w.Code, api.path)
+		}
+	}
+}
+
+// The builder reads the topology schema for its inspector.
+func TestSchemaServed(t *testing.T) {
+	h, _ := newTest(t)
+	w := do(h, "GET", "/ui/schema.json", "", nil)
+	var s struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &s) != nil || s.Defs["Node"] == nil || s.Defs["Peering"] == nil {
+		t.Errorf("%d %.200s", w.Code, w.Body)
+	}
+}
+
+// The builder's scripts are served next to the UI.
+func TestBuilderScriptsServed(t *testing.T) {
+	h, _ := newTest(t)
+	idx := do(h, "GET", "/", "", nil).Body.String()
+	for _, f := range []string{"buildmodel.js", "builder.js"} {
+		if !strings.Contains(idx, `src="`+f+`"`) {
+			t.Errorf("index.html doesn't load %s", f)
+		}
+		if w := do(h, "GET", "/"+f, "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), "use strict") {
+			t.Errorf("%s: %d", f, w.Code)
 		}
 	}
 }
