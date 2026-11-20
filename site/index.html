@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parker · Consul labs at probe speed</title>
+<meta name="description" content="Parker turns a few lines of YAML into a running Consul cluster in seconds. No containers, no images: real Consul agents in Linux network namespaces.">
+<meta name="theme-color" content="#0F1B2D">
+<link rel="icon" href="assets/logo/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/logo/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="assets/logo/parker-icon-180.png">
+<meta property="og:title" content="Parker · Consul labs at probe speed">
+<meta property="og:description" content="A few lines of YAML to a running Consul cluster in seconds. Break it, script it, look inside it.">
+<meta property="og:image" content="https://ranjandas.github.io/parker/assets/og.png">
+<meta property="og:url" content="https://ranjandas.github.io/parker/">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem('parker-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Parker home">
+      <img class="logo-light" src="assets/logo/parker-logo-light.svg" alt="Parker" width="120" height="30">
+      <img class="logo-dark" src="assets/logo/parker-logo-dark.svg" alt="" width="120" height="30">
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="hide-sm" href="#tour">Tour</a>
+      <a class="hide-sm" href="#examples">Examples</a>
+      <a href="start.html">Get started</a>
+      <a class="gh-link" href="https://github.com/Ranjandas/parker" aria-label="Parker on GitHub">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="hide-sm">GitHub</span>
+      </a>
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch light or dark theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- ============ hero ============ -->
+  <section class="hero">
+    <div class="speed" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="wrap hero-grid">
+      <div>
+        <a class="eyebrow" href="https://github.com/Ranjandas/parker/releases/latest">
+          <span class="pill">New</span> <span data-version="tag">v0.9.0</span> · fake service and failover demo →
+        </a>
+        <h1>Consul labs at <span class="sun-text">probe&nbsp;speed.</span></h1>
+        <p class="lede">Describe a Consul setup in a few lines of YAML. Parker has it running in seconds, real agents and all, so reproducing an issue takes less time than describing it.</p>
+        <div class="cta">
+          <a class="btn btn-sun" href="start.html">Get started
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn" href="#tour">Take the tour</a>
+        </div>
+        <div class="stats">
+          <div class="stat"><b>~6s</b><span>to a 3-server datacenter</span></div>
+          <div class="stat"><b>0</b><span>containers or images</span></div>
+          <div class="stat"><b>1</b><span>binary to install</span></div>
+        </div>
+      </div>
+      <div class="term hero-term" id="hero-term" role="img" aria-label="A terminal: parker up brings a three-server Consul datacenter up in 5.6 seconds, then consul members lists the three servers as alive.">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span>~/labs</div>
+        <pre><span class="p">$ </span><span class="cursor"></span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ yaml -> cluster ============ -->
+  <section class="section-alt" id="how">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="kicker">How it feels</p>
+        <h2>Write what you want. Parker builds it.</h2>
+        <p>Say how many servers, which services, and how they talk. Parker picks the addresses, writes the Consul configs, starts everything in the right order and tells you when it is ready.</p>
+      </div>
+      <div class="flow reveal">
+        <div class="term">
+          <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span>mesh.yaml</div>
+<pre><span class="k">parker</span>: <span class="s">v1alpha1</span>
+<span class="k">name</span>: <span class="s">mesh</span>
+<span class="k">versions</span>: { <span class="k">consul</span>: <span class="n">1.22.7</span>, <span class="k">envoy</span>: <span class="n">1.35.12</span> }
+<span class="k">consul</span>:
+  <span class="k">datacenters</span>:
+    <span class="k">dc1</span>:
+      <span class="k">servers</span>: <span class="n">3</span>
+      <span class="k">service_defaults</span>: { <span class="k">run</span>: <span class="s">fake-service</span>, <span class="k">connect</span>: <span class="s">sidecar</span> }
+      <span class="k">nodes</span>:
+        <span class="k">web</span>:
+          <span class="k">service</span>: { <span class="k">port</span>: <span class="n">8080</span>, <span class="k">upstreams</span>: { <span class="k">api</span>: <span class="n">9091</span> } }
+        <span class="k">api</span>:
+          <span class="k">service</span>: { <span class="k">port</span>: <span class="n">9090</span> }</pre>
+        </div>
+        <div class="arrow" aria-hidden="true">
+          <svg viewBox="0 0 72 24" fill="none"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#FFC94A" stop-opacity="0"/><stop offset=".5" stop-color="#FF7A1A"/><stop offset="1" stop-color="#FF4D2E"/></linearGradient></defs><path d="M2 12h62M56 5l8 7-8 7" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          parker up
+        </div>
+        <div class="term">
+          <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span>parker call mesh dc1/web</div>
+<pre><span class="p">$ </span>parker up mesh.yaml
+<span class="c">...</span>
+lab "mesh" is up <span class="ok">✓</span>
+
+<span class="p">$ </span>parker call mesh dc1/web
+<span class="hl">web</span>  dc1-web · dc1  <span class="ok">200</span>  23ms
+└─ <span class="hl">api</span>  dc1-api · dc1  <span class="ok">200</span>  4ms
+
+<span class="c"># 3 servers, 2 clients, 2 Envoy sidecars,</span>
+<span class="c"># a demo app on each, wired through the mesh.</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ features ============ -->
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="kicker">What you get</p>
+        <h2>Everything a repro needs, nothing it doesn't.</h2>
+        <p>Parker runs the real Consul and Envoy binaries, so what you see is what your users see. Everything else is there to get you to the interesting part faster.</p>
+      </div>
+      <div class="features">
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+          <h3>Fast, and light</h3>
+          <p>Each node is a Linux network namespace, not a container or VM. Dozens of agents fit on a laptop, and a fresh lab is up before your coffee cools.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 11 16.7 6M7.3 13l9.4 5"/></svg></div>
+          <h3>The whole Consul map</h3>
+          <p>Service mesh with sidecars, mesh, ingress, terminating and API gateways, WAN federation, cluster peering, ACLs, TLS, dataplanes, and Enterprise partitions.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg></div>
+          <h3>Break it on purpose</h3>
+          <p>Partition the leader, kill a server, freeze a process, then heal it. One command, or one key in the terminal UI, with no iptables wizardry.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          <h3>Scenarios that check themselves</h3>
+          <p>Write the steps of a bug report as a scenario: wait, run, break, assert. <code>parker run</code> plays it and tells you exactly which step failed.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>
+          <h3>Rolling upgrades</h3>
+          <p>Upgrade one node at a time, servers first and the leader last, waiting for the cluster to settle in between. Mixed versions are one line of YAML.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <h3>From your laptop</h3>
+          <p>Run labs on a Linux VM and drive them from your Mac with the same commands. No root needed either: rootless mode keeps labs in your own sandbox.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ tour ============ -->
+  <section class="section-alt" id="tour">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <p class="kicker">Tour</p>
+        <h2>See your lab, three ways.</h2>
+        <p>A live terminal dashboard, a web UI with a topology map, and a lab builder you can drag things into. Pick whichever fits the moment.</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Parker interfaces">
+        <button class="tab" role="tab" id="t-tui" aria-controls="p-tui" aria-selected="true">Terminal UI</button>
+        <button class="tab" role="tab" id="t-topo" aria-controls="p-topo" aria-selected="false" tabindex="-1">Topology</button>
+        <button class="tab" role="tab" id="t-dash" aria-controls="p-dash" aria-selected="false" tabindex="-1">Dashboard</button>
+        <button class="tab" role="tab" id="t-build" aria-controls="p-build" aria-selected="false" tabindex="-1">Lab builder</button>
+      </div>
+
+      <div class="shot-panel" id="p-tui" role="tabpanel" aria-labelledby="t-tui">
+        <div class="shot theme-swap">
+          <img class="on-light" src="assets/img/tui-light.webp" alt="Parker's terminal UI listing two datacenters, every node and process ready, with the leaders marked" width="1600" height="833" loading="lazy">
+          <img class="on-dark" src="assets/img/tui-dark.webp" alt="Parker's terminal UI listing two datacenters, every node and process ready, with the leaders marked" width="1600" height="833" loading="lazy">
+        </div>
+        <div class="shot-caption">
+          <p><strong>Every node and process, live.</strong> Grouped by datacenter, with who leads and what's healthy. Open a shell, tail logs, or kill, pause and partition a node with a single key.</p>
+          <span class="cmd"><span class="p">$</span> parker tui</span>
+        </div>
+      </div>
+
+      <div class="shot-panel" id="p-topo" role="tabpanel" aria-labelledby="t-topo" hidden>
+        <div class="shot theme-swap">
+          <img class="on-light" src="assets/img/topology-light.webp" alt="The web UI topology view: two federated datacenters, with a failing sidecar in dc2 turning the path from web to api red" width="1600" height="1000" loading="lazy">
+          <img class="on-dark" src="assets/img/topology-dark.webp" alt="The web UI topology view: two federated datacenters, with a failing sidecar in dc2 turning the path from web to api red" width="1600" height="1000" loading="lazy">
+        </div>
+        <div class="shot-caption">
+          <p><strong>The architecture, drawn for you.</strong> Datacenters, gateways and which service calls which. When something fails, the paths through it turn red and say why. Click a node to open its Consul UI or app.</p>
+          <span class="cmd"><span class="p">$</span> parker ui</span>
+        </div>
+      </div>
+
+      <div class="shot-panel" id="p-dash" role="tabpanel" aria-labelledby="t-dash" hidden>
+        <div class="shot">
+          <img src="assets/img/overview-dark.webp" alt="The web UI dashboard: 13 of 13 processes ready across 6 nodes in 2 datacenters, with leaders and a node table" width="1600" height="1000" loading="lazy">
+        </div>
+        <div class="shot-caption">
+          <p><strong>Health at a glance.</strong> Ready counts, leaders, restarts and Consul health for every node, plus logs, scenarios and fault buttons. Works the same against a lab on a remote VM.</p>
+          <span class="cmd"><span class="p">$</span> parker ui</span>
+        </div>
+      </div>
+
+      <div class="shot-panel" id="p-build" role="tabpanel" aria-labelledby="t-build" hidden>
+        <div class="shot theme-swap">
+          <img class="on-light" src="assets/img/builder-light.webp" alt="The lab builder: a palette of Consul parts, two datacenters on a canvas, and the YAML it writes next to it" width="1600" height="1000" loading="lazy">
+          <img class="on-dark" src="assets/img/builder-dark.webp" alt="The lab builder: a palette of Consul parts, two datacenters on a canvas, and the YAML it writes next to it" width="1600" height="1000" loading="lazy">
+        </div>
+        <div class="shot-caption">
+          <p><strong>Draw it instead.</strong> Drag in datacenters, services and gateways, link what calls what, and watch the YAML write itself. Open an existing file, edit on the canvas, and hit Run.</p>
+          <span class="cmd"><span class="p">$</span> parker ui → Build</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ get started ============ -->
+  <section id="start">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="kicker">Get started</p>
+        <h2>Three commands to your first cluster.</h2>
+        <p>Parker runs on any Linux machine or VM, amd64 or arm64. On a Mac, run it in a Linux VM and drive it from your terminal.</p>
+      </div>
+      <div class="steps">
+        <div class="step reveal">
+          <h3>Install</h3>
+          <p>One script, one binary. No Docker, no Kubernetes.</p>
+          <div class="term code"><pre><span class="p">$ </span>curl -fsSL \
+    https://ranjandas.github.io/parker/install.sh \
+    | sh</pre></div>
+        </div>
+        <div class="step reveal">
+          <h3>Describe</h3>
+          <p>Write a starter file, or use one of the examples.</p>
+          <div class="term code"><pre><span class="p">$ </span>parker init lab.yaml
+<span class="c"># 3 Consul servers in dc1</span></pre></div>
+        </div>
+        <div class="step reveal">
+          <h3>Launch</h3>
+          <p>Bring it up, look around, tear it down.</p>
+          <div class="term code"><pre><span class="p">$ </span>parker up lab.yaml
+<span class="p">$ </span>parker tui
+<span class="p">$ </span>parker down lab.yaml</pre></div>
+        </div>
+      </div>
+      <p class="reveal" style="margin-top:28px"><a class="btn" href="start.html">Read the full getting started guide
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></p>
+    </div>
+  </section>
+
+  <!-- ============ examples ============ -->
+  <section class="section-alt" id="examples">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="kicker">Examples</p>
+        <h2>Start from a lab that already works.</h2>
+        <p>Each example is a single file you can run as is, then bend into the shape of your problem.</p>
+      </div>
+      <div class="examples">
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/minimal.yaml">
+          <div class="tags"><span class="tag">basics</span></div>
+          <h3>Minimal</h3>
+          <p>Three servers, one datacenter. The fastest way to a leader.</p>
+          <span class="run"><b>$</b> parker up examples/minimal.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/mesh.yaml">
+          <div class="tags"><span class="tag">mesh</span></div>
+          <h3>Service mesh</h3>
+          <p>Two services talking through Envoy sidecars, and an intention that cuts them off.</p>
+          <span class="run"><b>$</b> parker run examples/mesh.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/fake-chain.yaml">
+          <div class="tags"><span class="tag">mesh</span><span class="tag">failover</span></div>
+          <h3>Cross-datacenter failover</h3>
+          <p>web → api → db in two datacenters. Fail api in dc1 and watch requests move to dc2.</p>
+          <span class="run"><b>$</b> parker run examples/fake-chain.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/mesh-federation.yaml">
+          <div class="tags"><span class="tag">federation</span></div>
+          <h3>Federation through gateways</h3>
+          <p>Two datacenters that reach each other only through their mesh gateways.</p>
+          <span class="run"><b>$</b> parker up examples/mesh-federation.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/peering.yaml">
+          <div class="tags"><span class="tag">peering</span></div>
+          <h3>Cluster peering</h3>
+          <p>One datacenter exports a service to another. Parker sets up the peering and waits until it's active.</p>
+          <span class="run"><b>$</b> parker up examples/peering.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/gateways.yaml">
+          <div class="tags"><span class="tag">gateways</span></div>
+          <h3>Ingress, terminating, API</h3>
+          <p>Every kind of gateway in one lab, with routes you can curl.</p>
+          <span class="run"><b>$</b> parker up examples/gateways.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/faults.yaml">
+          <div class="tags"><span class="tag">chaos</span></div>
+          <h3>Faults</h3>
+          <p>Cut off the leader, kill it, freeze it, and check the cluster recovers each time.</p>
+          <span class="run"><b>$</b> parker run examples/faults.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/upgrade.yaml">
+          <div class="tags"><span class="tag">upgrades</span></div>
+          <h3>Rolling upgrade</h3>
+          <p>Move a live cluster to a new Consul version, one node at a time.</p>
+          <span class="run"><b>$</b> parker run examples/upgrade.yaml</span>
+        </a>
+        <a class="ex reveal" href="https://github.com/Ranjandas/parker/blob/main/examples/partitions.yaml">
+          <div class="tags"><span class="tag ent">enterprise</span></div>
+          <h3>Admin partitions</h3>
+          <p>Teams in their own partitions and namespaces, with failover between them.</p>
+          <span class="run"><b>$</b> parker up examples/partitions.yaml</span>
+        </a>
+      </div>
+      <p class="reveal" style="margin-top:28px;color:var(--ink-2)">More in the <a href="https://github.com/Ranjandas/parker/tree/main/examples">examples folder</a>: ACLs, TLS, transparent proxy, dataplanes, config entries, templates and overlays.</p>
+    </div>
+  </section>
+
+  <!-- ============ name ============ -->
+  <section id="name">
+    <div class="wrap story reveal">
+      <img src="assets/logo/parker-mark.svg" alt="The Parker mark: a P whose bowl is the sun, with speed lines trailing off it" width="220" height="220">
+      <div>
+        <p class="kicker">Why Parker</p>
+        <h2>Named after the fastest thing we've ever built.</h2>
+        <p>NASA's Parker Solar Probe dives through the Sun's corona at nearly 700,000 km/h, faster than any object humans have made. That's the bar: a lab should go from idea to running cluster before the question has gone cold.</p>
+        <p>The logo is a P whose bowl is the Sun, with the probe's speed lines trailing behind.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ final cta ============ -->
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="final reveal">
+        <h2>Your next repro is seconds away.</h2>
+        <p>Install one binary, write a few lines of YAML, and get back to the actual problem.</p>
+        <div class="cta">
+          <a class="btn btn-sun" href="start.html">Get started</a>
+          <a class="btn" href="https://github.com/Ranjandas/parker">Star on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <img src="assets/logo/parker-logo.svg" alt="Parker" width="104" height="26">
+    <span>Open source. Not affiliated with HashiCorp or NASA.</span>
+    <div class="links">
+      <a href="start.html">Get started</a>
+      <a href="https://github.com/Ranjandas/parker#readme">Reference</a>
+      <a href="https://github.com/Ranjandas/parker/releases">Releases</a>
+      <a href="https://github.com/Ranjandas/parker/issues">Issues</a>
+      <a href="https://github.com/Ranjandas/parker">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
