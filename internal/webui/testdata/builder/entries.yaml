@@ -1,0 +1,34 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up entries.yaml
+parker: v1alpha1
+name: entries
+versions: { consul: 2.1.0, envoy: 1.39.1 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  datacenters:
+    dc1:
+      servers: 1
+      nodes:
+        web:
+          service: { port: 8080, upstreams: { api: 9091 } }
+        api:
+          service: { port: 9090 }
+      config_entries:
+        - Kind: service-defaults
+          Name: api
+          Protocol: http
+        - Kind: service-resolver
+          Name: api
+          Subsets:
+            v1: { Filter: "Service.Meta.version == v1" }
+            v2: { Filter: "Service.Meta.version == v2" }
+        - Kind: service-splitter
+          Name: api
+          Splits:
+            - { Weight: 90, ServiceSubset: v1 }
+            - { Weight: 10, ServiceSubset: v2 }
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Action: allow }, { Name: "*", Action: deny }]

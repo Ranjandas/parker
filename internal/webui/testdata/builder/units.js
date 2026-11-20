@@ -126,3 +126,34 @@ console.log("ok scenario");
   assert.strictEqual(m.fails.length, 0, "no target, no failover");
 }
 console.log("ok failover");
+
+// Config entries: the canvas's, the user's own (which win), and notes on
+// what the user typed.
+{
+  const m = B.lab("c"); m.acl = true;
+  const d = B.dc("dc1", 1); m.dcs.push(d);
+  const web = B.node("web", 8080), api = B.node("api", 9090); d.nodes.push(web, api);
+  B.link(m, web.id, api.id);
+  let es = B.entries(m, d, "");
+  assert.deepStrictEqual(es.gen.map((x) => [x.e.Kind, x.why, x.over]), [["service-intentions", "calls to api, with ACLs on", false]]);
+  B.setEntry(d, "", { Kind: "service-defaults", Name: "api", Protocol: "http" });
+  B.setEntry(d, "", { Kind: "service-intentions", Name: "api", Sources: [{ Name: "web", Action: "deny" }] });
+  assert.throws(() => B.setEntry(d, "", { Kind: "service-defaults", Name: "api" }), /service-defaults\/\/api here already/);
+  es = B.entries(m, d, "");
+  assert.ok(es.gen[0].over, "the user's intention overrides the canvas's");
+  assert.deepStrictEqual(B.toDoc(m).consul.datacenters.dc1.config_entries.map((e) => e.Kind + (e.Sources ? ":" + e.Sources[0].Action : "")), ["service-defaults", "service-intentions:deny"]);
+  // Read back: the user's entries stay theirs, the canvas's are the canvas's.
+  const back = B.fromTree(JSON.parse(JSON.stringify(B.toDoc(m))));
+  assert.deepStrictEqual(back.dcs[0].ces[""].map((e) => e.Kind), ["service-defaults", "service-intentions"]);
+  const plain = B.lab("p"); plain.acl = true; const pd = B.dc("dc1", 1); plain.dcs.push(pd);
+  const w2 = B.node("web", 8080), a2 = B.node("api", 9090); pd.nodes.push(w2, a2); B.link(plain, w2.id, a2.id);
+  assert.strictEqual(B.fromTree(JSON.parse(JSON.stringify(B.toDoc(plain)))).dcs[0].ces, undefined, "generated entries aren't the user's");
+  B.removeEntry(d, "", 1);
+  assert.ok(!B.entries(m, d, "").gen[0].over);
+  assert.deepStrictEqual(B.entryNotes({ Kind: "service-defaults", Name: "a", protocol: "http" }), ["protocol: a service-defaults has no such field (fields use Consul's casing, e.g. Protocol)."]);
+  assert.deepStrictEqual(B.entryNotes({ Kind: "service-defualts", Name: "a" }), ["Kind: service-defualts isn't a config entry kind Parker knows; check the spelling."]);
+  assert.deepStrictEqual(B.entryNotes({ file: "x.hcl" }), []);
+  assert.deepStrictEqual(B.entryNotes({ file: "x.hcl", Name: "y" }), ["file: takes a path (.hcl or .json, relative to the lab file) and no other keys."]);
+  assert.strictEqual(B.entryKey({ file: "x.hcl" }), "file:x.hcl");
+}
+console.log("ok entries");

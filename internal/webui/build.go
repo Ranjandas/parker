@@ -21,6 +21,7 @@ import (
 //	check  {yaml, path}       the file checked, with merged and expanded forms,
 //	                          its trees, and where each path sits
 //	patch  {yaml, ops}        the file with ops spliced in (labfile.Patch)
+//	parse  {yaml}             a YAML (or JSON) value as JSON, keys in order
 //	open   {path}             a .yaml file's text
 //	save   {path, yaml}       writes a .yaml file
 //	up     {yaml, path}       brings the lab up; progress streams as text
@@ -70,6 +71,13 @@ func (h *Handler) build(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Source, _ = labfile.TreeJSON(req.YAML)
 		writeJSON(w, out)
+	case "parse":
+		v, err := labfile.TreeJSON(req.YAML)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		writeJSON(w, map[string]json.RawMessage{"value": v})
 	case "patch":
 		text, err := labfile.Patch(req.YAML, req.Ops)
 		if err != nil {

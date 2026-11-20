@@ -115,3 +115,15 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.nameStep(m.scenario.steps[2], "web reaches api");
   write("externals", m);
 }
+
+// The user's own config entries beside the canvas's: a splitter and a
+// resolver with subsets, and an intention that overrides the canvas's.
+{
+  const m = B.starter("mesh"); m.name = "entries"; m.acl = true;
+  const d = m.dcs[0];
+  B.setEntry(d, "", { Kind: "service-defaults", Name: "api", Protocol: "http" });
+  B.setEntry(d, "", { Kind: "service-resolver", Name: "api", Subsets: { v1: { Filter: "Service.Meta.version == v1" }, v2: { Filter: "Service.Meta.version == v2" } } });
+  B.setEntry(d, "", { Kind: "service-splitter", Name: "api", Splits: [{ Weight: 90, ServiceSubset: "v1" }, { Weight: 10, ServiceSubset: "v2" }] });
+  B.setEntry(d, "", { Kind: "service-intentions", Name: "api", Sources: [{ Name: "web", Action: "allow" }, { Name: "*", Action: "deny" }] });
+  write("entries", m);
+}
