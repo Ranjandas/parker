@@ -94,6 +94,8 @@ func expanded(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The builder starts on the newest pins; the examples may lag.
+	low.Versions = nil
 	b, err := json.MarshalIndent(low, "", " ")
 	if err != nil {
 		t.Fatal(err)
@@ -246,5 +248,17 @@ consul:
 		if !r.Same {
 			t.Errorf("%s: the edited file reads back as\n%s\nnot\n%s", name, r.Got, want[name])
 		}
+	}
+}
+
+// TestBuildModelUnits runs testdata/builder/units.js, unit checks of
+// buildmodel.js helpers.
+func TestBuildModelUnits(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	if out, err := exec.Command(node, filepath.Join(fixtures, "units.js")).CombinedOutput(); err != nil {
+		t.Fatalf("units.js: %v\n%s", err, out)
 	}
 }
