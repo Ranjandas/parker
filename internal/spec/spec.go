@@ -655,8 +655,8 @@ type Service struct {
 	Fake *Fake `yaml:"fake,omitempty"`
 	// Env for the service process.
 	Env map[string]string `yaml:"env,omitempty"`
-	// Check is the health check: http, tcp or none.
-	Check string `yaml:"check,omitempty" jsonschema:"enum=http,enum=tcp,enum=none"`
+	// Check is the health check: http, tcp, grpc or none.
+	Check string `yaml:"check,omitempty" jsonschema:"enum=http,enum=tcp,enum=grpc,enum=none"`
 	// Register is merged into the Consul service registration as is.
 	Register map[string]any `yaml:"register,omitempty"`
 	// Namespace the service registers in (Consul Enterprise); Parker
@@ -675,6 +675,11 @@ type Service struct {
 // Fake configures Parker's built-in fake service. Each field matches a
 // nicholasjackson/fake-service env var, which works too; the YAML wins.
 type Fake struct {
+	// Protocol is http (default); grpc, which also serves fake-service's
+	// FakeService.Handle and the gRPC health check on the same port (h2c),
+	// with check: grpc by default; or tcp, a line echo server that greets
+	// with its name, node and dc, with check: tcp.
+	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=http,enum=grpc,enum=tcp"`
 	// Message is the body of every response (MESSAGE).
 	Message string `yaml:"message,omitempty" json:"message,omitempty"`
 	// Version labels responses, e.g. v2 for a canary subset (VERSION).

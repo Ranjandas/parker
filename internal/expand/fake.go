@@ -42,6 +42,14 @@ func fakeConfig(svc *spec.Service) string {
 	return string(b)
 }
 
+// fakeProtocol is the fake's protocol: http, grpc or tcp.
+func fakeProtocol(svc *spec.Service) string {
+	if svc.Fake != nil && svc.Fake.Protocol != "" {
+		return svc.Fake.Protocol
+	}
+	return "http"
+}
+
 // healthPath is the path Parker's http check requests: /health on a fake
 // service, so faults injected on / don't fail the check by accident.
 func healthPath(svc *spec.Service) string {
@@ -77,6 +85,9 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 	out := &spec.Fake{}
 	if a != nil {
 		*out = *a
+	}
+	if b.Protocol != "" {
+		out.Protocol = b.Protocol
 	}
 	if b.Message != "" {
 		out.Message = b.Message
@@ -173,8 +184,77 @@ func checkFake(where string, svc, own *spec.Service) []error {
 	if f.Workers < 0 {
 		errs = append(errs, fmt.Errorf("%s: fake.workers: want 1 or more, got %d", where, f.Workers))
 	}
+	if f.Protocol == "tcp" && (svc.Check == "http" || svc.Check == "grpc") {
+		errs = append(errs, fmt.Errorf("%s: check: %s can't reach a fake with protocol: tcp (use tcp)", where, svc.Check))
+	}
+	if f.Protocol != "grpc" && svc.Check == "grpc" && isFake(svc) {
+		errs = append(errs, fmt.Errorf("%s: check: grpc needs fake.protocol: grpc", where))
+	}
 	if err := fake.Validate(f); err != nil {
 		errs = append(errs, fmt.Errorf("%s: fake.%w", where, err))
 	}
 	return errs
+}
+
+// fakeProtocolEntries are the service-defaults that give each grpc fake in
+// the mesh protocol: grpc, so Envoy routes it as HTTP/2 (per-request
+// retries, gRPC status in metrics). A service the lab's own
+// config_entries name is left to them.
+func fakeProtocolEntries(c *spec.Consul) map[string][]gatewayEntry {
+	defaults := c.Defaults
+	if defaults == nil {
+		defaults = &spec.Inheritable{}
+	}
+	out := map[string][]gatewayEntry{}
+	for _, dcName := range slices.Sorted(maps.Keys(c.Datacenters)) {
+		dc := c.Datacenters[dcName]
+		named := map[string]bool{} // partition/name the lab configures
+		note := func(part string, es []spec.ConfigEntry) {
+			for _, e := range es {
+				if k, _ := e["Kind"].(string); k == "service-defaults" {
+					n, _ := e["Name"].(string)
+					named[part+"/"+n] = true
+				}
+			}
+		}
+		note("", dc.ConfigEntries)
+		for pn, p := range dc.Partitions {
+			if p != nil {
+				note(partitionName(pn), p.ConfigEntries)
+			}
+		}
+		nodes := dc.AllNodes()
+		slices.SortFunc(nodes, func(a, b spec.PlacedNode) int { return cmp.Compare(a.Partition+"/"+a.Name, b.Partition+"/"+b.Name) })
+		for _, placed := range nodes {
+			node := placed.Node
+			if node == nil {
+				continue
+			}
+			var partSD *spec.Service
+			if placed.Part != nil {
+				partSD = placed.Part.ServiceDefaults
+			}
+			services := node.Services
+			if node.Service != nil {
+				services = map[string]*spec.Service{placed.Name: node.Service}
+			}
+			part := partitionName(placed.Partition)
+			for _, svcName := range slices.Sorted(maps.Keys(services)) {
+				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
+				if !isFake(svc) || !inMesh(svc) || fakeProtocol(svc) != "grpc" || named[part+"/"+svcName] {
+					continue
+				}
+				named[part+"/"+svcName] = true
+				e := spec.ConfigEntry{"Kind": "service-defaults", "Name": svcName, "Protocol": "grpc"}
+				if svc.Namespace != "" && svc.Namespace != spec.DefaultNamespace {
+					e["Namespace"] = svc.Namespace
+				}
+				out[dcName] = append(out[dcName], gatewayEntry{
+					label: fmt.Sprintf("consul.datacenters.%s.nodes.%s: service %s: fake.protocol grpc", dcName, placed.Name, svcName),
+					entry: e, partition: part,
+				})
+			}
+		}
+	}
+	return out
 }

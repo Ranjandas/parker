@@ -2,6 +2,7 @@
 # web -> api through web's sidecar (upstreams:), api -> db through api's
 # transparent proxy (db.virtual.consul). One request to web shows all
 # three hops. db starts slowly (ready.delay), and up waits for its /ready.
+# web also calls rpc over gRPC and cache over TCP, through its sidecar.
 parker: v1alpha1
 name: fake-chain
 versions: { consul: 1.22.7, envoy: 1.35.12 }
@@ -12,11 +13,19 @@ consul:
       service_defaults: { run: fake-service }
       nodes:
         web:
-          service: { port: 8080, connect: sidecar, upstreams: { api: 9091 }, fake: { version: v1 } }
+          service:
+            port: 8080
+            connect: sidecar
+            upstreams: { api: 9091, rpc: 9092, cache: 9093 }
+            fake: { version: v1, upstreams: ["http://127.0.0.1:9091/", "grpc://127.0.0.1:9092", "tcp://127.0.0.1:9093"] }
         api:
           service: { port: 9090, connect: tproxy, fake: { upstreams: ["http://db.virtual.consul:7000/"] } }
         db:
           service: { port: 7000, connect: sidecar, fake: { message: rows, ready: { delay: 3s } } }
+        rpc:
+          service: { port: 7100, connect: sidecar, fake: { protocol: grpc } }
+        cache:
+          service: { port: 7200, connect: sidecar, fake: { protocol: tcp } }
 
 scenario:
   steps:
@@ -24,14 +33,25 @@ scenario:
     - assert: { consul: { service_healthy: web-sidecar-proxy }, within: 60s }
     - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
     - assert: { consul: { service_healthy: db-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: rpc-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: cache-sidecar-proxy }, within: 60s }
     - name: one request to web reaches db through two proxies
       assert:
         exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/", output: '"body":"rows"' }
         within: 60s
     - name: every hop answered 200
       assert:
-        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/ | grep -o '\"code\":200' | wc -l | grep -qx 3" }
+        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/ | grep -o '\"code\":200' | wc -l | grep -qx 5" }
         within: 30s
+    - name: rpc answers over gRPC and cache over TCP
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 5 http://127.0.0.1:8080/ | grep -q '\"type\":\"gRPC\"' && curl -sf -m 5 http://127.0.0.1:8080/ | grep -q '\"type\":\"TCP\"'" }
+    - name: Consul checks rpc over gRPC health and cache over TCP
+      assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/rpc | grep -q '\"Type\":\"grpc\"' && curl -sf http://127.0.0.1:8500/v1/health/checks/cache | grep -q '\"Type\":\"tcp\"'" }
+    - name: rpc gets service-defaults protocol grpc
+      assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/config/service-defaults/rpc | grep -q '\"Protocol\":\"grpc\"'" }
     - name: the Consul check uses /health
       assert:
         exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/db | grep -q 7000/health" }
@@ -52,4 +72,13 @@ scenario:
     - fake: { on: dc1/db, reset: true }
     - assert:
         exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/db | grep -q '\"Status\":\"passing\"'" }
+        within: 30s
+    - name: a failing TCP fake stops listening, so its check goes critical
+      fake: { on: dc1/cache, health: { code: 503 } }
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/cache | grep -q '\"Status\":\"critical\"'" }
+        within: 30s
+    - fake: { on: dc1/cache, reset: true }
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -sf http://127.0.0.1:8500/v1/health/checks/cache | grep -q '\"Status\":\"passing\"'" }
         within: 30s

@@ -273,6 +273,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	for dc, es := range peerEntries {
 		gwEntries[dc] = append(gwEntries[dc], es...)
 	}
+	for dc, es := range fakeProtocolEntries(c) {
+		// Before the gateways', whose listeners may need the protocol.
+		gwEntries[dc] = append(es, gwEntries[dc]...)
+	}
 	if len(gws) > 0 || len(peers) > 0 {
 		mesh = true
 	}
@@ -845,6 +849,9 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 		check = "none"
 		if len(svc.Run) > 0 && svc.Port > 0 {
 			check = "http"
+			if isFake(svc) && fakeProtocol(svc) != "http" {
+				check = fakeProtocol(svc)
+			}
 		}
 	}
 	switch check {
@@ -852,6 +859,8 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 		reg["check"] = map[string]any{"http": fmt.Sprintf("http://127.0.0.1:%d%s", svc.Port, healthPath(svc)), "interval": "2s"}
 	case "tcp":
 		reg["check"] = map[string]any{"tcp": fmt.Sprintf("127.0.0.1:%d", svc.Port), "interval": "2s"}
+	case "grpc":
+		reg["check"] = map[string]any{"grpc": fmt.Sprintf("127.0.0.1:%d", svc.Port), "interval": "2s"}
 	}
 	if inMesh(svc) {
 		var ups []any
@@ -897,7 +906,7 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 		// 60s: after a leader change the agent retries its catalog sync
 		// only every ~15s, so a restart can take a few rounds to show.
 		p.ReadyWhen = &spec.Ready{Port: svc.Port, Timeout: "60s"}
-		if isFake(svc) {
+		if isFake(svc) && fakeProtocol(svc) != "tcp" {
 			fakeReady(svc, p.ReadyWhen)
 		}
 		if check != "none" && !fakeStartsUnhealthy(svc) {
