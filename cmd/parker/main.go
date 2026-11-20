@@ -40,7 +40,7 @@ func main() {
 	root.PersistentFlags().StringArrayVar(&overlayFlags, "overlay", nil, "merge an overlay file over FILE (maps merge, lists replace); repeatable, in order")
 	root.PersistentFlags().StringArrayVar(&setFlags, "set", nil, "set a value over FILE and overlays: PATH=VALUE or SELECTOR:PATH=VALUE (dc1/web:service.port=9000); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
-	root.AddCommand(versionCmd(), tuiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), runCmd(), faultCmd(), sidecarCmd())
+	root.AddCommand(versionCmd(), tuiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), runCmd(), faultCmd(), sidecarCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

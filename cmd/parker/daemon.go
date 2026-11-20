@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
@@ -31,6 +33,7 @@ import (
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/license"
+	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/scenario"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -298,9 +301,10 @@ func upCmd() *cobra.Command {
 }
 
 func downCmd() *cobra.Command {
-	return &cobra.Command{
+	var purge bool
+	c := &cobra.Command{
 		Use:   "down FILE|LAB",
-		Short: "Stop every process and remove the lab's namespaces, links and firewall rules (keeps logs)",
+		Short: "Stop every process and remove the lab's namespaces, links and firewall rules (keeps logs; --purge removes them too)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := labName(args[0])
@@ -309,27 +313,134 @@ func downCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
-			// Down must work with no daemon (or a dead one): fall back to
-			// doing it here.
 			c, ok, err := connectDaemon(ctx)
 			if err != nil {
 				return err
 			}
-			if ok {
-				stream, err := c.Down(ctx, connect.NewRequest(&parkerv1.DownRequest{Lab: name}))
-				if err != nil {
-					return rpcErr(err)
-				}
-				if err := printLines(stream); err != nil {
-					return err
-				}
-			} else if err := lab.Down(name, os.Stdout); err != nil {
+			if err := downLab(ctx, c, ok, name, purge); err != nil {
 				return err
 			}
-			say("lab %q is down", name)
+			if purge {
+				say("lab %q is down and purged", name)
+			} else {
+				say("lab %q is down", name)
+			}
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&purge, "purge", false, "also delete the lab's run dir: logs, configs and data, so status no longer lists it")
+	return c
+}
+
+// downLab downs (and optionally purges) a lab through the daemon, or here
+// when there is none: down must work with no daemon or a dead one.
+func downLab(ctx context.Context, c parkerv1connect.ParkerServiceClient, viaDaemon bool, name string, purge bool) error {
+	if viaDaemon {
+		stream, err := c.Down(ctx, connect.NewRequest(&parkerv1.DownRequest{Lab: name, Purge: purge}))
+		if err != nil {
+			return rpcErr(err)
+		}
+		return printLines(stream)
+	}
+	if err := lab.Down(name, os.Stdout); err != nil {
+		return err
+	}
+	if purge {
+		return lab.Purge(name, os.Stdout)
+	}
+	return nil
+}
+
+func pruneCmd() *cobra.Command {
+	var yes bool
+	c := &cobra.Command{
+		Use:   "prune",
+		Short: "Purge every lab that isn't running: delete their run dirs (logs, configs, data)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, stop := signalContext()
+			defer stop()
+			c, viaDaemon, err := connectDaemon(ctx)
+			if err != nil {
+				return err
+			}
+			labs, err := labStates(ctx, c, viaDaemon)
+			if err != nil {
+				return err
+			}
+			var stopped []string
+			for _, l := range labs {
+				if !l.running {
+					stopped = append(stopped, l.name)
+				}
+			}
+			if len(stopped) == 0 {
+				say("nothing to prune: no stopped labs")
+				return nil
+			}
+			say("stopped labs: %s", strings.Join(stopped, ", "))
+			if !yes {
+				ok, err := confirm(cmd.InOrStdin(), "purge them? [y/N] ")
+				if err != nil {
+					return err
+				}
+				if !ok {
+					say("left them alone")
+					return nil
+				}
+			}
+			for _, n := range stopped {
+				if err := downLab(ctx, c, viaDaemon, n, true); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVarP(&yes, "yes", "y", false, "don't ask first")
+	return c
+}
+
+// confirm asks a yes/no question on a terminal; with no terminal it
+// refuses rather than guess.
+func confirm(in io.Reader, q string) (bool, error) {
+	if f, ok := in.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+		return false, errors.New("not a terminal: pass -y to confirm")
+	}
+	fmt.Print(q)
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	a := strings.ToLower(strings.TrimSpace(line))
+	return a == "y" || a == "yes", nil
+}
+
+type labState struct {
+	name       string
+	namespaces int
+	supervised bool
+	running    bool
+}
+
+func labStates(ctx context.Context, c parkerv1connect.ParkerServiceClient, viaDaemon bool) ([]labState, error) {
+	var out []labState
+	if !viaDaemon {
+		names, err := lab.Labs()
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			ns, _ := netsetup.Namespaces(n)
+			out = append(out, labState{name: n, namespaces: len(ns), running: len(ns) > 0})
+		}
+		return out, nil
+	}
+	resp, err := c.ListLabs(ctx, connect.NewRequest(&parkerv1.ListLabsRequest{}))
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	for _, l := range resp.Msg.Labs {
+		out = append(out, labState{name: l.Name, namespaces: int(l.Namespaces), supervised: l.Supervised, running: l.Namespaces > 0 || l.Supervised})
+	}
+	return out, nil
 }
 
 func statusCmd() *cobra.Command {
@@ -385,26 +496,37 @@ func statusCmd() *cobra.Command {
 }
 
 func listLabs(ctx context.Context, c parkerv1connect.ParkerServiceClient, viaDaemon bool) error {
-	if !viaDaemon {
-		names, err := lab.Labs()
-		if err != nil {
-			return err
-		}
-		for _, n := range names {
-			say("%s", n)
-		}
-		return nil
-	}
-	resp, err := c.ListLabs(ctx, connect.NewRequest(&parkerv1.ListLabsRequest{}))
+	labs, err := labStates(ctx, c, viaDaemon)
 	if err != nil {
-		return rpcErr(err)
+		return err
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "LAB\tNAMESPACES\tSUPERVISED")
-	for _, l := range resp.Msg.Labs {
-		fmt.Fprintf(tw, "%s\t%d\t%v\n", l.Name, l.Namespaces, l.Supervised)
+	printLabs(os.Stdout, labs, viaDaemon)
+	return nil
+}
+
+func printLabs(w io.Writer, labs []labState, viaDaemon bool) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	hdr := "LAB\tSTATE\tNAMESPACES"
+	if viaDaemon {
+		hdr += "\tSUPERVISED"
 	}
-	return tw.Flush()
+	fmt.Fprintln(tw, hdr)
+	var stopped int
+	for _, l := range labs {
+		state := "running"
+		if !l.running {
+			state, stopped = "down", stopped+1
+		}
+		row := fmt.Sprintf("%s\t%s\t%d", l.name, state, l.namespaces)
+		if viaDaemon {
+			row += fmt.Sprintf("\t%v", l.supervised)
+		}
+		fmt.Fprintln(tw, row)
+	}
+	tw.Flush()
+	if stopped > 0 {
+		fmt.Fprintf(w, "\n%d down (logs kept); parker down LAB --purge or parker prune removes them\n", stopped)
+	}
 }
 
 // printStatusJSON writes st as indented JSON. protojson varies its

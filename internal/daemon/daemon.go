@@ -189,6 +189,11 @@ func (s *Server) Down(ctx context.Context, req *connect.Request[parkerv1.DownReq
 	if err := lab.Down(name, w); err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
+	if req.Msg.Purge {
+		if err := lab.Purge(name, w); err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
+	}
 	return nil
 }
 
