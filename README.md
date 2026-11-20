@@ -82,7 +82,7 @@ Stopping the unit stops only the daemon. Labs keep running, and
 | `parker fault FILE\|LAB ACTION [SELECTOR...]` | Break a running lab on purpose: `partition`, `heal`, `kill`, `stop`, `start`, `restart`, `pause`, `resume`. See [Faults](#faults). |
 | `parker exec FILE\|LAB NODE -- CMD` | Run a command (default `$SHELL`) inside a node's netns, with the pinned `consul` on `PATH`. `NODE` is a [selector](#selectors) that names one node, e.g. `dc1/server-1` or `dc1/leader`. Against a remote daemon it is streamed over the API, with a terminal when stdin is one (`-T` to turn that off). |
 | `parker status [FILE\|LAB]` | Nodes, IPs, processes, PIDs, state (`ready`/`starting`/`running`/`dead`), restarts and Consul raft role (`leader`/`follower`/`client`); `-o json` for scripts; with no argument, list labs as `running` or `down` (a downed lab stays listed, with its logs, until it is purged). |
-| `parker ui [FILE\|LAB]` | Web UI in your browser, for a local or `--host` daemon: labs, a live node and process table by datacenter with Consul health and leaders, problems called out, node pages with processes, health checks, `describe` and a streaming log viewer (filter, warn/error), faults (restart, stop/start, pause/resume, partition, kill, heal), scenario runs and `down`, and a lab builder that writes topology YAML from a canvas. Serves on a loopback port and opens a one-time sign-in link; `--no-open` prints it. See [Web UI](#web-ui). |
+| `parker ui [FILE\|LAB]` | Web UI in your browser, for a local or `--host` daemon: labs, a live node and process table by datacenter with Consul health and leaders, problems called out, node pages with processes, health checks, `describe` and a streaming log viewer (filter, warn/error), faults (restart, stop/start, pause/resume, partition, kill, heal), scenario runs and `down`, and a lab builder that writes topology YAML from a canvas or edits an existing file in place, and runs it. Serves on a loopback port and opens a one-time sign-in link; `--no-open` prints it. See [Web UI](#web-ui). |
 | `parker tui [FILE\|LAB]` | Terminal UI (k9s-style) over the daemon, local or `--host`: live node/process table grouped by datacenter and partition (servers, then clients) with state, role and a CONSUL column (each agent's alive/known LAN members, each service's catalog health, dataplane nodes included). A lab with several datacenters or admin partitions opens on a datacenter level (nodes, processes up, leader, members, service health; `enter` opens one, `:dc [NAME[/PARTITION]]` jumps), and `:svc` lists the catalog's services with each instance's health and its sidecar's (`enter` goes to the node). `←`/`→` fold and unfold a node (`space` toggles, `z` all; nodes fold on their own when the lab overflows the screen, unless something is wrong on them), `s` shell into a node, `l` follow a log (`f` follow, `w` wrap, `/` filter), `d` describe, `/` filter rows, `:lab NAME`, `:q`. Faults on the selected node: `K` kill, `R` restart, `S` stop/start, `P` pause/resume, `x` partition it from the rest, `H` heal (disruptive ones ask first), or `:kill SELECTOR`, `:partition GROUP...` etc.; `:run [SCENARIO]` plays a scenario and streams its steps; `:pf [LOCAL:]REMOTE` port-forwards from the selected node while the TUI runs. `NO_COLOR` or `PARKER_TUI_STATIC=1` keeps the logo still. |
 | `parker describe FILE\|LAB NODE` | A node's expanded topology: networks, rendered files (`consul.json`), processes with command and checks. |
 | `parker logs FILE\|LAB NODE[/PROC]` | Last lines of a process log (`-n`, default 50), `-f` to follow. Default process: the node's only one, else `consul`. |
@@ -414,15 +414,30 @@ routes to. The inspector edits the selected item, with the field docs
 from `parker schema`. The YAML next to it reads like the examples: shared
 settings go in `consul.defaults`, and the builder writes the config
 entries the links need (local mesh gateways, exports, gateway routes and,
-with ACLs on, intentions). The daemon validates it as it changes, with
-problems pointing at their lines. Copy or download it, then `parker up`
-it. The builder keeps your work in the browser.
+with ACLs on, intentions). It is checked as `parker validate` checks it as
+it changes, with problems pointing at their lines. The builder keeps your
+work in the browser.
+
+The builder also opens files: *Open…* takes a path on the machine serving
+the page (`~/labs/mesh.yaml`; relative imports resolve there) or an
+upload. The file is then the source of truth. The canvas shows what it
+merges to, and an edit on the canvas is spliced into the file's text, so
+its comments, anchors and key order stay where they were; an untouched
+file round-trips byte for byte. Type in the YAML pane and the canvas
+follows. *Merged* shows the file with imports and templates applied and
+vars substituted, *Expanded* the low-level form `parker up` runs. What an
+import adds is locked on the canvas (rename or remove it in the module),
+a node made from a template says so, and a value set by a `${var}` is
+changed through the var. *Save…* shows the diff before it writes the file
+(or downloads it); *Run* brings the lab up through the daemon, streaming
+its progress, and opens its dashboard; *Down* takes it down.
 
 A daemon started with `--listen` also serves the UI itself at
 `https://HOST:PORT/`: sign in with the token from `parker daemon
 credentials`. Browser sessions reach only the calls the UI needs (status,
 the topology graph, validate, logs, describe, scenarios and faults, down, and the
-app links above). Exec, dial and up stay with the CLI. Its certificate
+app links above), plus the builder's: open and save `.yaml` files on that
+host and bring a lab up. Exec and dial stay with the CLI. Its certificate
 covers `*.parker.localhost` when Parker creates it; an older certificate
 (`tls/cert.pem` in the daemon's state directory) doesn't, so delete it and
 restart the daemon, or use `parker ui`.

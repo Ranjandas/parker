@@ -10,10 +10,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -221,6 +224,20 @@ func fakeApp(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"name": strings.TrimPrefix(node, "dc1-"), "node": node, "message": "hello from " + node, "path": rest, "from": "10.1.0.100:51432", "time": time.Now().UTC()})
 }
 
+// fakeUp stands in for bringing a lab up: progress, and no lab.
+func fakeUp(ctx context.Context, low *spec.File, w io.Writer) error {
+	fmt.Fprintf(w, "lab %s: %d nodes, %d networks (demo: nothing starts)\n", low.Name, len(low.Nodes), len(low.Networks))
+	for _, n := range slices.Sorted(maps.Keys(low.Nodes)) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(120 * time.Millisecond):
+		}
+		fmt.Fprintf(w, "  %s: ready\n", n)
+	}
+	return nil
+}
+
 func main() {
 	addr := flag.String("listen", "127.0.0.1:8090", "address")
 	token := flag.String("token", "demo", "sign-in token")
@@ -234,6 +251,6 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("open http://%s/#token=%s\n", ln.Addr(), *token)
-	srv := &http.Server{Handler: webui.New(webui.Options{API: api, Token: *token, Where: "demo (fake daemon)", Version: "demo"}), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: webui.New(webui.Options{API: api, Token: *token, Where: "demo (fake daemon)", Version: "demo", Up: fakeUp}), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
 }

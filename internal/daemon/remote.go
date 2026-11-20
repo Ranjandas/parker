@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -26,6 +27,9 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
+	"github.com/Ranjandas/parker/internal/lab"
+	"github.com/Ranjandas/parker/internal/license"
+	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/webui"
 )
 
@@ -247,7 +251,16 @@ func serveTCP(ctx context.Context, addr string, sans []string, s *Server, log fu
 	api.Handle(parkerv1connect.NewParkerServiceHandler(s, connect.WithInterceptors(tokenAuth{want: []byte("Bearer " + tok)})))
 	api.Handle(AppPrefix, requireToken(tok, AppProxy()))
 	// The web UI: browsers sign in with the same token (see package webui).
-	ui := webui.New(webui.Options{API: api, Token: tok, Where: addr, Version: Version})
+	ui := webui.New(webui.Options{API: api, Token: tok, Where: addr, Version: Version,
+		// The builder's Run, here: the license comes from the daemon's
+		// own environment.
+		Up: func(ctx context.Context, low *spec.File, w io.Writer) error {
+			lic, err := license.For(low, os.Getenv)
+			if err != nil {
+				return err
+			}
+			return s.UpLab(ctx, low, lab.Options{License: lic}, w)
+		}})
 	mux := http.NewServeMux()
 	mux.Handle("/", ui)
 	mux.Handle(AppPrefix, api)

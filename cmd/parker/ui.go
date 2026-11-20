@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/webui"
 )
 
@@ -59,7 +61,11 @@ func uiCmd() *cobra.Command {
 				return err
 			}
 			srv := &http.Server{
-				Handler:           webui.New(webui.Options{API: api, Token: token, Where: daemonWhere(), Version: version}),
+				Handler: webui.New(webui.Options{API: api, Token: token, Where: daemonWhere(), Version: version,
+					// The builder's Run: as `parker up` would, from here.
+					Up: func(ctx context.Context, low *spec.File, w io.Writer) error {
+						return bringUp(ctx, low, upOptions{out: w, quiet: true})
+					}}),
 				ReadHeaderTimeout: 10 * time.Second,
 				BaseContext:       func(net.Listener) context.Context { return ctx },
 			}

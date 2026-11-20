@@ -262,7 +262,7 @@ function renderTop() {
   let h = "";
   const theme = `<button class="btn icon ghost" data-act="theme" title="Switch light and dark">${ICON.sun}</button>`;
   if (S.route.view === "build") {
-    h = `<div class="crumb"><span>Build</span><span class="sep">/</span><b>Lab builder</b></div><div class="meta"><span class="tag">writes a topology file; nothing starts until you run parker up</span></div><div class="grow"></div>${theme}`;
+    h = `<div class="crumb"><span>Build</span><span class="sep">/</span><b>Lab builder</b></div><div class="meta"><span class="tag">edits a topology file; nothing starts until you Run it</span></div><div class="grow"></div>${theme}`;
   } else if (!lab) {
     h = `<div class="crumb"><b>Labs</b></div><div class="grow"></div>${theme}`;
   } else if (S.route.node) {
