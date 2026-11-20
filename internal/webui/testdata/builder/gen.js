@@ -1,0 +1,61 @@
+// Writes the lab builder's fixtures: every starter, plus labs built with
+// the builder's own edits (links, gateways, partitions, ACLs). Run by
+// builder_test.go: node gen.js OUTDIR.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const B = require("../../static/buildmodel.js");
+
+const out = process.argv[2];
+const write = (name, m) => fs.writeFileSync(path.join(out, name + ".yaml"), B.toYAML(m).text);
+
+for (const [name] of B.STARTERS) write(name, B.starter(name));
+
+// meshfed and peering again, built step by step as on the canvas.
+for (const how of ["mesh-gateways", "peering"]) {
+  const m = B.lab(how === "peering" ? "peering" : "meshfed");
+  const d1 = B.dc("dc1", 1), d2 = B.dc("dc2", 1);
+  m.dcs.push(d1, d2);
+  const web = B.node("web", 8080), api = B.node("api", 9090);
+  d1.nodes.push(web); d2.nodes.push(api);
+  B.joinDCs(m, d1.id, d2.id, how);
+  B.link(m, web.id, api.id);
+  write("steps-" + m.name, m);
+}
+
+// Gateways of every kind, with ACLs.
+{
+  const m = B.starter("mesh"); m.name = "gateways"; m.acl = true;
+  const d = m.dcs[0], [web, api] = d.nodes;
+  const legacy = B.node("legacy", 7070); d.nodes.push(legacy);
+  const ing = B.gw("ingress"), term = B.gw("terminating"), edge = B.gw("api");
+  d.gws.push(ing, term, edge);
+  B.link(m, ing.id, api.id); B.link(m, term.id, legacy.id);
+  B.link(m, edge.id, api.id); B.link(m, edge.id, web.id);
+  B.link(m, web.id, legacy.id);
+  write("gateways", m);
+}
+
+// Admin partitions, with ACLs.
+{
+  const m = B.lab("partitions"); m.acl = true;
+  const d = B.dc("dc1", 3); m.dcs.push(d);
+  const pa = { id: "pa", name: "team-a" }; d.parts.push(pa);
+  d.gws.push(B.gw("mesh"), B.gw("mesh", "mesh", pa.id));
+  const fe = B.node("frontend", 8080), bi = B.node("billing", 9000, { part: pa.id, count: 2 });
+  d.nodes.push(fe, bi);
+  B.link(m, fe.id, bi.id);
+  write("partitions", m);
+}
+
+// WAN federation and peering with ACLs; a dataplane both ways.
+{
+  const m = B.starter("peering"); m.name = "peering-acl"; m.acl = true; write("peering-acl", m);
+  const f = B.lab("wan"); f.acl = true;
+  const d1 = B.dc("dc1", 3), d2 = B.dc("dc2", 1); f.dcs.push(d1, d2);
+  const web = B.node("web", 8080), api = B.node("api", 9090, { agent: "dataplane" });
+  d1.nodes.push(web, B.node("client", 0)); d2.nodes.push(api);
+  B.joinDCs(f, d1.id, d2.id, "wan");
+  B.link(f, web.id, api.id);
+  write("wan-acl", f);
+}

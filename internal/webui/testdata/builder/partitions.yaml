@@ -1,0 +1,40 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up partitions.yaml
+parker: v1alpha1
+name: partitions
+versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  datacenters:
+    dc1:
+      servers: 3
+      partitions:
+        default:
+          gateways: { mesh: true }
+          nodes:
+            frontend:
+              service:
+                port: 8080
+                upstreams: { billing: { port: 9091, partition: team-a } }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+        team-a:
+          gateways: { mesh: true }
+          nodes:
+            billing:
+              count: 2
+              service: { port: 9000 }
+          config_entries:
+            - Kind: proxy-defaults
+              Name: global
+              MeshGateway: { Mode: local }
+            - Kind: exported-services
+              Name: team-a
+              Services: [{ Name: billing, Consumers: [{ Partition: default }] }]
+            - Kind: service-intentions
+              Name: billing
+              Sources: [{ Name: frontend, Partition: default, Action: allow }]

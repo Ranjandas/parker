@@ -1,0 +1,33 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up wan.yaml
+parker: v1alpha1
+name: wan
+versions: { consul: 1.22.7, envoy: 1.35.12, consul-dataplane: 1.9.12 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  federation: { mode: wan }
+  datacenters:
+    dc1:
+      servers: 3
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: { port: 9091, dc: dc2 } }
+        client: {}
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+    dc2:
+      servers: 1
+      nodes:
+        api:
+          agent: dataplane
+          service: { port: 9090 }
+      config_entries:
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Action: allow }]

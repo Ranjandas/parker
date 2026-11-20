@@ -1,0 +1,62 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up gateways.yaml
+parker: v1alpha1
+name: gateways
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults:
+    acl: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  datacenters:
+    dc1:
+      servers: 1
+      gateways:
+        ingress:
+          entry:
+            Listeners:
+              - Port: 8080
+                Protocol: http
+                Services: [{ Name: api, Hosts: ["*"] }]
+        terminating:
+          entry: { Services: [{ Name: legacy }] }
+        edge:
+          kind: api
+          entry: { Listeners: [{ Name: http, Port: 8081, Protocol: http }] }
+      nodes:
+        web:
+          service: { port: 8080, upstreams: { api: 9091, legacy: 9092 } }
+        api:
+          service: { port: 9090 }
+        legacy:
+          service: { port: 7070, connect: none }
+      config_entries:
+        - Kind: service-defaults
+          Name: api
+          Protocol: http
+        - Kind: service-defaults
+          Name: web
+          Protocol: http
+        - Kind: http-route
+          Name: edge-to-api
+          Parents: [{ Kind: api-gateway, Name: edge, SectionName: http }]
+          Rules:
+            - Matches: [{ Path: { Match: prefix, Value: /api } }]
+              Services: [{ Name: api }]
+        - Kind: http-route
+          Name: edge-to-web
+          Parents: [{ Kind: api-gateway, Name: edge, SectionName: http }]
+          Rules:
+            - Matches: [{ Path: { Match: prefix, Value: /web } }]
+              Services: [{ Name: web }]
+        - Kind: service-intentions
+          Name: api
+          Sources:
+            - { Name: web, Action: allow }
+            - { Name: ingress, Action: allow }
+            - { Name: edge, Action: allow }
+        - Kind: service-intentions
+          Name: legacy
+          Sources: [{ Name: web, Action: allow }]
+        - Kind: service-intentions
+          Name: web
+          Sources: [{ Name: edge, Action: allow }]

@@ -161,6 +161,10 @@ func (f *fake) Graph(_ context.Context, r *connect.Request[parkerv1.GraphRequest
 	return connect.NewResponse(daemon.GraphToProto(r.Msg.Lab, graph.Build(low))), nil
 }
 
+func (f *fake) Validate(_ context.Context, r *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error) {
+	return connect.NewResponse(daemon.ValidateYAML(r.Msg.Yaml)), nil
+}
+
 func (f *fake) Run(_ context.Context, r *connect.Request[parkerv1.RunRequest], s *connect.ServerStream[parkerv1.LogLine]) error {
 	var sc struct {
 		Steps []map[string]any `json:"steps"`
