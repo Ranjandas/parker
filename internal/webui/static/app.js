@@ -85,7 +85,9 @@ const S = {
   statusErr: null,
   prev: null,        // previous snapshot for the activity feed
   events: {},        // lab -> [{t, kind, html}]
-  route: { lab: "", node: "" },
+  route: { lab: "", node: "", view: "" },
+  graph: null,       // GraphResponse of the current lab
+  graphErr: null,
   logs: { key: "", proc: "", lines: [], ctrl: null, follow: true, filter: "", level: "all", err: "" },
   run: { busy: false, out: [] },
   busy: "",
@@ -163,6 +165,7 @@ function diff(lab, a, b) {
 // ---------- shell ----------
 const ICON = {
   grid: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
+  topo: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="3.5" cy="8" r="2"/><circle cx="12.5" cy="3.5" r="2"/><circle cx="12.5" cy="12.5" r="2"/><path d="M5.3 7.1l5.4-2.7M5.3 8.9l5.4 2.7"/></svg>',
   list: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 3.5h11M2.5 6.5h8M2.5 9.5h11M2.5 12.5h6"/></svg>',
   sun: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg>',
   search: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/></svg>',
@@ -232,7 +235,8 @@ function renderNav() {
   $("#labhead").hidden = !lab;
   const bad = S.status && S.status.lab === lab ? (S.status.nodes || []).filter((n) => nodeState(n) === "bad").length : 0;
   $("#viewnav").innerHTML = lab ? `
-    <a href="#/lab/${encodeURIComponent(lab)}" class="${!S.route.node ? "on" : ""}">${ICON.grid}Overview</a>
+    <a href="#/lab/${encodeURIComponent(lab)}" class="${!S.route.node && !S.route.view ? "on" : ""}">${ICON.grid}Overview</a>
+    <a href="#/lab/${encodeURIComponent(lab)}/topology" class="${S.route.view === "topology" ? "on" : ""}">${ICON.topo}Topology</a>
     <a href="#/lab/${encodeURIComponent(lab)}/node/${encodeURIComponent(S.route.node || firstProblemNode() || "")}" class="${S.route.node ? "on" : ""}">${ICON.list}Nodes &amp; logs${bad ? `<span class="count" style="color:#FF5F52">${bad}</span>` : ""}</a>` : "";
 }
 
@@ -258,8 +262,11 @@ function renderTop() {
   } else if (S.route.node) {
     h = `<div class="crumb"><a href="#/lab/${encodeURIComponent(lab)}" style="color:inherit;text-decoration:none">${esc(lab)}</a><span class="sep">/</span><span>${esc(nodeByName(S.route.node) ? groupKey(nodeByName(S.route.node)) : "")}</span><span class="sep">/</span><b>${esc(S.route.node)}</b></div><div class="grow"></div>${theme}`;
   } else {
-    const meta = st && st.lab === lab ? `<div class="meta">${stateChip(labState(st))}${st.supervised ? '<span class="tag">supervised</span>' : '<span class="tag">not supervised by this daemon</span>'}<span class="tag">${esc(st.runDir || "")}</span></div>` : "";
-    h = `<div class="crumb"><span>Labs</span><span class="sep">/</span><b>${esc(lab)}</b></div>${meta}<div class="grow"></div>${theme}
+    const meta = st && st.lab === lab ? `<div class="meta">${stateChip(labState(st))}${st.supervised ? '<span class="tag">supervised</span>' : '<span class="tag">not supervised by this daemon</span>'}${st.runDir ? `<span class="tag">${esc(st.runDir)}</span>` : ""}</div>` : "";
+    const crumb = S.route.view === "topology"
+      ? `<a href="#/lab/${encodeURIComponent(lab)}" style="color:inherit;text-decoration:none">${esc(lab)}</a><span class="sep">/</span><b>Topology</b>`
+      : `<b>${esc(lab)}</b>`;
+    h = `<div class="crumb"><span>Labs</span><span class="sep">/</span>${crumb}</div>${meta}<div class="grow"></div>${theme}
       <button class="btn sm" data-act="heal" title="Remove every partition">Heal all</button>
       <button class="btn sm danger" data-act="down">Down</button>`;
   }
@@ -501,6 +508,344 @@ function stopLogs() {
   if (S.logs.ctrl) { const c = S.logs.ctrl; S.logs.ctrl = null; c.abort(); }
 }
 
+// ---------- topology ----------
+// The lab's architecture comes from the Graph call (fetched once per lab and
+// refreshed now and then); health comes from the Status poll, so a failing
+// sidecar turns its paths red within a poll.
+const TW = 210, TH = 88, GX = 40, GY = 60, PAD = 28, DCGAP = 120;
+const T = { layers: { upstream: true, wan: true, peering: true }, sel: "", view: null, drag: null };
+
+async function loadGraph(lab) {
+  try {
+    const g = await call("Graph", { lab });
+    if (S.route.lab === lab) { S.graph = g; S.graphErr = null; }
+  } catch (e) {
+    if (S.route.lab === lab) { S.graphErr = e.message; }
+  }
+}
+
+function graphRole(gn) {
+  if (gn.role === "server") return "srv";
+  if (gn.role === "gateway" || (gn.gateways || []).length) return "gw";
+  if ((gn.services || []).length) return "svc";
+  return "";
+}
+
+// What's wrong with a node, in a few words, for the badge on a broken path.
+function problemOf(n) {
+  if (!n) return "";
+  if (!n.namespace) return "not running";
+  const down = (n.processes || []).find((p) => procState(p) === "down");
+  if (down) return /-sidecar$/.test(down.name) ? "sidecar down" : down.name + " down";
+  const crit = Object.entries(n.health || {}).find(([, h]) => h === "critical");
+  if (crit) return /-sidecar-proxy$/.test(crit[0]) ? "sidecar failing" : crit[0] + " failing";
+  return "";
+}
+
+// layout places datacenters side by side; inside one, servers come first,
+// then each partition's gateways and other nodes.
+function layout(g) {
+  const nodes = g.nodes || [];
+  const dcs = [...new Set(nodes.map((n) => n.dc || "lab"))].sort();
+  const pos = {}, regions = [];
+  let x = 0, maxH = 0;
+  const part = (n) => (n.partition && n.partition !== "default" ? n.partition : "default");
+  const plural = (k, s) => `${k} ${s}${k === 1 ? "" : "s"}`;
+  for (const dc of dcs) {
+    const dn = nodes.filter((n) => (n.dc || "lab") === dc);
+    const servers = dn.filter((n) => n.role === "server");
+    const rest = dn.filter((n) => n.role !== "server");
+    const parts = [...new Set(rest.map(part))].sort((a, b) => (a === "default" ? -1 : b === "default" ? 1 : a.localeCompare(b)));
+    const boxed = parts.length > 1 || (parts.length === 1 && parts[0] !== "default");
+    const groups = parts.map((p) => {
+      const pn = rest.filter((n) => part(n) === p);
+      return { p, gws: pn.filter((n) => n.role === "gateway"), others: pn.filter((n) => n.role !== "gateway") };
+    });
+    const widest = Math.max(servers.length, ...groups.map((gr) => Math.max(gr.gws.length, gr.others.length)));
+    // Without partitions everything shares one grid; with them, servers
+    // sit on top and each partition gets a box of its own, side by side.
+    const scols = Math.max(1, Math.min(3, boxed ? servers.length : widest));
+    let y = PAD + 8;
+    const place = (list, x0, cols, y0) => {
+      list.forEach((n, i) => { pos[n.name] = { x: x0 + (i % cols) * (TW + GX), y: y0 + Math.floor(i / cols) * (TH + GY) }; });
+      return list.length ? Math.ceil(list.length / cols) * (TH + GY) : 0;
+    };
+    y += place(servers, x + PAD, scols, y);
+    let w = scols * TW + (scols - 1) * GX;
+    if (!boxed) {
+      for (const gr of groups) {
+        y += place(gr.gws, x + PAD, scols, y);
+        y += place(gr.others, x + PAD, scols, y);
+      }
+    } else {
+      const inset = 16;
+      let bx = x + PAD, bottom = y;
+      for (const gr of groups) {
+        const cols = Math.max(1, Math.min(2, Math.max(gr.gws.length, gr.others.length)));
+        const innerW = cols * TW + (cols - 1) * GX;
+        let by = y + 30;
+        by += place(gr.gws, bx + inset, cols, by);
+        by += place(gr.others, bx + inset, cols, by);
+        const h = by - GY + 16 - y;
+        const k = gr.gws.length + gr.others.length;
+        regions.push({ part: true, x: bx, y, w: innerW + 2 * inset, h, label: gr.p, sub: plural(k, "node") });
+        bottom = Math.max(bottom, y + h + GY);
+        bx += innerW + 2 * inset + GX;
+      }
+      w = Math.max(w, bx - GX - (x + PAD));
+      y = bottom;
+    }
+    const h = y - GY + PAD;
+    const gws = dn.filter((n) => n.role === "gateway").length;
+    const others = dn.length - servers.length - gws;
+    const sub = [servers.length && plural(servers.length, "server"), gws && plural(gws, "gateway"), others && plural(others, "other node")].filter(Boolean).join(" · ");
+    regions.unshift({ x, y: 0, w: w + 2 * PAD, h, label: dc, sub });
+    maxH = Math.max(maxH, h);
+    x += w + 2 * PAD + DCGAP;
+  }
+  // Same height for every datacenter, so they read as peers.
+  for (const r of regions) if (!r.part) r.h = maxH;
+  return { pos, regions, w: Math.max(0, x - DCGAP), h: maxH };
+}
+
+// Anchor points between two cards: sides when they sit apart horizontally,
+// top and bottom when stacked.
+function anchors(a, b, off) {
+  const ac = { x: a.x + TW / 2, y: a.y + TH / 2 }, bc = { x: b.x + TW / 2, y: b.y + TH / 2 };
+  if (Math.abs(bc.x - ac.x) > TW * 0.75) {
+    const r = bc.x > ac.x ? 1 : -1;
+    return { p: [ac.x + (r * TW) / 2, ac.y + off], q: [bc.x - (r * TW) / 2, bc.y + off], h: true };
+  }
+  const d = bc.y > ac.y ? 1 : -1;
+  return { p: [ac.x + off, ac.y + (d * TH) / 2], q: [bc.x + off, bc.y - (d * TH) / 2], h: false };
+}
+function curve(a, b, horiz) {
+  if (horiz) {
+    const dx = Math.max(30, Math.abs(b[0] - a[0]) / 2) * Math.sign(b[0] - a[0] || 1);
+    return `M${a[0]},${a[1]} C${a[0] + dx},${a[1]} ${b[0] - dx},${b[1]} ${b[0]},${b[1]}`;
+  }
+  const dy = Math.max(24, Math.abs(b[1] - a[1]) / 2) * Math.sign(b[1] - a[1] || 1);
+  return `M${a[0]},${a[1]} C${a[0]},${a[1] + dy} ${b[0]},${b[1] - dy} ${b[0]},${b[1]}`;
+}
+
+function topoState() {
+  const st = S.status && S.status.lab === S.route.lab ? S.status : null;
+  const byName = new Map(((st && st.nodes) || []).map((n) => [n.name, n]));
+  const labDown = !st || labState(st) === "down";
+  const state = (name) => (byName.has(name) ? nodeState(byName.get(name)) : "down");
+  return { st, byName, labDown, state };
+}
+
+// hops of an edge, and the first of them that is broken.
+function edgeHealth(e, ts) {
+  const hops = [e.from, ...(e.via || []), e.to];
+  if (ts.labDown || (e.kind !== "upstream" && e.kind !== "route")) return { hops, bad: -1 };
+  const bad = hops.findIndex((h) => ["bad", "down"].includes(ts.state(h)));
+  return { hops, bad };
+}
+
+function renderTopology() {
+  const v = $("#view");
+  const g = S.graph && S.graph.lab === S.route.lab ? S.graph : null;
+  if (!g) {
+    v.innerHTML = `<div class="pad"><div class="card empty">${S.graphErr ? `<b>Can't load the topology</b>${esc(S.graphErr)}` : "Loading…"}</div></div>`;
+    return;
+  }
+  const ts = topoState();
+  const L = layout(g);
+  const kinds = new Set((g.edges || []).map((e) => (e.kind === "route" ? "upstream" : e.kind)));
+  if (!T.sel || !L.pos[T.sel]) {
+    const bad = (g.nodes || []).find((n) => ts.state(n.name) === "bad");
+    T.sel = (bad || (g.nodes || [])[0] || {}).name || "";
+  }
+  const shown = (e) => T.layers[e.kind === "route" ? "upstream" : e.kind] !== false;
+
+  // Spread edges that share a pair of cards so they don't draw on top of each other.
+  const segs = [];
+  for (const e of g.edges || []) {
+    if (!shown(e)) continue;
+    const { hops, bad } = edgeHealth(e, ts);
+    if (!hops.every((h) => L.pos[h])) continue;
+    // The label goes on the hop with the most room left around it.
+    const lw = 14 + (e.label || "").length * 6.6;
+    const len = (i) => {
+      const A = anchors(L.pos[hops[i]], L.pos[hops[i + 1]], 0);
+      return Math.hypot(A.p[0] - A.q[0], A.p[1] - A.q[1]) - (A.h ? lw : 20);
+    };
+    let longest = 0;
+    for (let i = 1; i + 1 < hops.length; i++) if (len(i) > len(longest) + 1) longest = i;
+    for (let i = 0; i + 1 < hops.length; i++) {
+      // The segment into the first broken hop and everything after it are broken.
+      const broken = bad >= 0 && i + 1 >= bad;
+      segs.push({ e, a: hops[i], b: hops[i + 1], broken, last: i + 2 === hops.length, mid: i === longest, badNode: bad >= 0 ? hops[bad] : "" });
+    }
+  }
+  const pairN = {}, pairI = {};
+  const pk = (s) => [s.a, s.b].sort().join("|");
+  for (const s of segs) pairN[pk(s)] = (pairN[pk(s)] || 0) + 1;
+
+  const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : "var(--accent)");
+  let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
+  let labels = "";
+  const badges = new Set(), labelled = new Set();
+  for (const s of segs) {
+    const k = pk(s);
+    const i = (pairI[k] = (pairI[k] || 0) + 1) - 1;
+    const off = (i - (pairN[k] - 1) / 2) * 14;
+    const A = anchors(L.pos[s.a], L.pos[s.b], off);
+    const d = curve(A.p, A.q, A.h);
+    const c = color(s);
+    const traffic = s.e.kind === "upstream" || s.e.kind === "route";
+    const dash = s.e.kind === "wan" ? "5 5" : s.e.kind === "peering" ? "2 5" : "";
+    if (traffic) svg += `<path d="${d}" fill="none" stroke="${c}" stroke-opacity=".16" stroke-width="7.4" stroke-linecap="round"/>`;
+    const marker = traffic && s.last ? `marker-end="url(#ah-${s.broken ? "bad" : ts.labDown ? "line-2" : "accent"})"` : "";
+    svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${traffic ? 2.4 : 1.8}" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ""} class="${traffic && !s.broken && !ts.labDown ? "flow" : ""}" ${marker}/>`;
+    if (s.e.label && s.mid && !labelled.has(pk(s) + "|" + s.e.label)) {
+      labelled.add(pk(s) + "|" + s.e.label);
+      const mx = (A.p[0] + A.q[0]) / 2, my = (A.p[1] + A.q[1]) / 2 + (A.h ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
+      labels += `<div class="elbl ${esc(s.e.kind)} ${s.broken ? "broken" : ""}" style="left:${mx}px;top:${my}px">${esc(s.e.label)}</div>`;
+    }
+    if (s.broken && s.badNode) badges.add(s.badNode);
+  }
+  for (const name of badges) {
+    const p = L.pos[name], why = problemOf(ts.byName.get(name)) || "failing";
+    const w = 14 + why.length * 6.8;
+    svg += `<g transform="translate(${p.x + TW / 2},${p.y - 13})"><rect x="${-w / 2}" y="-11" width="${w}" height="22" rx="11" fill="var(--bad)"/><text x="0" y="4" text-anchor="middle" font-family="JetBrains Mono,ui-monospace,monospace" font-size="11" font-weight="600" fill="#fff">${esc(why)}</text></g>`;
+  }
+  svg += "</svg>";
+
+  let regions = "";
+  for (const r of L.regions) {
+    regions += `<div class="region ${r.part ? "part" : ""}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"><div class="lbl">${esc(r.label)}${r.part ? " partition" : ""}<span>${esc(r.sub)}</span></div></div>`;
+  }
+  let cards = "";
+  for (const gn of g.nodes || []) {
+    const p = L.pos[gn.name];
+    const n = ts.byName.get(gn.name);
+    const s = ts.state(gn.name);
+    const ico = graphRole(gn);
+    const icon = ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ICON.svc;
+    const hs = { ok: "var(--ok)", warn: "var(--warn)", bad: "var(--bad)", down: "var(--line-2)" }[s];
+    const what = gn.role === "server" ? (n && n.role === "leader" ? "leader" : n && n.role === "follower" ? "follower" : "server")
+      : (gn.gateways || []).length ? gn.gateways.join(", ") : (gn.services || []).join(", ") || gn.role;
+    const procs = (n && n.processes) || [];
+    const pills = procs.slice(0, 4).map((pr) => {
+      const ps = procState(pr), bad = ps === "down" || procHealth(n, pr) === "critical";
+      return `<span class="p"><i style="background:var(--${bad ? "bad" : ps === "ready" ? "ok" : ps === "stopped" ? "line-2" : "warn"})"></i>${esc(pr.name.replace(new RegExp("^" + (gn.services || [])[0] + "-sidecar$"), "sidecar"))}</span>`;
+    }).join("") + (procs.length > 4 ? `<span class="p">+${procs.length - 4}</span>` : "") + (!n || !n.namespace ? '<span class="p">not running</span>' : "");
+    cards += `<div class="nd ${T.sel === gn.name ? "sel" : ""} ${s === "bad" ? "bad" : ""} ${s === "down" ? "down" : ""}" data-tnode="${esc(gn.name)}" style="left:${p.x}px;top:${p.y}px" tabindex="0" role="button" aria-label="${esc(gn.name)}, ${s === "ok" ? "healthy" : s}">
+      <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub">${esc(((gn.ips || [])[0] || "") + " · " + what)}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
+      <div class="ps">${pills}</div></div>`;
+  }
+
+  const layerBtn = (k, label, sw) => kinds.has(k) ? `<button data-layer="${k}" class="${T.layers[k] !== false ? "on" : ""}" aria-pressed="${T.layers[k] !== false}"><span class="sw" style="background:var(${sw})"></span>${label}</button>` : "";
+  const layerBtns = layerBtn("upstream", "Upstreams", "--accent") + layerBtn("wan", g.federation === "mesh-gateways" ? "WAN federation (mesh gateways)" : "WAN federation", "--fed") + layerBtn("peering", "Peering", "--peer");
+  const keep = $("#stage");
+  v.innerHTML = `<div class="topo">
+    <div class="stage" id="stage">
+      <div class="tools">${layerBtns ? `<div class="seg">${layerBtns}</div>` : ""}</div>
+      <div class="world" id="world" style="width:${L.w}px;height:${L.h}px">${regions}${svg}${labels}${cards}</div>
+      ${(g.nodes || []).length ? "" : '<div class="tempty"><div class="card empty"><b>No nodes</b>This lab has nothing to draw.</div></div>'}
+      <div class="card legend">
+        <span><i style="background:var(--ok)"></i>Healthy</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--accent)"></em>Upstream path</span>' : "<span></span>"}
+        <span><i style="background:var(--warn)"></i>Starting</span>${kinds.has("wan") ? '<span><em style="border-color:var(--fed);border-top-style:dashed"></em>WAN federation</span>' : kinds.has("peering") ? '<span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : "<span></span>"}
+        <span><i style="background:var(--bad)"></i>Failing</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--bad)"></em>Path broken</span>' : "<span></span>"}
+        ${kinds.has("wan") && kinds.has("peering") ? '<span></span><span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : ""}
+      </div>
+      <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
+    </div>
+    <aside class="tpanel" id="tpanel">${topoPanel(g, ts)}</aside></div>`;
+  T.size = { w: L.w, h: L.h };
+  if (!T.view || !T.view.user || !keep) fitTopo(); else applyView();
+}
+
+function fitTopo() {
+  const st = $("#stage");
+  if (!st || !T.size) return;
+  const W = st.clientWidth, H = st.clientHeight;
+  const top = 64, bottom = 24;
+  const sc = Math.max(0.2, Math.min((W - 48) / Math.max(T.size.w, 1), (H - top - bottom) / Math.max(T.size.h, 1), 1.2));
+  T.view = { sc, tx: (W - T.size.w * sc) / 2, ty: top + Math.max(0, (H - top - bottom - T.size.h * sc) / 2), user: false };
+  applyView();
+}
+function applyView() {
+  const w = $("#world");
+  if (w && T.view) w.style.transform = `translate(${T.view.tx}px,${T.view.ty}px) scale(${T.view.sc})`;
+  const f = $('[data-zoom="fit"]');
+  if (f) f.classList.toggle("on", !T.view.user);
+}
+function zoomAt(factor, cx, cy) {
+  if (!T.view) return;
+  const sc = Math.max(0.2, Math.min(2.5, T.view.sc * factor));
+  const k = sc / T.view.sc;
+  T.view = { sc, tx: cx - (cx - T.view.tx) * k, ty: cy - (cy - T.view.ty) * k, user: true };
+  applyView();
+}
+
+function topoPanel(g, ts) {
+  const gn = (g.nodes || []).find((n) => n.name === T.sel);
+  if (!gn) return '<section><span class="muted">Pick a node to see its details.</span></section>';
+  const n = ts.byName.get(gn.name);
+  const s = ts.state(gn.name);
+  const ico = graphRole(gn);
+  const lab = encodeURIComponent(S.route.lab);
+  const nodeHref = `#/lab/${lab}/node/${encodeURIComponent(gn.name)}`;
+  const kind = gn.role === "server" ? "Consul server" : (gn.gateways || []).length ? gn.gateways.map((x) => x[0].toUpperCase() + x.slice(1)).join(", ") + " gateway"
+    : gn.role === "dataplane" ? "Dataplane node" : (gn.services || []).length ? "Service node" : gn.role === "client" ? "Client agent" : "Node";
+  const ps = (n && n.processes) || [];
+  const health = Object.entries((n && n.health) || {}).sort();
+  const conn = (e, dir) => {
+    const { bad } = edgeHealth(e, ts);
+    const other = dir === "out" ? e.to : e.from;
+    const k = { upstream: dir === "out" ? "calls" : "called by", route: dir === "out" ? "routes to" : "routed from", wan: "wan", peering: dir === "out" ? "peers with" : "peered from" }[e.kind] || e.kind;
+    const via = (e.via || []).length ? `via ${e.via.join(" → ")}` : "";
+    return `<a href="#" data-tnode="${esc(other)}" class="${bad >= 0 ? "bad" : ""}"><span class="k" style="color:var(--${e.kind === "wan" ? "fed" : e.kind === "peering" ? "peer" : bad >= 0 ? "bad" : "accent"})">${esc(k)}</span><span class="mono">${esc(other)}${e.label && e.kind !== "wan" ? " · " + esc(e.label) : ""}</span>${via || bad >= 0 ? `<small>${esc(via)}${bad >= 0 ? `${via ? " · " : ""}<span style="color:var(--bad)">broken at ${esc(edgeHealth(e, ts).hops[bad])}: ${esc(problemOf(ts.byName.get(edgeHealth(e, ts).hops[bad])) || "failing")}</span>` : ""}</small>` : ""}</a>`;
+  };
+  const outs = (g.edges || []).filter((e) => e.from === gn.name), ins = (g.edges || []).filter((e) => e.to === gn.name);
+  const through = (g.edges || []).filter((e) => (e.via || []).includes(gn.name));
+  return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico ${ico}" style="width:34px;height:34px">${ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ICON.svc}</div>
+      <div style="min-width:0"><div style="font-weight:650;font-size:15px;overflow-wrap:anywhere">${esc(gn.name)}</div><div class="muted" style="font-size:12.5px">${esc(gn.dc || "lab")}${gn.partition && gn.partition !== "default" ? " · " + esc(gn.partition) : ""} · ${esc(kind)}</div></div>
+      <span style="margin-left:auto">${stateChip(s)}</span></div>
+      <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map(esc).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
+    <section><h4>Processes</h4><div class="plist">${ps.map((p) => {
+      const st = procState(p), h = procHealth(n, p), bad = st === "down" || h === "critical";
+      return `<a class="prow ${bad ? "bad" : ""}" href="${nodeHref}?p=${encodeURIComponent(p.name)}" style="color:inherit;text-decoration:none"><span><b>${esc(p.name)}</b> <span class="mono">${p.pid ? "pid " + p.pid : ""}${h ? " · " + esc(h) : ""}</span></span><span class="st ${st}"><i></i>${st}</span><span class="mono" ${p.restarts ? 'style="color:var(--bad)"' : ""}>${p.restarts || 0}↻</span></a>`;
+    }).join("") || `<span class="muted">${n ? "No processes" : "Not running"}</span>`}</div></section>
+    ${health.length ? `<section><h4>Consul health</h4><div class="checks">${health.map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("")}</div></section>` : ""}
+    ${outs.length || ins.length || through.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}${ins.map((e) => conn(e, "in")).join("")}${through.map((e) => `<a href="#" data-tnode="${esc(e.from)}"><span class="k" style="color:var(--fed)">carries</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><small>${esc(e.label)}</small></a>`).join("")}</div></section>` : ""}
+    <section><h4>Actions</h4><div class="actions"><a class="btn sm" href="${nodeHref}">Logs</a><button class="btn sm" data-act="shell" data-sel="${esc(gn.name)}">${ICON.term}Shell</button><button class="btn sm" data-act="restart" data-sel="${esc(gn.name)}">Restart</button><button class="btn sm" data-act="partition" data-sel="${esc(gn.name)}">Partition</button><button class="btn sm danger" data-act="kill" data-sel="${esc(gn.name)}">Kill</button></div></section>`;
+}
+
+// Pan by dragging the background, zoom with the wheel or the buttons.
+document.addEventListener("pointerdown", (e) => {
+  const st = e.target.closest("#stage");
+  if (!st || e.button !== 0 || e.target.closest(".nd,.tools,.zoom,.legend") || !T.view) return;
+  T.drag = { x: e.clientX, y: e.clientY, tx: T.view.tx, ty: T.view.ty, id: e.pointerId };
+  st.setPointerCapture(e.pointerId);
+  st.classList.add("drag");
+});
+document.addEventListener("pointermove", (e) => {
+  if (!T.drag || e.pointerId !== T.drag.id) return;
+  T.view = { ...T.view, tx: T.drag.tx + e.clientX - T.drag.x, ty: T.drag.ty + e.clientY - T.drag.y, user: true };
+  applyView();
+});
+const endDrag = (e) => {
+  if (!T.drag || e.pointerId !== T.drag.id) return;
+  T.drag = null;
+  const st = $("#stage");
+  if (st) st.classList.remove("drag");
+};
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+document.addEventListener("wheel", (e) => {
+  const st = e.target.closest("#stage");
+  if (!st || e.target.closest(".tools,.legend")) return;
+  e.preventDefault();
+  const r = st.getBoundingClientRect();
+  zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+addEventListener("resize", () => { if (S.route.view === "topology" && T.view && !T.view.user) fitTopo(); });
+
 // ---------- actions ----------
 async function fault(verb, sel) {
   const lab = S.route.lab;
@@ -587,8 +932,12 @@ function parseRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   const [path, query] = h.split("?");
   const parts = path.split("/").map(decodeURIComponent);
-  const r = { lab: "", node: "" };
-  if (parts[0] === "lab") { r.lab = parts[1] || ""; if (parts[2] === "node") r.node = parts[3] || ""; }
+  const r = { lab: "", node: "", view: "" };
+  if (parts[0] === "lab") {
+    r.lab = parts[1] || "";
+    if (parts[2] === "node") r.node = parts[3] || "";
+    if (parts[2] === "topology") r.view = "topology";
+  }
   const qp = new URLSearchParams(query || "");
   if (qp.get("p")) S.logs.proc = qp.get("p");
   return r;
@@ -598,7 +947,12 @@ function render() {
   if (!S.info) return;
   renderNav();
   renderTop();
-  if (S.route.node) renderNode(); else { stopLogs(); S.logs.key = ""; renderOverview(); }
+  $("#view").classList.toggle("full", S.route.view === "topology");
+  if (S.route.node) renderNode();
+  else {
+    stopLogs(); S.logs.key = "";
+    if (S.route.view === "topology") renderTopology(); else renderOverview();
+  }
 }
 
 async function loadLabs() {
@@ -626,6 +980,12 @@ async function poll() {
       if (S.route.lab === lab) { S.statusErr = e.message; S.status = null; }
     }
   }
+  // The architecture only changes when the lab is brought up again.
+  if (lab && S.route.view === "topology" && (sideTick % 5 === 0 || !S.graph || S.graph.lab !== lab)) {
+    const before = JSON.stringify(S.graph);
+    await loadGraph(lab);
+    if (JSON.stringify(S.graph) !== before) S.unchanged = false;
+  }
   if (sideTick++ % 5 === 0) {
     await loadLabs();
     await Promise.all(S.labs.filter((l) => l.name !== lab).map(async (l) => {
@@ -637,7 +997,9 @@ async function poll() {
   const selecting = String(window.getSelection && window.getSelection()).length > 0;
   // On a node page, redraw only when something changed: the log view
   // updates itself as lines stream in.
-  if (!selecting && !(S.route.node && S.unchanged)) { if (typing) S.focusFilter = true; render(); }
+  // The topology redraws only on change too, and never mid-drag.
+  const still = (S.route.node || S.route.view === "topology") && S.unchanged;
+  if (!selecting && !still && !T.drag) { if (typing) S.focusFilter = true; render(); }
   S.unchanged = false;
   pollTimer = setTimeout(poll, document.hidden ? 10000 : 2000);
 }
@@ -648,7 +1010,7 @@ function onRoute() {
     location.replace("#/lab/" + encodeURIComponent(S.labs[0].name));
     return;
   }
-  if (r.lab !== S.route.lab) { S.status = null; S.statusErr = null; S.run = { busy: false, out: [] }; S.describe = null; }
+  if (r.lab !== S.route.lab) { S.status = null; S.statusErr = null; S.run = { busy: false, out: [] }; S.describe = null; S.graph = null; S.graphErr = null; T.sel = ""; T.view = null; }
   S.route = r;
   render();
   poll();
@@ -698,6 +1060,23 @@ document.addEventListener("click", (e) => {
   if (b) { e.preventDefault(); onAction(b); return; }
   const lv = e.target.closest("[data-level]");
   if (lv) { S.logs.level = lv.dataset.level; $$("[data-level]").forEach((x) => x.classList.toggle("on", x === lv)); paintLogs(null); return; }
+  const tn = e.target.closest("[data-tnode]");
+  if (tn) {
+    e.preventDefault();
+    T.sel = tn.dataset.tnode;
+    $$("#world .nd").forEach((x) => x.classList.toggle("sel", x.dataset.tnode === T.sel));
+    if (S.graph) $("#tpanel").innerHTML = topoPanel(S.graph, topoState());
+    return;
+  }
+  const ly = e.target.closest("[data-layer]");
+  if (ly) { T.layers[ly.dataset.layer] = T.layers[ly.dataset.layer] === false; render(); return; }
+  const zm = e.target.closest("[data-zoom]");
+  if (zm) {
+    const st = $("#stage");
+    if (zm.dataset.zoom === "fit") fitTopo();
+    else zoomAt(zm.dataset.zoom === "in" ? 1.2 : 1 / 1.2, st.clientWidth / 2, st.clientHeight / 2);
+    return;
+  }
   const pr = e.target.closest("[data-proc]");
   if (pr) { S.logs.proc = pr.dataset.proc; render(); return; }
   const row = e.target.closest("tr[data-href]");
@@ -705,6 +1084,11 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.matches(".prow")) e.target.click();
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches(".nd[data-tnode]")) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener("dblclick", (e) => {
+  const nd = e.target.closest(".nd[data-tnode]");
+  if (nd) location.hash = `#/lab/${encodeURIComponent(S.route.lab)}/node/${encodeURIComponent(nd.dataset.tnode)}`;
 });
 addEventListener("hashchange", onRoute);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && S.info) poll(); });

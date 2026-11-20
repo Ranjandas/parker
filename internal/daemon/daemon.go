@@ -25,6 +25,7 @@ import (
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
 	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/graph"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/rootless"
@@ -236,6 +237,27 @@ func (s *Server) Describe(_ context.Context, req *connect.Request[parkerv1.Descr
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 	return connect.NewResponse(&parkerv1.DescribeResponse{Node: name, Yaml: text}), nil
+}
+
+func (s *Server) Graph(_ context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
+	low, err := lab.LoadTopology(req.Msg.Lab)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("lab %q: %w", req.Msg.Lab, err))
+	}
+	return connect.NewResponse(GraphToProto(req.Msg.Lab, graph.Build(low))), nil
+}
+
+// GraphToProto converts a lab's graph for the wire.
+func GraphToProto(name string, g *graph.Graph) *parkerv1.GraphResponse {
+	out := &parkerv1.GraphResponse{Lab: name, Federation: g.Federation}
+	for _, n := range g.Nodes {
+		out.Nodes = append(out.Nodes, &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role,
+			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs})
+	}
+	for _, e := range g.Edges {
+		out.Edges = append(out.Edges, &parkerv1.GraphEdge{Kind: e.Kind, From: e.From, To: e.To, Label: e.Label, Via: e.Via})
+	}
+	return out
 }
 
 func StatusToProto(st *lab.Status) *parkerv1.StatusResponse {

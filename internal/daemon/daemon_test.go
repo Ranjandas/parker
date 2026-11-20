@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
+	"github.com/Ranjandas/parker/internal/graph"
 	"github.com/Ranjandas/parker/internal/lab"
 )
 
@@ -81,6 +82,13 @@ func TestServeOverSocket(t *testing.T) {
 	}
 	if _, err := c.Describe(ctx, connect.NewRequest(&parkerv1.DescribeRequest{Lab: "t", Node: "zz"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("describe unknown node: %v", err)
+	}
+	gr, err := c.Graph(ctx, connect.NewRequest(&parkerv1.GraphRequest{Lab: "t"}))
+	if err != nil || gr.Msg.Lab != "t" || len(gr.Msg.Nodes) != 2 || gr.Msg.Nodes[1].Name != "b" || gr.Msg.Nodes[1].Role != "none" || gr.Msg.Nodes[1].Ips[0] != "10.77.0.11" {
+		t.Fatalf("graph %v err %v", gr, err)
+	}
+	if _, err := c.Graph(ctx, connect.NewRequest(&parkerv1.GraphRequest{Lab: "nope"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("graph of a missing lab: %v", err)
 	}
 	if err := Serve(ctx, ServeOptions{Socket: sock}, os.Stderr); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("second daemon: %v", err)
@@ -221,5 +229,16 @@ func TestResolvePartitionNames(t *testing.T) {
 	if _, err := ResolveAddress("billing-1.dc1.t.parker:80", ""); err == nil ||
 		!strings.Contains(err.Error(), "dc1-team-a-billing-1.t.parker, dc1-team-b-billing-1.t.parker") {
 		t.Errorf("ambiguous short name: %v", err)
+	}
+}
+
+func TestGraphToProto(t *testing.T) {
+	g := &graph.Graph{Federation: "wan",
+		Nodes: []graph.Node{{Name: "dc1-web", DC: "dc1", Role: "client", Services: []string{"web"}, IPs: []string{"10.1.0.5"}}},
+		Edges: []graph.Edge{{Kind: graph.Upstream, From: "dc1-web", To: "dc2-api", Label: "api :9091", Via: []string{"dc1-mesh", "dc2-mesh"}}}}
+	p := GraphToProto("l", g)
+	if p.Lab != "l" || p.Federation != "wan" || p.Nodes[0].Services[0] != "web" || p.Nodes[0].Dc != "dc1" ||
+		p.Edges[0].Kind != "upstream" || p.Edges[0].Via[1] != "dc2-mesh" || p.Edges[0].Label != "api :9091" {
+		t.Errorf("%v", p)
 	}
 }

@@ -177,6 +177,9 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: applicat
 curl -sf -c $jar -H 'Content-Type: application/json' -d "{\"token\":\"$tok\"}" http://127.0.0.1:18080/ui/session
 curl -sf -b $jar -H 'Content-Type: application/json' -d "{\"lab\":\"$lab\"}" \
   http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Status | grep "\"$first\"" >/dev/null
+# The topology view's graph names the same nodes.
+curl -sf -b $jar -H 'Content-Type: application/json' -d "{\"lab\":\"$lab\"}" \
+  http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Graph | grep -E "\"name\": ?\"$first\"" >/dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' -b $jar -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18080/ui/api/parker.v1.ParkerService/Exec)
 [ "$code" = 404 ] || { echo "UI allowed Exec: $code"; exit 1; }
 kill $up; wait $up 2>/dev/null || true

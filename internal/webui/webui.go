@@ -41,6 +41,7 @@ var allowed = map[string]bool{
 	"/parker.v1.ParkerService/ListLabs": true,
 	"/parker.v1.ParkerService/Status":   true,
 	"/parker.v1.ParkerService/Describe": true,
+	"/parker.v1.ParkerService/Graph":    true,
 	"/parker.v1.ParkerService/Logs":     true,
 	"/parker.v1.ParkerService/Run":      true,
 	"/parker.v1.ParkerService/Down":     true,

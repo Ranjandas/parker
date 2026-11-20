@@ -159,3 +159,15 @@ func TestNewTokenIsRandom(t *testing.T) {
 		t.Errorf("tokens %q %q", a, b)
 	}
 }
+
+// Every call the UI makes goes through, Graph included.
+func TestAPIGatewayAllowsTheUIsCalls(t *testing.T) {
+	h, api := newTest(t)
+	cookie := login(t, h)
+	for _, p := range []string{"Version", "ListLabs", "Status", "Describe", "Graph", "Logs", "Run", "Down"} {
+		w := do(h, "POST", Prefix+"/parker.v1.ParkerService/"+p, `{}`, map[string]string{"Cookie": cookie})
+		if w.Code != 200 || api.path != "/parker.v1.ParkerService/"+p {
+			t.Errorf("%s: %d, reached %q", p, w.Code, api.path)
+		}
+	}
+}

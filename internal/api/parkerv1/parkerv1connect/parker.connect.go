@@ -45,6 +45,8 @@ const (
 	ParkerServiceStatusProcedure = "/parker.v1.ParkerService/Status"
 	// ParkerServiceDescribeProcedure is the fully-qualified name of the ParkerService's Describe RPC.
 	ParkerServiceDescribeProcedure = "/parker.v1.ParkerService/Describe"
+	// ParkerServiceGraphProcedure is the fully-qualified name of the ParkerService's Graph RPC.
+	ParkerServiceGraphProcedure = "/parker.v1.ParkerService/Graph"
 	// ParkerServiceLogsProcedure is the fully-qualified name of the ParkerService's Logs RPC.
 	ParkerServiceLogsProcedure = "/parker.v1.ParkerService/Logs"
 	// ParkerServiceExecProcedure is the fully-qualified name of the ParkerService's Exec RPC.
@@ -73,6 +75,10 @@ type ParkerServiceClient interface {
 	// Describe one node: its expanded topology (networks, rendered files
 	// such as consul.json, processes with command, env and checks) as YAML.
 	Describe(context.Context, *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error)
+	// Graph of one lab's architecture, for the web UI's topology view: each
+	// node's datacenter, partition and role, which services call which (and
+	// through which mesh gateways), and WAN federation and peering links.
+	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest]) (*connect.ServerStreamForClient[parkerv1.LogChunk], error)
 	// Exec runs a command inside a node's network namespace. The first
@@ -138,6 +144,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Describe")),
 			connect.WithClientOptions(opts...),
 		),
+		graph: connect.NewClient[parkerv1.GraphRequest, parkerv1.GraphResponse](
+			httpClient,
+			baseURL+ParkerServiceGraphProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Graph")),
+			connect.WithClientOptions(opts...),
+		),
 		logs: connect.NewClient[parkerv1.LogsRequest, parkerv1.LogChunk](
 			httpClient,
 			baseURL+ParkerServiceLogsProcedure,
@@ -179,6 +191,7 @@ type parkerServiceClient struct {
 	listLabs *connect.Client[parkerv1.ListLabsRequest, parkerv1.ListLabsResponse]
 	status   *connect.Client[parkerv1.StatusRequest, parkerv1.StatusResponse]
 	describe *connect.Client[parkerv1.DescribeRequest, parkerv1.DescribeResponse]
+	graph    *connect.Client[parkerv1.GraphRequest, parkerv1.GraphResponse]
 	logs     *connect.Client[parkerv1.LogsRequest, parkerv1.LogChunk]
 	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
 	dial     *connect.Client[parkerv1.DialRequest, parkerv1.DialResponse]
@@ -214,6 +227,11 @@ func (c *parkerServiceClient) Status(ctx context.Context, req *connect.Request[p
 // Describe calls parker.v1.ParkerService.Describe.
 func (c *parkerServiceClient) Describe(ctx context.Context, req *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error) {
 	return c.describe.CallUnary(ctx, req)
+}
+
+// Graph calls parker.v1.ParkerService.Graph.
+func (c *parkerServiceClient) Graph(ctx context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
+	return c.graph.CallUnary(ctx, req)
 }
 
 // Logs calls parker.v1.ParkerService.Logs.
@@ -257,6 +275,10 @@ type ParkerServiceHandler interface {
 	// Describe one node: its expanded topology (networks, rendered files
 	// such as consul.json, processes with command, env and checks) as YAML.
 	Describe(context.Context, *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error)
+	// Graph of one lab's architecture, for the web UI's topology view: each
+	// node's datacenter, partition and role, which services call which (and
+	// through which mesh gateways), and WAN federation and peering links.
+	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
 	// Logs of one process: the last lines, then (with follow) new ones.
 	Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error
 	// Exec runs a command inside a node's network namespace. The first
@@ -318,6 +340,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Describe")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceGraphHandler := connect.NewUnaryHandler(
+		ParkerServiceGraphProcedure,
+		svc.Graph,
+		connect.WithSchema(parkerServiceMethods.ByName("Graph")),
+		connect.WithHandlerOptions(opts...),
+	)
 	parkerServiceLogsHandler := connect.NewServerStreamHandler(
 		ParkerServiceLogsProcedure,
 		svc.Logs,
@@ -362,6 +390,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceStatusHandler.ServeHTTP(w, r)
 		case ParkerServiceDescribeProcedure:
 			parkerServiceDescribeHandler.ServeHTTP(w, r)
+		case ParkerServiceGraphProcedure:
+			parkerServiceGraphHandler.ServeHTTP(w, r)
 		case ParkerServiceLogsProcedure:
 			parkerServiceLogsHandler.ServeHTTP(w, r)
 		case ParkerServiceExecProcedure:
@@ -403,6 +433,10 @@ func (UnimplementedParkerServiceHandler) Status(context.Context, *connect.Reques
 
 func (UnimplementedParkerServiceHandler) Describe(context.Context, *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Describe is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Graph is not implemented"))
 }
 
 func (UnimplementedParkerServiceHandler) Logs(context.Context, *connect.Request[parkerv1.LogsRequest], *connect.ServerStream[parkerv1.LogChunk]) error {
