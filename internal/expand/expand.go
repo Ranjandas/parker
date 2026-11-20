@@ -855,7 +855,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			maps.Copy(deps, setupDeps)
 			s1 := out.Nodes[dcName+"-server-1"]
 			s1.Files[DataplaneManifest] = mustJSON(dpEntries)
-			s1.Processes[DataplaneHealth] = dataplaneHealthProcess(deps, apiEnv(token, tls))
+			s1.Processes[DataplaneHealth] = dataplaneHealthProcess(deps, apiEnv(token, tls), serverIPs)
 		}
 	}
 	return exts.nodes(out)

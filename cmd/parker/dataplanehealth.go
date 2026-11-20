@@ -22,7 +22,8 @@ import (
 // every second and writes its check status when it changes, as the
 // consul-k8s endpoints controller does for pods.
 func dataplaneHealthCmd() *cobra.Command {
-	return &cobra.Command{
+	var servers []string
+	cmd := &cobra.Command{
 		Use:    expand.DataplaneHealth + " MANIFEST",
 		Short:  "Register dataplane services and keep their health current (run by parker up)",
 		Hidden: true,
@@ -40,11 +41,62 @@ func dataplaneHealthCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Each server's own catalog, read stale: a registration is
+			// committed on the leader before a follower applies it, and a
+			// consul-dataplane asks whichever server it reaches.
+			var cats []catalogReader
+			for _, ip := range servers {
+				cfg := api.DefaultConfig()
+				_, port, err := net.SplitHostPort(strings.TrimPrefix(strings.TrimPrefix(cfg.Address, "https://"), "http://"))
+				if err != nil {
+					return fmt.Errorf("CONSUL_HTTP_ADDR %q: %w", cfg.Address, err)
+				}
+				// Keep the scheme: CONSUL_HTTP_ADDR's https:// is what
+				// turns TLS on.
+				scheme := "http://"
+				if strings.HasPrefix(cfg.Address, "https://") || cfg.Scheme == "https" {
+					scheme = "https://"
+				}
+				cfg.Address = scheme + net.JoinHostPort(ip, port)
+				c, err := api.NewClient(cfg)
+				if err != nil {
+					return err
+				}
+				cats = append(cats, c.Catalog())
+			}
 			ctx, stop := signalContext()
 			defer stop()
-			return keepHealth(ctx, client.Catalog(), entries, tcpProbe, time.Second, os.Stdout, os.Stderr)
+			return keepHealth(ctx, client.Catalog(), entries, tcpProbe, time.Second, os.Stdout, os.Stderr, cats...)
 		},
 	}
+	cmd.Flags().StringSliceVar(&servers, "servers", nil, "server addresses to wait on: each must see the registrations before ready")
+	return cmd
+}
+
+// catalogReader is a server's catalog, for checking a registration has
+// reached it.
+type catalogReader interface {
+	Node(node string, q *api.QueryOptions) (*api.CatalogNode, *api.QueryMeta, error)
+}
+
+// visible says why some entry's service isn't in some server's own
+// (stale) catalog yet, or "" once every server has them all.
+func visible(cats []catalogReader, entries []expand.DataplaneEntry) string {
+	for i, c := range cats {
+		for _, e := range entries {
+			n, _, err := c.Node(e.Node, &api.QueryOptions{AllowStale: true, Partition: e.Partition, Namespace: e.Service.Namespace})
+			switch {
+			case err != nil:
+				return fmt.Sprintf("server %d: %v", i+1, err)
+			case n == nil:
+				return fmt.Sprintf("server %d has no node %s yet", i+1, e.Node)
+			}
+			if _, ok := n.Services[e.Service.ID]; !ok {
+				return fmt.Sprintf("server %d has no %s on %s yet", i+1, e.Service.ID, e.Node)
+			}
+		}
+	}
+	return ""
 }
 
 var probeClient = &http.Client{Timeout: time.Second}
@@ -97,12 +149,14 @@ func registration(e expand.DataplaneEntry, status string) *api.CatalogRegistrati
 	}
 }
 
-// keepHealth registers every entry, says so once all are in, then rewrites
+// keepHealth registers every entry, says so once all are in (and every
+// server given sees them), then rewrites
 // an entry whenever its probe result changes. Registration errors are
 // retried: the cluster may still be settling.
-func keepHealth(ctx context.Context, cat catalogAPI, entries []expand.DataplaneEntry, probe func(string) bool, every time.Duration, out, log io.Writer) error {
+func keepHealth(ctx context.Context, cat catalogAPI, entries []expand.DataplaneEntry, probe func(string) bool, every time.Duration, out, log io.Writer, servers ...catalogReader) error {
 	last := make([]string, len(entries))
 	ready := false
+	lastWhy := ""
 	for {
 		done := true
 		for i, e := range entries {
@@ -122,6 +176,15 @@ func keepHealth(ctx context.Context, cat catalogAPI, entries []expand.DataplaneE
 				fmt.Fprintf(log, "%s on %s is %s\n", e.Service.ID, e.Node, status)
 			}
 			last[i] = status
+		}
+		if done && !ready {
+			if why := visible(servers, entries); why != "" {
+				if why != lastWhy {
+					fmt.Fprintf(log, "waiting for the servers: %s\n", why)
+					lastWhy = why
+				}
+				done = false
+			}
 		}
 		if done && !ready {
 			ready = true

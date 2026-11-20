@@ -42,7 +42,7 @@ func TestDataplane(t *testing.T) {
 
 	s1 := low.Nodes["dc1-server-1"]
 	hp := s1.Processes[DataplaneHealth]
-	if hp == nil || strings.Join(hp.Run, " ") != VarParker+" "+DataplaneHealth+" "+VarNodeDir+"/"+DataplaneManifest || hp.ReadyWhen.Log != DataplaneHealthReadyLine {
+	if hp == nil || strings.Join(hp.Run, " ") != VarParker+" "+DataplaneHealth+" "+VarNodeDir+"/"+DataplaneManifest+" --servers 10.1.0.10,10.1.0.11,10.1.0.12" || hp.ReadyWhen.Log != DataplaneHealthReadyLine {
 		t.Fatalf("health process = %+v", hp)
 	}
 	for _, s := range []string{"dc1-server-1", "dc1-server-2", "dc1-server-3"} {
