@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -21,14 +22,22 @@ import (
 
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
+	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/graph"
+	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/webui"
 )
 
 type fake struct {
 	parkerv1connect.UnimplementedParkerServiceHandler
-	mu     sync.Mutex
-	broken bool
+	mu       sync.Mutex
+	broken   bool
+	examples string
 }
+
+// labExamples are the examples the demo labs are expanded from.
+var labExamples = map[string]string{"meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml"}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -71,7 +80,7 @@ func (f *fake) Version(context.Context, *connect.Request[parkerv1.VersionRequest
 
 func (f *fake) ListLabs(context.Context, *connect.Request[parkerv1.ListLabsRequest]) (*connect.Response[parkerv1.ListLabsResponse], error) {
 	return connect.NewResponse(&parkerv1.ListLabsResponse{Labs: []*parkerv1.LabSummary{
-		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}}}), nil
+		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}}}), nil
 }
 
 func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error) {
@@ -85,8 +94,8 @@ func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusReque
 				Namespace: true, Role: role, Dc: "dc1", MembersAlive: 3, MembersTotal: 3, Processes: []*parkerv1.ProcessStatus{proc("consul", int32(3100+i), true, 0)}})
 		}
 		return connect.NewResponse(st), nil
-	case "partitions":
-		return connect.NewResponse(&parkerv1.StatusResponse{Lab: "partitions"}), nil
+	case "partitions", "gateways":
+		return connect.NewResponse(&parkerv1.StatusResponse{Lab: r.Msg.Lab}), nil
 	}
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no lab %q", r.Msg.Lab))
 }
@@ -134,6 +143,24 @@ func (f *fake) Describe(_ context.Context, r *connect.Request[parkerv1.DescribeR
 	return connect.NewResponse(&parkerv1.DescribeResponse{Node: r.Msg.Node, Yaml: "name: " + r.Msg.Node + "\nnetworks: [dc1]\nprocesses:\n  consul:\n    command: [consul, agent, -config-dir, /etc/consul]\n"}), nil
 }
 
+// Graph expands the lab's example for real, so the topology view shows what
+// the daemon would.
+func (f *fake) Graph(_ context.Context, r *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
+	ex, ok := labExamples[r.Msg.Lab]
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no lab %q", r.Msg.Lab))
+	}
+	in, err := spec.Load(filepath.Join(f.examples, ex), nil)
+	if err != nil {
+		return nil, err
+	}
+	low, err := expand.Expand(in)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(daemon.GraphToProto(r.Msg.Lab, graph.Build(low))), nil
+}
+
 func (f *fake) Run(_ context.Context, r *connect.Request[parkerv1.RunRequest], s *connect.ServerStream[parkerv1.LogLine]) error {
 	var sc struct {
 		Steps []map[string]any `json:"steps"`
@@ -167,8 +194,9 @@ func (f *fake) Down(context.Context, *connect.Request[parkerv1.DownRequest], *co
 func main() {
 	addr := flag.String("listen", "127.0.0.1:8090", "address")
 	token := flag.String("token", "demo", "sign-in token")
+	examples := flag.String("examples", "examples", "the repository's examples directory")
 	flag.Parse()
-	_, api := parkerv1connect.NewParkerServiceHandler(&fake{broken: true})
+	_, api := parkerv1connect.NewParkerServiceHandler(&fake{broken: true, examples: *examples})
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatal(err)

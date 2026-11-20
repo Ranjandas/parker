@@ -30,6 +30,11 @@ service ParkerService {
   // such as consul.json, processes with command, env and checks) as YAML.
   rpc Describe(DescribeRequest) returns (DescribeResponse);
 
+  // Graph of one lab's architecture, for the web UI's topology view: each
+  // node's datacenter, partition and role, which services call which (and
+  // through which mesh gateways), and WAN federation and peering links.
+  rpc Graph(GraphRequest) returns (GraphResponse);
+
   // Logs of one process: the last lines, then (with follow) new ones.
   rpc Logs(LogsRequest) returns (stream LogChunk);
 
@@ -148,6 +153,36 @@ message DescribeRequest {
 message DescribeResponse {
   string node = 1; // resolved name
   string yaml = 2;
+}
+
+message GraphRequest {
+  string lab = 1;
+}
+
+message GraphResponse {
+  string lab = 1;
+  repeated GraphNode nodes = 2;
+  repeated GraphEdge edges = 3;
+  // "", "wan" (servers join over the wan) or "mesh-gateways".
+  string federation = 4;
+}
+
+message GraphNode {
+  string name = 1;
+  string dc = 2;
+  string partition = 3;
+  string role = 4; // server, client, gateway, dataplane or none
+  repeated string services = 5;
+  repeated string gateways = 6; // mesh, ingress, terminating, api
+  repeated string ips = 7;
+}
+
+message GraphEdge {
+  string kind = 1; // upstream, wan or peering
+  string from = 2;
+  string to = 3;
+  string label = 4;
+  repeated string via = 5; // mesh gateways an upstream crosses, in order
 }
 
 message LogsRequest {

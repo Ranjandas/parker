@@ -383,11 +383,19 @@ to a server. The page trades it for an HttpOnly, SameSite=Strict session
 cookie and drops it from the address bar. The link only works while that
 `parker ui` runs.
 
+The topology view (`#/lab/NAME/topology`) draws the lab's architecture:
+datacenters and partitions, each node with its processes, which services
+call which and through which mesh or terminating gateways, where ingress
+and API gateways route, and WAN federation and peering links. Health comes
+from the same live status as the overview, so when a sidecar fails, the
+paths through it turn red and say why. Pick a node for its processes,
+checks, connections and fault actions; drag to pan, scroll to zoom.
+
 A daemon started with `--listen` also serves the UI itself at
 `https://HOST:PORT/`: sign in with the token from `parker daemon
 credentials`. Browser sessions reach only the calls the UI needs (status,
-logs, describe, scenarios and faults, down). Exec, dial and up stay with the
-CLI.
+the topology graph, logs, describe, scenarios and faults, down). Exec,
+dial and up stay with the CLI.
 
 To work on the UI without a lab, `go run ./hack/uidemo` serves it against a
 fake daemon.

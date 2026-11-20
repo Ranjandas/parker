@@ -865,6 +865,287 @@ func (x *DescribeResponse) GetYaml() string {
 	return ""
 }
 
+type GraphRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Lab           string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GraphRequest) Reset() {
+	*x = GraphRequest{}
+	mi := &file_parker_v1_parker_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GraphRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GraphRequest) ProtoMessage() {}
+
+func (x *GraphRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GraphRequest.ProtoReflect.Descriptor instead.
+func (*GraphRequest) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *GraphRequest) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+type GraphResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Lab   string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	Nodes []*GraphNode           `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges []*GraphEdge           `protobuf:"bytes,3,rep,name=edges,proto3" json:"edges,omitempty"`
+	// "", "wan" (servers join over the wan) or "mesh-gateways".
+	Federation    string `protobuf:"bytes,4,opt,name=federation,proto3" json:"federation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GraphResponse) Reset() {
+	*x = GraphResponse{}
+	mi := &file_parker_v1_parker_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GraphResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GraphResponse) ProtoMessage() {}
+
+func (x *GraphResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GraphResponse.ProtoReflect.Descriptor instead.
+func (*GraphResponse) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GraphResponse) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+func (x *GraphResponse) GetNodes() []*GraphNode {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *GraphResponse) GetEdges() []*GraphEdge {
+	if x != nil {
+		return x.Edges
+	}
+	return nil
+}
+
+func (x *GraphResponse) GetFederation() string {
+	if x != nil {
+		return x.Federation
+	}
+	return ""
+}
+
+type GraphNode struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Dc            string                 `protobuf:"bytes,2,opt,name=dc,proto3" json:"dc,omitempty"`
+	Partition     string                 `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
+	Role          string                 `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"` // server, client, gateway, dataplane or none
+	Services      []string               `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"`
+	Gateways      []string               `protobuf:"bytes,6,rep,name=gateways,proto3" json:"gateways,omitempty"` // mesh, ingress, terminating, api
+	Ips           []string               `protobuf:"bytes,7,rep,name=ips,proto3" json:"ips,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GraphNode) Reset() {
+	*x = GraphNode{}
+	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GraphNode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GraphNode) ProtoMessage() {}
+
+func (x *GraphNode) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GraphNode.ProtoReflect.Descriptor instead.
+func (*GraphNode) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GraphNode) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GraphNode) GetDc() string {
+	if x != nil {
+		return x.Dc
+	}
+	return ""
+}
+
+func (x *GraphNode) GetPartition() string {
+	if x != nil {
+		return x.Partition
+	}
+	return ""
+}
+
+func (x *GraphNode) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *GraphNode) GetServices() []string {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+func (x *GraphNode) GetGateways() []string {
+	if x != nil {
+		return x.Gateways
+	}
+	return nil
+}
+
+func (x *GraphNode) GetIps() []string {
+	if x != nil {
+		return x.Ips
+	}
+	return nil
+}
+
+type GraphEdge struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"` // upstream, wan or peering
+	From          string                 `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
+	To            string                 `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
+	Label         string                 `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
+	Via           []string               `protobuf:"bytes,5,rep,name=via,proto3" json:"via,omitempty"` // mesh gateways an upstream crosses, in order
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GraphEdge) Reset() {
+	*x = GraphEdge{}
+	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GraphEdge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GraphEdge) ProtoMessage() {}
+
+func (x *GraphEdge) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GraphEdge.ProtoReflect.Descriptor instead.
+func (*GraphEdge) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *GraphEdge) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *GraphEdge) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *GraphEdge) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *GraphEdge) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *GraphEdge) GetVia() []string {
+	if x != nil {
+		return x.Via
+	}
+	return nil
+}
+
 type LogsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Lab           string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
@@ -878,7 +1159,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_parker_v1_parker_proto_msgTypes[14]
+	mi := &file_parker_v1_parker_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -890,7 +1171,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[14]
+	mi := &file_parker_v1_parker_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -903,7 +1184,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{14}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *LogsRequest) GetLab() string {
@@ -950,7 +1231,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_parker_v1_parker_proto_msgTypes[15]
+	mi := &file_parker_v1_parker_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -962,7 +1243,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[15]
+	mi := &file_parker_v1_parker_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -975,7 +1256,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{15}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *LogChunk) GetData() []byte {
@@ -993,7 +1274,7 @@ type ShutdownRequest struct {
 
 func (x *ShutdownRequest) Reset() {
 	*x = ShutdownRequest{}
-	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	mi := &file_parker_v1_parker_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1005,7 +1286,7 @@ func (x *ShutdownRequest) String() string {
 func (*ShutdownRequest) ProtoMessage() {}
 
 func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[16]
+	mi := &file_parker_v1_parker_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1018,7 +1299,7 @@ func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{16}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{20}
 }
 
 type ShutdownResponse struct {
@@ -1029,7 +1310,7 @@ type ShutdownResponse struct {
 
 func (x *ShutdownResponse) Reset() {
 	*x = ShutdownResponse{}
-	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	mi := &file_parker_v1_parker_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1041,7 +1322,7 @@ func (x *ShutdownResponse) String() string {
 func (*ShutdownResponse) ProtoMessage() {}
 
 func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[17]
+	mi := &file_parker_v1_parker_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1054,7 +1335,7 @@ func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
 func (*ShutdownResponse) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{17}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{21}
 }
 
 type ExecRequest struct {
@@ -1072,7 +1353,7 @@ type ExecRequest struct {
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_parker_v1_parker_proto_msgTypes[18]
+	mi := &file_parker_v1_parker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1084,7 +1365,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[18]
+	mi := &file_parker_v1_parker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1097,7 +1378,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{18}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ExecRequest) GetMsg() isExecRequest_Msg {
@@ -1185,7 +1466,7 @@ type ExecStart struct {
 
 func (x *ExecStart) Reset() {
 	*x = ExecStart{}
-	mi := &file_parker_v1_parker_proto_msgTypes[19]
+	mi := &file_parker_v1_parker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1197,7 +1478,7 @@ func (x *ExecStart) String() string {
 func (*ExecStart) ProtoMessage() {}
 
 func (x *ExecStart) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[19]
+	mi := &file_parker_v1_parker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1210,7 +1491,7 @@ func (x *ExecStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStart.ProtoReflect.Descriptor instead.
 func (*ExecStart) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{19}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ExecStart) GetLab() string {
@@ -1265,7 +1546,7 @@ type TermSize struct {
 
 func (x *TermSize) Reset() {
 	*x = TermSize{}
-	mi := &file_parker_v1_parker_proto_msgTypes[20]
+	mi := &file_parker_v1_parker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1277,7 +1558,7 @@ func (x *TermSize) String() string {
 func (*TermSize) ProtoMessage() {}
 
 func (x *TermSize) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[20]
+	mi := &file_parker_v1_parker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1290,7 +1571,7 @@ func (x *TermSize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TermSize.ProtoReflect.Descriptor instead.
 func (*TermSize) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{20}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TermSize) GetRows() uint32 {
@@ -1321,7 +1602,7 @@ type ExecResponse struct {
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_parker_v1_parker_proto_msgTypes[21]
+	mi := &file_parker_v1_parker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1333,7 +1614,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[21]
+	mi := &file_parker_v1_parker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1346,7 +1627,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{21}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ExecResponse) GetMsg() isExecResponse_Msg {
@@ -1418,7 +1699,7 @@ type DialRequest struct {
 
 func (x *DialRequest) Reset() {
 	*x = DialRequest{}
-	mi := &file_parker_v1_parker_proto_msgTypes[22]
+	mi := &file_parker_v1_parker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1430,7 +1711,7 @@ func (x *DialRequest) String() string {
 func (*DialRequest) ProtoMessage() {}
 
 func (x *DialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[22]
+	mi := &file_parker_v1_parker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1443,7 +1724,7 @@ func (x *DialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DialRequest.ProtoReflect.Descriptor instead.
 func (*DialRequest) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{22}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DialRequest) GetMsg() isDialRequest_Msg {
@@ -1499,7 +1780,7 @@ type DialOpen struct {
 
 func (x *DialOpen) Reset() {
 	*x = DialOpen{}
-	mi := &file_parker_v1_parker_proto_msgTypes[23]
+	mi := &file_parker_v1_parker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1511,7 +1792,7 @@ func (x *DialOpen) String() string {
 func (*DialOpen) ProtoMessage() {}
 
 func (x *DialOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[23]
+	mi := &file_parker_v1_parker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1524,7 +1805,7 @@ func (x *DialOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DialOpen.ProtoReflect.Descriptor instead.
 func (*DialOpen) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{23}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DialOpen) GetAddress() string {
@@ -1554,7 +1835,7 @@ type DialResponse struct {
 
 func (x *DialResponse) Reset() {
 	*x = DialResponse{}
-	mi := &file_parker_v1_parker_proto_msgTypes[24]
+	mi := &file_parker_v1_parker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1566,7 +1847,7 @@ func (x *DialResponse) String() string {
 func (*DialResponse) ProtoMessage() {}
 
 func (x *DialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[24]
+	mi := &file_parker_v1_parker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1579,7 +1860,7 @@ func (x *DialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DialResponse.ProtoReflect.Descriptor instead.
 func (*DialResponse) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{24}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *DialResponse) GetMsg() isDialResponse_Msg {
@@ -1632,7 +1913,7 @@ type DialOpened struct {
 
 func (x *DialOpened) Reset() {
 	*x = DialOpened{}
-	mi := &file_parker_v1_parker_proto_msgTypes[25]
+	mi := &file_parker_v1_parker_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1644,7 +1925,7 @@ func (x *DialOpened) String() string {
 func (*DialOpened) ProtoMessage() {}
 
 func (x *DialOpened) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[25]
+	mi := &file_parker_v1_parker_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1657,7 +1938,7 @@ func (x *DialOpened) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DialOpened.ProtoReflect.Descriptor instead.
 func (*DialOpened) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{25}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *DialOpened) GetRemote() string {
@@ -1681,7 +1962,7 @@ type RunRequest struct {
 
 func (x *RunRequest) Reset() {
 	*x = RunRequest{}
-	mi := &file_parker_v1_parker_proto_msgTypes[26]
+	mi := &file_parker_v1_parker_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1693,7 +1974,7 @@ func (x *RunRequest) String() string {
 func (*RunRequest) ProtoMessage() {}
 
 func (x *RunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_parker_v1_parker_proto_msgTypes[26]
+	mi := &file_parker_v1_parker_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1706,7 +1987,7 @@ func (x *RunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunRequest.ProtoReflect.Descriptor instead.
 func (*RunRequest) Descriptor() ([]byte, []int) {
-	return file_parker_v1_parker_proto_rawDescGZIP(), []int{26}
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RunRequest) GetLab() string {
@@ -1802,7 +2083,30 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x04node\x18\x02 \x01(\tR\x04node\":\n" +
 	"\x10DescribeResponse\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
-	"\x04yaml\x18\x02 \x01(\tR\x04yaml\"\x84\x01\n" +
+	"\x04yaml\x18\x02 \x01(\tR\x04yaml\" \n" +
+	"\fGraphRequest\x12\x10\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\"\x99\x01\n" +
+	"\rGraphResponse\x12\x10\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\x12*\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x14.parker.v1.GraphNodeR\x05nodes\x12*\n" +
+	"\x05edges\x18\x03 \x03(\v2\x14.parker.v1.GraphEdgeR\x05edges\x12\x1e\n" +
+	"\n" +
+	"federation\x18\x04 \x01(\tR\n" +
+	"federation\"\xab\x01\n" +
+	"\tGraphNode\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
+	"\x02dc\x18\x02 \x01(\tR\x02dc\x12\x1c\n" +
+	"\tpartition\x18\x03 \x01(\tR\tpartition\x12\x12\n" +
+	"\x04role\x18\x04 \x01(\tR\x04role\x12\x1a\n" +
+	"\bservices\x18\x05 \x03(\tR\bservices\x12\x1a\n" +
+	"\bgateways\x18\x06 \x03(\tR\bgateways\x12\x10\n" +
+	"\x03ips\x18\a \x03(\tR\x03ips\"k\n" +
+	"\tGraphEdge\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04from\x18\x02 \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\x03 \x01(\tR\x02to\x12\x14\n" +
+	"\x05label\x18\x04 \x01(\tR\x05label\x12\x10\n" +
+	"\x03via\x18\x05 \x03(\tR\x03via\"\x84\x01\n" +
 	"\vLogsRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x12\n" +
 	"\x04node\x18\x02 \x01(\tR\x04node\x12\x18\n" +
@@ -1853,14 +2157,15 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"RunRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
 	"\bscenario\x18\x02 \x01(\tR\bscenario\x12\x16\n" +
-	"\x06inline\x18\x03 \x01(\tR\x06inline2\xac\x05\n" +
+	"\x06inline\x18\x03 \x01(\tR\x06inline2\xe8\x05\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +
 	"\x04Down\x12\x16.parker.v1.DownRequest\x1a\x12.parker.v1.LogLine0\x01\x12C\n" +
 	"\bListLabs\x12\x1a.parker.v1.ListLabsRequest\x1a\x1b.parker.v1.ListLabsResponse\x12=\n" +
 	"\x06Status\x12\x18.parker.v1.StatusRequest\x1a\x19.parker.v1.StatusResponse\x12C\n" +
-	"\bDescribe\x12\x1a.parker.v1.DescribeRequest\x1a\x1b.parker.v1.DescribeResponse\x125\n" +
+	"\bDescribe\x12\x1a.parker.v1.DescribeRequest\x1a\x1b.parker.v1.DescribeResponse\x12:\n" +
+	"\x05Graph\x12\x17.parker.v1.GraphRequest\x1a\x18.parker.v1.GraphResponse\x125\n" +
 	"\x04Logs\x12\x16.parker.v1.LogsRequest\x1a\x13.parker.v1.LogChunk0\x01\x12;\n" +
 	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12;\n" +
 	"\x04Dial\x12\x16.parker.v1.DialRequest\x1a\x17.parker.v1.DialResponse(\x010\x01\x12C\n" +
@@ -1879,7 +2184,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -1895,58 +2200,66 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*ProcessStatus)(nil),    // 11: parker.v1.ProcessStatus
 	(*DescribeRequest)(nil),  // 12: parker.v1.DescribeRequest
 	(*DescribeResponse)(nil), // 13: parker.v1.DescribeResponse
-	(*LogsRequest)(nil),      // 14: parker.v1.LogsRequest
-	(*LogChunk)(nil),         // 15: parker.v1.LogChunk
-	(*ShutdownRequest)(nil),  // 16: parker.v1.ShutdownRequest
-	(*ShutdownResponse)(nil), // 17: parker.v1.ShutdownResponse
-	(*ExecRequest)(nil),      // 18: parker.v1.ExecRequest
-	(*ExecStart)(nil),        // 19: parker.v1.ExecStart
-	(*TermSize)(nil),         // 20: parker.v1.TermSize
-	(*ExecResponse)(nil),     // 21: parker.v1.ExecResponse
-	(*DialRequest)(nil),      // 22: parker.v1.DialRequest
-	(*DialOpen)(nil),         // 23: parker.v1.DialOpen
-	(*DialResponse)(nil),     // 24: parker.v1.DialResponse
-	(*DialOpened)(nil),       // 25: parker.v1.DialOpened
-	(*RunRequest)(nil),       // 26: parker.v1.RunRequest
-	nil,                      // 27: parker.v1.NodeStatus.HealthEntry
+	(*GraphRequest)(nil),     // 14: parker.v1.GraphRequest
+	(*GraphResponse)(nil),    // 15: parker.v1.GraphResponse
+	(*GraphNode)(nil),        // 16: parker.v1.GraphNode
+	(*GraphEdge)(nil),        // 17: parker.v1.GraphEdge
+	(*LogsRequest)(nil),      // 18: parker.v1.LogsRequest
+	(*LogChunk)(nil),         // 19: parker.v1.LogChunk
+	(*ShutdownRequest)(nil),  // 20: parker.v1.ShutdownRequest
+	(*ShutdownResponse)(nil), // 21: parker.v1.ShutdownResponse
+	(*ExecRequest)(nil),      // 22: parker.v1.ExecRequest
+	(*ExecStart)(nil),        // 23: parker.v1.ExecStart
+	(*TermSize)(nil),         // 24: parker.v1.TermSize
+	(*ExecResponse)(nil),     // 25: parker.v1.ExecResponse
+	(*DialRequest)(nil),      // 26: parker.v1.DialRequest
+	(*DialOpen)(nil),         // 27: parker.v1.DialOpen
+	(*DialResponse)(nil),     // 28: parker.v1.DialResponse
+	(*DialOpened)(nil),       // 29: parker.v1.DialOpened
+	(*RunRequest)(nil),       // 30: parker.v1.RunRequest
+	nil,                      // 31: parker.v1.NodeStatus.HealthEntry
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
 	10, // 1: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
 	11, // 2: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
-	27, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
-	19, // 4: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
-	20, // 5: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
-	20, // 6: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
-	23, // 7: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
-	25, // 8: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
-	0,  // 9: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 10: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 11: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 12: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 13: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 14: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
-	14, // 15: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	18, // 16: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	22, // 17: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
-	16, // 18: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	26, // 19: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
-	1,  // 20: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 21: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 22: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 23: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 24: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 25: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	15, // 26: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	21, // 27: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	24, // 28: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	17, // 29: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	3,  // 30: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
-	20, // [20:31] is the sub-list for method output_type
-	9,  // [9:20] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	31, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
+	16, // 4: parker.v1.GraphResponse.nodes:type_name -> parker.v1.GraphNode
+	17, // 5: parker.v1.GraphResponse.edges:type_name -> parker.v1.GraphEdge
+	23, // 6: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
+	24, // 7: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
+	24, // 8: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
+	27, // 9: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
+	29, // 10: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
+	0,  // 11: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 12: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 13: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 14: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 15: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 16: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
+	14, // 17: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
+	18, // 18: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	22, // 19: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	26, // 20: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	20, // 21: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	30, // 22: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	1,  // 23: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 24: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 25: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 26: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 27: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 28: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	15, // 29: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
+	19, // 30: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	25, // 31: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	28, // 32: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	21, // 33: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 34: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	23, // [23:35] is the sub-list for method output_type
+	11, // [11:23] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -1955,22 +2268,22 @@ func file_parker_v1_parker_proto_init() {
 		return
 	}
 	file_parker_v1_parker_proto_msgTypes[11].OneofWrappers = []any{}
-	file_parker_v1_parker_proto_msgTypes[18].OneofWrappers = []any{
+	file_parker_v1_parker_proto_msgTypes[22].OneofWrappers = []any{
 		(*ExecRequest_Start)(nil),
 		(*ExecRequest_Stdin)(nil),
 		(*ExecRequest_Resize)(nil),
 		(*ExecRequest_StdinEof)(nil),
 	}
-	file_parker_v1_parker_proto_msgTypes[21].OneofWrappers = []any{
+	file_parker_v1_parker_proto_msgTypes[25].OneofWrappers = []any{
 		(*ExecResponse_Stdout)(nil),
 		(*ExecResponse_Stderr)(nil),
 		(*ExecResponse_ExitCode)(nil),
 	}
-	file_parker_v1_parker_proto_msgTypes[22].OneofWrappers = []any{
+	file_parker_v1_parker_proto_msgTypes[26].OneofWrappers = []any{
 		(*DialRequest_Open)(nil),
 		(*DialRequest_Data)(nil),
 	}
-	file_parker_v1_parker_proto_msgTypes[24].OneofWrappers = []any{
+	file_parker_v1_parker_proto_msgTypes[28].OneofWrappers = []any{
 		(*DialResponse_Opened)(nil),
 		(*DialResponse_Data)(nil),
 	}
@@ -1980,7 +2293,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
