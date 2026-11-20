@@ -190,5 +190,14 @@ left_ns=$(ls /run/netns | wc -l)
 left_links=$(ip -o link | grep -c ' pk-\| pk[0-9a-f]' || true)
 echo "leftover netns=$left_ns links=$left_links"
 [ "$left_ns" = 0 ] && [ "$left_links" = 0 ]
+
+echo "--- status lists the downed lab until purge"
+lab=$($P expand "$F" | awk '/^name:/ && !n++ {print $2}')
+$P status | grep -E "^$lab +down" >/dev/null
+$P down "$lab" --purge | grep "removed $PARKER_RUN_DIR/$lab" >/dev/null
+[ ! -e "$PARKER_RUN_DIR/$lab" ] || { echo "run dir left after --purge"; exit 1; }
+if $P status | grep -E "^$lab " >/dev/null; then echo "purged lab still listed"; exit 1; fi
+$P prune -y >/dev/null
+if $P status | grep -E " down " >/dev/null; then echo "prune left: $($P status)"; exit 1; fi
 echo PASS
 INNER

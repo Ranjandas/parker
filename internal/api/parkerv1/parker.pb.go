@@ -229,8 +229,10 @@ func (x *LogLine) GetLine() string {
 }
 
 type DownRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Lab           string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Lab   string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	// Also delete the lab's run dir (logs, configs, data) once it is down.
+	Purge         bool `protobuf:"varint,2,opt,name=purge,proto3" json:"purge,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -270,6 +272,13 @@ func (x *DownRequest) GetLab() string {
 		return x.Lab
 	}
 	return ""
+}
+
+func (x *DownRequest) GetPurge() bool {
+	if x != nil {
+		return x.Purge
+	}
+	return false
 }
 
 type ListLabsRequest struct {
@@ -1691,9 +1700,10 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"noFirewall\x12%\n" +
 	"\x0econsul_license\x18\x04 \x01(\fR\rconsulLicense\"\x1d\n" +
 	"\aLogLine\x12\x12\n" +
-	"\x04line\x18\x01 \x01(\tR\x04line\"\x1f\n" +
+	"\x04line\x18\x01 \x01(\tR\x04line\"5\n" +
 	"\vDownRequest\x12\x10\n" +
-	"\x03lab\x18\x01 \x01(\tR\x03lab\"\x11\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x14\n" +
+	"\x05purge\x18\x02 \x01(\bR\x05purge\"\x11\n" +
 	"\x0fListLabsRequest\"=\n" +
 	"\x10ListLabsResponse\x12)\n" +
 	"\x04labs\x18\x01 \x03(\v2\x15.parker.v1.LabSummaryR\x04labs\"`\n" +
