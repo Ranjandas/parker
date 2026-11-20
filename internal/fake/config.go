@@ -35,8 +35,12 @@ type Config struct {
 	IgnoreUpstreamErrors bool
 	// ClientTimeout bounds each upstream call.
 	ClientTimeout time.Duration
-	// HealthCode is what /health answers.
-	HealthCode int
+	// Faults are the faults injected at start (they can change later).
+	Faults Faults
+	// Seed for the random draws; 0 is a new one each start.
+	Seed int64
+	// RequestFaults lets callers ask for faults on one request.
+	RequestFaults bool
 	// ReadyDelay is how long after start /ready keeps failing.
 	ReadyDelay time.Duration
 	// ReadyCode and ReadyFailureCode are /ready's answers after and
@@ -51,7 +55,7 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		getenv = os.Getenv
 	}
 	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second,
-		HealthCode: 200, ReadyCode: 200, ReadyFailureCode: 503}
+		Faults: DefaultFaults(), RequestFaults: true, ReadyCode: 200, ReadyFailureCode: 503}
 	if v := getenv("NAME"); v != "" && name == "" {
 		c.Name = v
 	}
@@ -76,8 +80,17 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		}
 		c.ClientTimeout = d
 	}
-	for k, dst := range map[string]*int{"HEALTH_CHECK_RESPONSE_CODE": &c.HealthCode,
-		"READY_CHECK_RESPONSE_SUCCESS_CODE": &c.ReadyCode, "READY_CHECK_RESPONSE_FAILURE_CODE": &c.ReadyFailureCode} {
+	if err := faultsFromEnv(&c.Faults, getenv); err != nil {
+		return nil, err
+	}
+	if v := getenv("RAND_SEED"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("RAND_SEED=%q: want a number", v)
+		}
+		c.Seed = n
+	}
+	for k, dst := range map[string]*int{"READY_CHECK_RESPONSE_SUCCESS_CODE": &c.ReadyCode, "READY_CHECK_RESPONSE_FAILURE_CODE": &c.ReadyFailureCode} {
 		if v := getenv(k); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 100 || n > 599 {
@@ -101,6 +114,9 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		if err := c.apply(&f); err != nil {
 			return nil, err
 		}
+		if err := c.Faults.Apply(&f); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -118,8 +134,11 @@ func (c *Config) apply(f *spec.Fake) error {
 	if f.Workers > 0 {
 		c.Workers = f.Workers
 	}
-	if h := f.Health; h != nil && h.Code != 0 {
-		c.HealthCode = h.Code
+	if f.Seed != 0 {
+		c.Seed = f.Seed
+	}
+	if f.RequestFaults != nil {
+		c.RequestFaults = *f.RequestFaults
 	}
 	if r := f.Ready; r != nil {
 		if r.Delay != "" {

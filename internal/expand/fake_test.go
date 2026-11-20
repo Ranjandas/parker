@@ -88,6 +88,9 @@ func TestFakeValidation(t *testing.T) {
 		"run: [sleep, infinity], fake: { version: v1 }": "fake: needs run: fake-service",
 		"fake: { upstream_failure: maybe }":             "fake.upstream_failure",
 		"fake: { workers: -1 }":                         "fake.workers",
+		"fake: { ready: { delay: soon } }":              "fake.ready.delay",
+		"fake: { errors: { rate: 20 } }":                "errors.rate",
+		"fake: { latency: { p50: fast } }":              "latency.p50",
 	} {
 		lab := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, "+bad, 1)
 		p := filepath.Join(t.TempDir(), "lab.yaml")

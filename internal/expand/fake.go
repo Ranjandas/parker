@@ -1,12 +1,14 @@
 package expand
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
 
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -95,6 +97,44 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		h := *b.Health
 		out.Health = &h
 	}
+	if b.Latency != nil {
+		l := spec.FakeLatency{}
+		if out.Latency != nil {
+			l = *out.Latency
+		}
+		l.P50 = cmp.Or(b.Latency.P50, l.P50)
+		l.P90 = cmp.Or(b.Latency.P90, l.P90)
+		l.P99 = cmp.Or(b.Latency.P99, l.P99)
+		l.Variance = cmp.Or(b.Latency.Variance, l.Variance)
+		out.Latency = &l
+	}
+	if b.Errors != nil {
+		e := spec.FakeErrors{}
+		if out.Errors != nil {
+			e = *out.Errors
+		}
+		e.Rate = cmp.Or(b.Errors.Rate, e.Rate)
+		e.Code = cmp.Or(b.Errors.Code, e.Code)
+		e.Type = cmp.Or(b.Errors.Type, e.Type)
+		e.Delay = cmp.Or(b.Errors.Delay, e.Delay)
+		out.Errors = &e
+	}
+	if b.RateLimit != nil {
+		r := spec.FakeRateLimit{}
+		if out.RateLimit != nil {
+			r = *out.RateLimit
+		}
+		r.RPS = cmp.Or(b.RateLimit.RPS, r.RPS)
+		r.Code = cmp.Or(b.RateLimit.Code, r.Code)
+		out.RateLimit = &r
+	}
+	if b.Seed != 0 {
+		out.Seed = b.Seed
+	}
+	if b.RequestFaults != nil {
+		v := *b.RequestFaults
+		out.RequestFaults = &v
+	}
 	if b.Ready != nil {
 		r := spec.FakeReady{}
 		if out.Ready != nil {
@@ -129,15 +169,8 @@ func checkFake(where string, svc, own *spec.Service) []error {
 	if f.Workers < 0 {
 		errs = append(errs, fmt.Errorf("%s: fake.workers: want 1 or more, got %d", where, f.Workers))
 	}
-	switch f.UpstreamFailure {
-	case "", "fail", "ignore":
-	default:
-		errs = append(errs, fmt.Errorf("%s: fake.upstream_failure: want fail or ignore, got %q", where, f.UpstreamFailure))
-	}
-	if r := f.Ready; r != nil && r.Delay != "" {
-		if d, err := time.ParseDuration(r.Delay); err != nil || d < 0 {
-			errs = append(errs, fmt.Errorf("%s: fake.ready.delay: want a duration like 5s, got %q", where, r.Delay))
-		}
+	if err := fake.Validate(f); err != nil {
+		errs = append(errs, fmt.Errorf("%s: fake.%w", where, err))
 	}
 	return errs
 }

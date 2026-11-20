@@ -660,6 +660,50 @@ type Fake struct {
 	Health *FakeHealth `yaml:"health,omitempty" json:"health,omitempty"`
 	// Ready sets what /ready answers; Parker waits on it at up.
 	Ready *FakeReady `yaml:"ready,omitempty" json:"ready,omitempty"`
+	// Latency adds a delay to each answer, drawn from these percentiles.
+	Latency *FakeLatency `yaml:"latency,omitempty" json:"latency,omitempty"`
+	// Errors fails a share of requests.
+	Errors *FakeErrors `yaml:"errors,omitempty" json:"errors,omitempty"`
+	// RateLimit answers requests over a rate with an error code.
+	RateLimit *FakeRateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	// Seed makes the random draws (errors, latency) repeatable
+	// (RAND_SEED); default: a new seed each start.
+	Seed int64 `yaml:"seed,omitempty" json:"seed,omitempty"`
+	// RequestFaults lets a caller ask for faults on one request
+	// (?error-rate=50&delay=2s, or the X-Parker-Fault header); default
+	// true.
+	RequestFaults *bool `yaml:"request_faults,omitempty" json:"request_faults,omitempty"`
+}
+
+type FakeLatency struct {
+	// P50 is the median delay, e.g. 20ms (TIMING_50_PERCENTILE).
+	P50 string `yaml:"p50,omitempty" json:"p50,omitempty"`
+	// P90 (TIMING_90_PERCENTILE); default p50.
+	P90 string `yaml:"p90,omitempty" json:"p90,omitempty"`
+	// P99 (TIMING_99_PERCENTILE); default p90.
+	P99 string `yaml:"p99,omitempty" json:"p99,omitempty"`
+	// Variance spreads each draw by up to this percentage either way
+	// (TIMING_VARIANCE).
+	Variance int `yaml:"variance,omitempty" json:"variance,omitempty" jsonschema:"minimum=0,maximum=100"`
+}
+
+type FakeErrors struct {
+	// Rate is the share of requests that fail, 0 to 1 (ERROR_RATE).
+	Rate float64 `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0,maximum=1"`
+	// Code a failed request answers (ERROR_CODE); default 500.
+	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// Type is http_error (default: answer Code) or delay (answer late,
+	// after Delay) (ERROR_TYPE).
+	Type string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=http_error,enum=delay"`
+	// Delay for type: delay, e.g. 5s (ERROR_DELAY).
+	Delay string `yaml:"delay,omitempty" json:"delay,omitempty"`
+}
+
+type FakeRateLimit struct {
+	// RPS is the requests per second allowed (RATE_LIMIT); 0 is off.
+	RPS float64 `yaml:"rps,omitempty" json:"rps,omitempty" jsonschema:"minimum=0"`
+	// Code for requests over the limit (RATE_LIMIT_CODE); default 503.
+	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
 }
 
 type FakeHealth struct {
