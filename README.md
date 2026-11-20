@@ -118,6 +118,43 @@ parker up repro.yaml --overlay with-acl.yaml --overlay slow-wan.yaml \
 
 See [examples/overlays/acl.yaml](examples/overlays/acl.yaml).
 
+### Templates and modules
+
+`consul.templates` holds reusable node shapes. A node takes one with
+`from: NAME`, and its own fields win, so one shape covers every place a
+service runs:
+
+```yaml
+consul:
+  templates:
+    api-node: { count: 2, service: { port: 9090, run: fake-service } }
+  datacenters:
+    dc1: { nodes: { api: { from: api-node } } }
+    dc2: { nodes: { api: { from: api-node, count: 1 } } }
+```
+
+Templates can build on other templates with `from:`, and partition nodes
+can use them too.
+
+A module is a file with `kind: Module`, typed `inputs:` and a
+`provides:` block, which can hold any part of a topology. `imports:`
+merges modules in order under the importing file, so the importer's
+values win:
+
+```yaml
+imports:
+  - module: modules/acl.yaml          # relative to this file
+    with: { dc: dc1, servers: 5 }
+```
+
+`${inputs.NAME}` reads an input. An input's `type` (`string`, `number`
+or `bool`), `enum` and `default` are checked, and an input without a
+default is required. Unknown keys in a module are reported at their line
+in the module file. Modules may import modules, and overlays may import
+them too. `parker expand --merged` shows the result. See
+[examples/templates.yaml](examples/templates.yaml) and
+[examples/modules/acl.yaml](examples/modules/acl.yaml).
+
 ### Editor support
 
 Files that start with

@@ -57,6 +57,13 @@
           "$ref": "#/$defs/Inheritable",
           "description": "Defaults apply to every datacenter unless it overrides them."
         },
+        "templates": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "object",
+          "description": "Templates are reusable node shapes, keyed by name; a node takes one\nwith from: NAME and overrides fields after it."
+        },
         "datacenters": {
           "additionalProperties": {
             "$ref": "#/$defs/Datacenter"
@@ -400,6 +407,24 @@
         "url"
       ]
     },
+    "Import": {
+      "properties": {
+        "module": {
+          "type": "string",
+          "description": "Module is a module file's path, relative to the importing file."
+        },
+        "with": {
+          "type": "object",
+          "description": "With sets the module's inputs."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "module"
+      ],
+      "description": "Import is one module to merge in."
+    },
     "Inheritable": {
       "properties": {
         "agents": {
@@ -464,6 +489,10 @@
     },
     "Node": {
       "properties": {
+        "from": {
+          "type": "string",
+          "description": "From names a template under consul.templates; the node's own fields\nwin over the template's."
+        },
         "count": {
           "type": "integer",
           "minimum": 1,
@@ -1065,6 +1094,13 @@
     "vars": {
       "type": "object",
       "description": "Vars are substituted wherever ${vars.NAME} appears; override with\n--var NAME=VALUE. ${env.NAME} reads the environment."
+    },
+    "imports": {
+      "items": {
+        "$ref": "#/$defs/Import"
+      },
+      "type": "array",
+      "description": "Imports merge module files under this one: a module's provides:\ncomes first, so this file's own values win."
     },
     "consul": {
       "$ref": "#/$defs/Consul",

@@ -1,0 +1,14 @@
+# A module: a reusable piece of a topology with inputs. Import it with
+#   imports: [{ module: modules/acl.yaml, with: { dc: dc1 } }]
+# The importing file's own values win over what a module provides.
+parker: v1alpha1
+kind: Module
+description: ACLs on, with an odd number of servers in one datacenter
+inputs:
+  dc: { description: the datacenter to size, default: dc1 }
+  servers: { type: number, enum: [1, 3, 5], default: 3 }
+provides:
+  consul:
+    defaults: { acl: true }
+    datacenters:
+      ${inputs.dc}: { servers: ${inputs.servers} }

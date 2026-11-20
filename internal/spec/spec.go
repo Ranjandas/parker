@@ -37,6 +37,9 @@ type File struct {
 	// Vars are substituted wherever ${vars.NAME} appears; override with
 	// --var NAME=VALUE. ${env.NAME} reads the environment.
 	Vars map[string]any `yaml:"vars,omitempty"`
+	// Imports merge module files under this one: a module's provides:
+	// comes first, so this file's own values win.
+	Imports []*Import `yaml:"imports,omitempty"`
 
 	// Consul is the high-level description: datacenters, nodes, services.
 	Consul *Consul `yaml:"consul,omitempty"`
@@ -203,6 +206,9 @@ type ExecAssert struct {
 type Consul struct {
 	// Defaults apply to every datacenter unless it overrides them.
 	Defaults *Inheritable `yaml:"defaults,omitempty"`
+	// Templates are reusable node shapes, keyed by name; a node takes one
+	// with from: NAME and overrides fields after it.
+	Templates map[string]*Node `yaml:"templates,omitempty"`
 	// Datacenters keyed by name (e.g. dc1).
 	Datacenters map[string]*Datacenter `yaml:"datacenters"`
 	// Federation joins the datacenters' servers over a generated `wan`
@@ -586,6 +592,9 @@ type ServerOverride struct {
 }
 
 type Node struct {
+	// From names a template under consul.templates; the node's own fields
+	// win over the template's.
+	From string `yaml:"from,omitempty"`
 	// Count makes N copies of the node, named <name>-1 ... <name>-N.
 	Count int `yaml:"count,omitempty" jsonschema:"minimum=1"`
 	// Agent is client (default) or none.
@@ -826,4 +835,39 @@ func (a *AgentSettings) Cfg() map[string]any {
 		return nil
 	}
 	return a.Config
+}
+
+// Import is one module to merge in.
+type Import struct {
+	// Module is a module file's path, relative to the importing file.
+	Module string `yaml:"module"`
+	// With sets the module's inputs.
+	With map[string]any `yaml:"with,omitempty"`
+}
+
+// Module is a module file: a fragment of a topology with inputs, merged
+// in by imports:.
+type Module struct {
+	Parker string `yaml:"parker" jsonschema:"enum=v1alpha1"`
+	// Kind is Module.
+	Kind string `yaml:"kind" jsonschema:"enum=Module"`
+	// Description says what the module is for.
+	Description string `yaml:"description,omitempty"`
+	// Inputs the module takes, keyed by name; ${inputs.NAME} reads one.
+	Inputs map[string]*ModuleInput `yaml:"inputs,omitempty"`
+	// Provides is what the module adds: any part of a topology file.
+	Provides *File `yaml:"provides"`
+}
+
+// ModuleInput is one input of a module.
+type ModuleInput struct {
+	// Type is string (default), number or bool.
+	Type string `yaml:"type,omitempty" jsonschema:"enum=string,enum=number,enum=bool"`
+	// Enum lists the values allowed.
+	Enum []any `yaml:"enum,omitempty"`
+	// Default is used when the importer doesn't set the input; without one
+	// the input is required.
+	Default any `yaml:"default,omitempty"`
+	// Description says what the input does.
+	Description string `yaml:"description,omitempty"`
 }
