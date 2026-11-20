@@ -1,0 +1,12 @@
+# An overlay: turn ACLs on and grow the cluster for any lab without
+# editing it.
+#
+#   parker up examples/minimal.yaml --overlay examples/overlays/acl.yaml
+#   parker expand --merged examples/minimal.yaml --overlay examples/overlays/acl.yaml
+#
+# Overlays merge over the base in order: maps merge by key, a null removes
+# a key, lists replace unless they start with {$patch: append}.
+consul:
+  defaults: { acl: true }
+  datacenters:
+    dc1: { servers: 5 }

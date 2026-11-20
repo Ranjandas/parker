@@ -92,6 +92,32 @@ Stopping the unit stops only the daemon. Labs keep running, and
 
 `--var name=value` sets `${vars.name}`.
 
+### Overlays and `--set`
+
+Any command that reads a FILE also takes overlays and single values on
+top of it, so one base file covers many variants of a repro:
+
+```bash
+parker up repro.yaml --overlay with-acl.yaml --overlay slow-wan.yaml \
+  --set dc1:servers=5 --set dc1/web:service.port=9000
+```
+
+- `--overlay FILE` merges in order. Maps merge by key, `key: null`
+  removes a key, and lists replace unless they start with
+  `{$patch: append}`. Unknown keys are reported against the overlay that
+  has them. A `vars:` block in an overlay sets vars for every file, and
+  `--var` beats them all.
+- `--set PATH=VALUE` comes last. PATH is dot-separated from the top
+  (`consul.datacenters.dc1.servers=5`), or rooted at a
+  [selector](#selectors): `dc1:` (the datacenter), `dc1/web:` (a node or
+  gateway), or `dc1/team-a/billing:` (one inside a partition). VALUE is
+  YAML, so `5`, `true`, `[a, b]` and `{port: 9000}` keep their types, and
+  `null` removes the key.
+- `parker expand --merged FILE ...` prints the merged file before
+  expansion. Plain `expand` shows the expanded result.
+
+See [examples/overlays/acl.yaml](examples/overlays/acl.yaml).
+
 ### Editor support
 
 Files that start with
