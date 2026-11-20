@@ -168,7 +168,7 @@ $P ui "$F" --no-open --listen 127.0.0.1:18080 >/run/parker/ui.out 2>&1 </dev/nul
 up=$!
 for _ in $(seq 50); do grep -q '^open: ' /run/parker/ui.out && break; sleep 0.1; done
 link=$(sed -n 's/^open: //p' /run/parker/ui.out)
-tok=$(echo "$link" | sed 's/.*#token=\([0-9a-f]*\).*/\1/')
+tok=$(echo "$link" | sed -n 's/.*[#&]token=\([0-9a-f]*\).*/\1/p')
 [ -n "$tok" ] || { echo "no sign-in link: $(cat /run/parker/ui.out)"; exit 1; }
 curl -sf http://127.0.0.1:18080/ | grep app.js >/dev/null
 jar=/run/parker/ui.jar
