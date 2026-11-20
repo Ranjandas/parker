@@ -200,7 +200,13 @@ func Build(f *spec.File) *Graph {
 						g.Federation = "wan"
 					}
 				}
-				n.Links = append(n.Links, links(cfg)...)
+				for _, l := range links(cfg) {
+					// A fake service's own page draws its chain and faults.
+					if p := rn.Processes[l.Name]; p != nil && p.Env["PARKER_FAKE"] != "" && !strings.Contains(p.Env["PARKER_FAKE"], `"protocol":"tcp"`) {
+						l.Name, l.Path = l.Name+" (fake service)", "/ui"
+					}
+					n.Links = append(n.Links, l)
+				}
 				for _, s := range cfg.Services {
 					if s.Connect != nil && s.Connect.Sidecar != nil && s.Connect.Sidecar.Proxy != nil && len(s.Connect.Sidecar.Proxy.Upstreams) > 0 {
 						callers = append(callers, caller{node: name, ups: s.Connect.Sidecar.Proxy.Upstreams})

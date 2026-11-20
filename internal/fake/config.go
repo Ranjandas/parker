@@ -44,6 +44,8 @@ type Config struct {
 	Seed int64
 	// RequestFaults lets callers ask for faults on one request.
 	RequestFaults bool
+	// Facts adds a space fact to each answer.
+	Facts bool
 	// ReadyDelay is how long after start /ready keeps failing.
 	ReadyDelay time.Duration
 	// ReadyCode and ReadyFailureCode are /ready's answers after and
@@ -58,7 +60,7 @@ func Load(name, dc string, port int, getenv func(string) string) (*Config, error
 		getenv = os.Getenv
 	}
 	c := &Config{Name: name, DC: dc, Port: port, Node: getenv("PARKER_NODE"), Workers: 1, ClientTimeout: 30 * time.Second,
-		Protocol: "http", Faults: DefaultFaults(), RequestFaults: true, ReadyCode: 200, ReadyFailureCode: 503}
+		Protocol: "http", Faults: DefaultFaults(), RequestFaults: true, Facts: true, ReadyCode: 200, ReadyFailureCode: 503}
 	if v := getenv("NAME"); v != "" && name == "" {
 		c.Name = v
 	}
@@ -149,6 +151,9 @@ func (c *Config) apply(f *spec.Fake) error {
 	}
 	if f.RequestFaults != nil {
 		c.RequestFaults = *f.RequestFaults
+	}
+	if f.Facts != nil {
+		c.Facts = *f.Facts
 	}
 	if r := f.Ready; r != nil {
 		if r.Delay != "" {

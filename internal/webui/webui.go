@@ -49,6 +49,7 @@ var allowed = map[string]bool{
 	"/parker.v1.ParkerService/Validate": true,
 	"/parker.v1.ParkerService/Logs":     true,
 	"/parker.v1.ParkerService/Run":      true,
+	"/parker.v1.ParkerService/Fake":     true,
 	"/parker.v1.ParkerService/Down":     true,
 }
 

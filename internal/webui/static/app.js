@@ -91,6 +91,8 @@ const S = {
   logs: { key: "", proc: "", lines: [], ctrl: null, follow: true, filter: "", level: "all", err: "" },
   run: { busy: false, out: [] },
   busy: "",
+  fakes: null,       // {lab, list: [FakeService]} from the Fake call
+  fakeCall: null,    // {node, svc, r, status, err, hits: Set of node names, t}
 };
 
 // ---------- derived state ----------
@@ -430,6 +432,7 @@ function renderNode() {
           <div class="hd"><h3>Consul health</h3><div class="grow"></div>${health.some(([, h]) => h === "critical") ? `<span class="chip bad">${health.filter(([, h]) => h === "critical").length} critical</span>` : health.length ? '<span class="chip ok">passing</span>' : ""}</div>
           <div class="checks" style="padding:14px 16px">${health.length ? health.sort().map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("") : `<span class="muted">${n.role ? "No services registered on this node." : "No reachable Consul agent on this node."}</span>`}</div>
         </div>
+        ${fakeSection(n.name, true, (h) => `<div class="card"><div class="hd"><h3>Fake service</h3><div class="grow"></div><span class="muted" style="font-size:12px">faults change live</span></div><div style="padding:12px 16px">${h}</div></div>`)}
         ${openSection(n.name, (h) => `<div class="card"><div class="hd"><h3>Open</h3><div class="grow"></div><span class="muted" style="font-size:12px">through the daemon</span></div><div style="padding:12px">${h}</div></div>`)}
         <div class="card">
           <div class="hd"><h3>Describe</h3><div class="grow"></div><button class="btn sm ghost" data-act="describe">${S.describe && S.describe.node === n.name ? "Refresh" : "Load"}</button></div>
@@ -547,6 +550,93 @@ async function openApp(btn) {
     if (win) win.close();
     toast("Can't open it: " + e.message);
   }
+}
+
+// ---------- fake services ----------
+// The fake services (run: fake-service) on a node, from the Fake call.
+function fakesOn(nodeName) {
+  const f = S.fakes && S.fakes.lab === S.route.lab ? S.fakes.list : [];
+  return f.filter((x) => x.node === nodeName);
+}
+
+const goMs = (d) => {
+  const u = { ns: 1e-6, us: 1e-3, "µs": 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
+  let t = 0;
+  for (const m of String(d || "").matchAll(/([\d.]+)(ns|us|µs|ms|s|m|h)/g)) t += parseFloat(m[1]) * u[m[2]];
+  return t;
+};
+const fmtDur = (v) => (v >= 1000 ? (v / 1000).toFixed(2) + "s" : v >= 10 ? Math.round(v) + "ms" : v.toFixed(1) + "ms");
+function fakeHops(r, depth = 0, out = []) {
+  out.push({ r, depth });
+  for (const k of Object.keys(r.upstream_calls || {}).sort()) fakeHops(r.upstream_calls[k], depth + 1, out);
+  return out;
+}
+
+// waterfall draws one answer's hops, each bar placed by its start and
+// sized by its duration within the whole request.
+function waterfall(r) {
+  const t0 = Date.parse(r.start_time) || 0, span = Math.max(goMs(r.duration), 0.001);
+  return `<div class="wf">${fakeHops(r).map(({ r: h, depth }) => {
+    const bad = h.code < 0 || h.code >= 400;
+    const left = Math.min(100, Math.max(0, (Date.parse(h.start_time) || t0) - t0) / span * 100);
+    const width = Math.max(1.5, Math.min(100 - left, goMs(h.duration) / span * 100));
+    const meta = [h.node, h.dc, h.version, h.type && h.type !== "HTTP" ? h.type : "", h.injected ? "injected " + h.injected : "", h.cycle ? "cycle" : "", !h.injected && h.error ? h.error : ""].filter(Boolean).join(" · ");
+    return `<div class="wfr" style="padding-left:${depth * 14}px"><div class="wfn"><b>${esc(h.name || h.uri)}</b><span class="chip ${bad ? "bad" : "ok"}">${h.code < 0 ? "failed" : h.code}</span><small>${esc(meta)}</small></div>
+      <div class="wfb"><i style="left:${left}%;width:${width}%;${bad ? "background:var(--bad)" : ""}"></i></div><span class="mono">${h.duration ? esc(fmtDur(goMs(h.duration))) : ""}</span></div>`;
+  }).join("")}</div>${r.fact ? `<p class="fact">✦ ${esc(r.fact)}</p>` : ""}`;
+}
+
+// fakeSection shows a node's fakes: their faults, Send request and the
+// page link; full adds the fault controls (the node page).
+function fakeSection(nodeName, full, wrap) {
+  const fs = fakesOn(nodeName);
+  if (!fs.length) return "";
+  const body = fs.map((f) => {
+    let faults = {};
+    try { faults = JSON.parse(f.faultsJson || "{}"); } catch (e) { /* down */ }
+    const d = `data-sel="${esc(nodeName)}" data-svc="${esc(f.service)}"`;
+    const seg = (label, opts, cur) => `<div class="frow"><span>${label}</span><div class="seg">${opts.map(([t, ch, on]) => `<button data-act="fakeset" ${d} data-change="${esc(JSON.stringify(ch))}" class="${on ? "on" : ""}">${t}</button>`).join("")}</div></div>`;
+    const rate = Math.round((faults.error_rate || 0) * 100), p50 = Math.round((faults.p50 || 0) / 1e6);
+    const controls = full && f.faultsJson ? `
+      ${seg("Health", [["passing", { health: { code: 200 } }, (faults.health_code || 200) < 400], ["critical", { health: { code: 503 } }, faults.health_code >= 400]])}
+      ${seg("Errors", [0, 10, 50, 100].map((n) => [n + "%", { errors: { rate: n / 100 } }, rate === n]))}
+      ${seg("Latency", [0, 200, 1000, 3000].map((n) => [n ? (n >= 1000 ? n / 1000 + "s" : n + "ms") : "off", { latency: { p50: n + "ms", p90: n + "ms", p99: n + "ms" } }, p50 === n]))}
+      <div class="frow"><span></span><button class="btn sm ghost" data-act="fakereset" ${d}>Reset faults</button></div>` : "";
+    const fc = S.fakeCall && S.fakeCall.node === nodeName && S.fakeCall.svc === f.service ? S.fakeCall : null;
+    return `<div class="fake">
+      <div class="fhd"><b>${esc(f.service)}</b><span class="chip">${esc(f.protocol)}${f.port ? " :" + f.port : ""}</span>${f.faulted ? '<span class="chip bad">faults</span>' : f.faultsJson ? '<span class="chip ok">healthy</span>' : ""}</div>
+      <div class="mono fsum">${esc(f.summary)}</div>
+      <div class="actions">${f.protocol !== "tcp" ? `<button class="btn sm" data-act="fakecall" ${d}>Send request</button><button class="btn sm ghost" data-act="open" data-sel="${esc(nodeName)}" data-port="${f.port}" data-scheme="http" data-path="/ui">Open page ↗</button>` : ""}</div>
+      ${controls}
+      ${fc ? (fc.err ? `<p class="err">${esc(fc.err)}</p>` : waterfall(fc.r)) : ""}</div>`;
+  }).join("");
+  return wrap(body);
+}
+
+async function fakeCall(node, svc) {
+  try {
+    const res = await call("Fake", { lab: S.route.lab, selector: node, service: svc, action: "call" });
+    let r = null;
+    try { r = JSON.parse(res.callBody || ""); } catch (e) { /* not JSON */ }
+    if (!r || !r.name) throw new Error(`answered ${res.callStatus || "?"}: ${(res.callBody || "").slice(0, 200)}`);
+    const hits = new Set(fakeHops(r).map(({ r: h }) => h.node).filter(Boolean));
+    S.fakeCall = { node, svc, r, hits, t: Date.now() };
+  } catch (e) {
+    S.fakeCall = { node, svc, err: e.message, hits: new Set(), t: Date.now() };
+  }
+  render();
+}
+
+async function fakeChange(node, svc, change, reset) {
+  try {
+    const res = await call("Fake", { lab: S.route.lab, selector: node, service: svc, action: reset ? "reset" : "set", changeJson: change || "" });
+    const got = (res.services || [])[0];
+    if (got) {
+      S.fakes.list = S.fakes.list.map((x) => (x.node === got.node && x.service === got.service ? got : x));
+      toast(`${node}/${svc}: ${got.summary}`);
+    }
+  } catch (e) { toast("Can't change faults: " + e.message); }
+  render();
 }
 
 // ---------- topology ----------
@@ -774,9 +864,12 @@ function renderTopology() {
       const ps = procState(pr), bad = ps === "down" || procHealth(n, pr) === "critical";
       return `<span class="p"><i style="background:var(--${bad ? "bad" : ps === "ready" ? "ok" : ps === "stopped" ? "line-2" : "warn"})"></i>${esc(pr.name.replace(new RegExp("^" + (gn.services || [])[0] + "-sidecar$"), "sidecar"))}</span>`;
     }).join("") + (procs.length > 4 ? `<span class="p">+${procs.length - 4}</span>` : "") + (!n || !n.namespace ? '<span class="p">not running</span>' : "");
-    cards += `<div class="nd ${T.sel === gn.name ? "sel" : ""} ${s === "bad" ? "bad" : ""} ${s === "down" ? "down" : ""}" data-tnode="${esc(gn.name)}" style="left:${p.x}px;top:${p.y}px" tabindex="0" role="button" aria-label="${esc(gn.name)}, ${s === "ok" ? "healthy" : s}">
+    const ff = fakesOn(gn.name).filter((f) => f.faulted);
+    const hit = S.fakeCall && S.fakeCall.hits && Date.now() - S.fakeCall.t < 10000 && S.fakeCall.hits.has(gn.name);
+    const fbadge = ff.length ? `<span class="fbadge" title="${esc(ff.map((f) => f.service + ": " + f.summary).join("\n"))}">⚡ faults</span>` : "";
+    cards += `<div class="nd ${T.sel === gn.name ? "sel" : ""} ${s === "bad" ? "bad" : ""} ${s === "down" ? "down" : ""} ${hit ? "hit" : ""}" data-tnode="${esc(gn.name)}" style="left:${p.x}px;top:${p.y}px" tabindex="0" role="button" aria-label="${esc(gn.name)}, ${s === "ok" ? "healthy" : s}">
       <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub">${esc(((gn.ips || [])[0] || "") + " · " + what)}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
-      <div class="ps">${pills}</div></div>`;
+      <div class="ps">${pills}</div>${fbadge}</div>`;
   }
 
   const layerBtn = (k, label, sw) => kinds.has(k) ? `<button data-layer="${k}" class="${T.layers[k] !== false ? "on" : ""}" aria-pressed="${T.layers[k] !== false}"><span class="sw" style="background:var(${sw})"></span>${label}</button>` : "";
@@ -854,6 +947,7 @@ function topoPanel(g, ts) {
     }).join("") || `<span class="muted">${n ? "No processes" : "Not running"}</span>`}</div></section>
     ${health.length ? `<section><h4>Consul health</h4><div class="checks">${health.map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("")}</div></section>` : ""}
     ${outs.length || ins.length || through.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}${ins.map((e) => conn(e, "in")).join("")}${through.map((e) => `<a href="#" data-tnode="${esc(e.from)}"><span class="k" style="color:var(--fed)">carries</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><small>${esc(e.label)}</small></a>`).join("")}</div></section>` : ""}
+    ${fakeSection(gn.name, false, (h) => `<section><h4>Fake service</h4>${h}</section>`)}
     ${openSection(gn.name, (h) => `<section><h4>Open</h4>${h}</section>`)}
     <section><h4>Actions</h4><div class="actions"><a class="btn sm" href="${nodeHref}">Logs</a><button class="btn sm" data-act="shell" data-sel="${esc(gn.name)}">${ICON.term}Shell</button><button class="btn sm" data-act="restart" data-sel="${esc(gn.name)}">Restart</button><button class="btn sm" data-act="partition" data-sel="${esc(gn.name)}">Partition</button><button class="btn sm danger" data-act="kill" data-sel="${esc(gn.name)}">Kill</button></div></section>`;
 }
@@ -914,6 +1008,9 @@ async function onAction(btn) {
   switch (act) {
     case "theme": toggleTheme(); return;
     case "open": openApp(btn); return;
+    case "fakecall": fakeCall(sel, btn.dataset.svc); return;
+    case "fakeset": fakeChange(sel, btn.dataset.svc, btn.dataset.change, false); return;
+    case "fakereset": fakeChange(sel, btn.dataset.svc, "", true); return;
     case "copytoken":
       try { await navigator.clipboard.writeText(btn.dataset.token); toast("Copied the ACL token. Paste it in the Consul UI's Log in."); } catch (e) { toast("Token: " + btn.dataset.token); }
       return;
@@ -1027,6 +1124,16 @@ async function poll() {
     } catch (e) {
       if (S.route.lab === lab) { S.statusErr = e.message; S.status = null; }
     }
+  }
+  if (lab && (S.route.view === "topology" || S.route.node)) {
+    try {
+      const fr = await call("Fake", { lab });
+      const list = fr.services || [];
+      if (S.route.lab === lab) {
+        if (!S.fakes || JSON.stringify(S.fakes.list) !== JSON.stringify(list)) S.unchanged = false;
+        S.fakes = { lab, list };
+      }
+    } catch (e) { if (S.route.lab === lab) S.fakes = { lab, list: [] }; }
   }
   // The architecture only changes when the lab is brought up again.
   if (lab && (S.route.view === "topology" || S.route.node) && (sideTick % 5 === 0 || !S.graph || S.graph.lab !== lab)) {

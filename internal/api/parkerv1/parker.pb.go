@@ -2276,6 +2276,262 @@ func (x *RunRequest) GetInline() string {
 	return ""
 }
 
+type FakeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Lab   string                 `protobuf:"bytes,1,opt,name=lab,proto3" json:"lab,omitempty"`
+	// Nodes to act on, as a selector (dc1/web, dc1/*); empty for all.
+	Selector string `protobuf:"bytes,2,opt,name=selector,proto3" json:"selector,omitempty"`
+	// One fake service on those nodes; empty for all of them.
+	Service string `protobuf:"bytes,3,opt,name=service,proto3" json:"service,omitempty"`
+	// list (the default), set, reset or call.
+	Action string `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"`
+	// set: the change, a fake: block as JSON ({"errors":{"rate":0.3}}).
+	ChangeJson string `protobuf:"bytes,5,opt,name=change_json,json=changeJson,proto3" json:"change_json,omitempty"`
+	// call: the path to request (default /) and extra headers, such as
+	// X-Parker-Fault. call needs the selector to name one node.
+	Path          string            `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
+	Headers       map[string]string `protobuf:"bytes,7,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FakeRequest) Reset() {
+	*x = FakeRequest{}
+	mi := &file_parker_v1_parker_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FakeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FakeRequest) ProtoMessage() {}
+
+func (x *FakeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FakeRequest.ProtoReflect.Descriptor instead.
+func (*FakeRequest) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *FakeRequest) GetLab() string {
+	if x != nil {
+		return x.Lab
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetSelector() string {
+	if x != nil {
+		return x.Selector
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetChangeJson() string {
+	if x != nil {
+		return x.ChangeJson
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FakeRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type FakeService struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Node    string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
+	Service string                 `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
+	Port    int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	// http, grpc or tcp.
+	Protocol string `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	// The faults in force, as JSON (fake.Faults).
+	FaultsJson string `protobuf:"bytes,5,opt,name=faults_json,json=faultsJson,proto3" json:"faults_json,omitempty"`
+	// The faults in one line: "health 503 · errors 30% (503) · ...".
+	Summary string `protobuf:"bytes,6,opt,name=summary,proto3" json:"summary,omitempty"`
+	// Set when any fault is injected (failing health, errors, latency or a
+	// rate limit).
+	Faulted       bool `protobuf:"varint,7,opt,name=faulted,proto3" json:"faulted,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FakeService) Reset() {
+	*x = FakeService{}
+	mi := &file_parker_v1_parker_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FakeService) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FakeService) ProtoMessage() {}
+
+func (x *FakeService) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FakeService.ProtoReflect.Descriptor instead.
+func (*FakeService) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *FakeService) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *FakeService) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *FakeService) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *FakeService) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *FakeService) GetFaultsJson() string {
+	if x != nil {
+		return x.FaultsJson
+	}
+	return ""
+}
+
+func (x *FakeService) GetSummary() string {
+	if x != nil {
+		return x.Summary
+	}
+	return ""
+}
+
+func (x *FakeService) GetFaulted() bool {
+	if x != nil {
+		return x.Faulted
+	}
+	return false
+}
+
+type FakeResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Services []*FakeService         `protobuf:"bytes,1,rep,name=services,proto3" json:"services,omitempty"`
+	// call: the answer's body (a fake's JSON) and HTTP status.
+	CallBody      string `protobuf:"bytes,2,opt,name=call_body,json=callBody,proto3" json:"call_body,omitempty"`
+	CallStatus    int32  `protobuf:"varint,3,opt,name=call_status,json=callStatus,proto3" json:"call_status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FakeResponse) Reset() {
+	*x = FakeResponse{}
+	mi := &file_parker_v1_parker_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FakeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FakeResponse) ProtoMessage() {}
+
+func (x *FakeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_parker_v1_parker_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FakeResponse.ProtoReflect.Descriptor instead.
+func (*FakeResponse) Descriptor() ([]byte, []int) {
+	return file_parker_v1_parker_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *FakeResponse) GetServices() []*FakeService {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+func (x *FakeResponse) GetCallBody() string {
+	if x != nil {
+		return x.CallBody
+	}
+	return ""
+}
+
+func (x *FakeResponse) GetCallStatus() int32 {
+	if x != nil {
+		return x.CallStatus
+	}
+	return 0
+}
+
 var File_parker_v1_parker_proto protoreflect.FileDescriptor
 
 const file_parker_v1_parker_proto_rawDesc = "" +
@@ -2441,7 +2697,33 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"RunRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
 	"\bscenario\x18\x02 \x01(\tR\bscenario\x12\x16\n" +
-	"\x06inline\x18\x03 \x01(\tR\x06inline2\xad\x06\n" +
+	"\x06inline\x18\x03 \x01(\tR\x06inline\"\x9d\x02\n" +
+	"\vFakeRequest\x12\x10\n" +
+	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
+	"\bselector\x18\x02 \x01(\tR\bselector\x12\x18\n" +
+	"\aservice\x18\x03 \x01(\tR\aservice\x12\x16\n" +
+	"\x06action\x18\x04 \x01(\tR\x06action\x12\x1f\n" +
+	"\vchange_json\x18\x05 \x01(\tR\n" +
+	"changeJson\x12\x12\n" +
+	"\x04path\x18\x06 \x01(\tR\x04path\x12=\n" +
+	"\aheaders\x18\a \x03(\v2#.parker.v1.FakeRequest.HeadersEntryR\aheaders\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc0\x01\n" +
+	"\vFakeService\x12\x12\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\x12\x18\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\x05R\x04port\x12\x1a\n" +
+	"\bprotocol\x18\x04 \x01(\tR\bprotocol\x12\x1f\n" +
+	"\vfaults_json\x18\x05 \x01(\tR\n" +
+	"faultsJson\x12\x18\n" +
+	"\asummary\x18\x06 \x01(\tR\asummary\x12\x18\n" +
+	"\afaulted\x18\a \x01(\bR\afaulted\"\x80\x01\n" +
+	"\fFakeResponse\x122\n" +
+	"\bservices\x18\x01 \x03(\v2\x16.parker.v1.FakeServiceR\bservices\x12\x1b\n" +
+	"\tcall_body\x18\x02 \x01(\tR\bcallBody\x12\x1f\n" +
+	"\vcall_status\x18\x03 \x01(\x05R\n" +
+	"callStatus2\xe6\x06\n" +
 	"\rParkerService\x12@\n" +
 	"\aVersion\x12\x19.parker.v1.VersionRequest\x1a\x1a.parker.v1.VersionResponse\x120\n" +
 	"\x02Up\x12\x14.parker.v1.UpRequest\x1a\x12.parker.v1.LogLine0\x01\x124\n" +
@@ -2455,7 +2737,8 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x04Exec\x12\x16.parker.v1.ExecRequest\x1a\x17.parker.v1.ExecResponse(\x010\x01\x12;\n" +
 	"\x04Dial\x12\x16.parker.v1.DialRequest\x1a\x17.parker.v1.DialResponse(\x010\x01\x12C\n" +
 	"\bShutdown\x12\x1a.parker.v1.ShutdownRequest\x1a\x1b.parker.v1.ShutdownResponse\x122\n" +
-	"\x03Run\x12\x15.parker.v1.RunRequest\x1a\x12.parker.v1.LogLine0\x01B<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
+	"\x03Run\x12\x15.parker.v1.RunRequest\x1a\x12.parker.v1.LogLine0\x01\x127\n" +
+	"\x04Fake\x12\x16.parker.v1.FakeRequest\x1a\x17.parker.v1.FakeResponseB<Z:github.com/Ranjandas/parker/internal/api/parkerv1;parkerv1b\x06proto3"
 
 var (
 	file_parker_v1_parker_proto_rawDescOnce sync.Once
@@ -2469,7 +2752,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -2506,13 +2789,17 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*DialResponse)(nil),     // 32: parker.v1.DialResponse
 	(*DialOpened)(nil),       // 33: parker.v1.DialOpened
 	(*RunRequest)(nil),       // 34: parker.v1.RunRequest
-	nil,                      // 35: parker.v1.NodeStatus.HealthEntry
+	(*FakeRequest)(nil),      // 35: parker.v1.FakeRequest
+	(*FakeService)(nil),      // 36: parker.v1.FakeService
+	(*FakeResponse)(nil),     // 37: parker.v1.FakeResponse
+	nil,                      // 38: parker.v1.NodeStatus.HealthEntry
+	nil,                      // 39: parker.v1.FakeRequest.HeadersEntry
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
 	10, // 1: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
 	11, // 2: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
-	35, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
+	38, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
 	16, // 4: parker.v1.ValidateResponse.errors:type_name -> parker.v1.ValidateProblem
 	19, // 5: parker.v1.GraphResponse.nodes:type_name -> parker.v1.GraphNode
 	21, // 6: parker.v1.GraphResponse.edges:type_name -> parker.v1.GraphEdge
@@ -2522,37 +2809,41 @@ var file_parker_v1_parker_proto_depIdxs = []int32{
 	28, // 10: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
 	31, // 11: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
 	33, // 12: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
-	0,  // 13: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 14: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 15: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 16: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 17: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 18: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
-	17, // 19: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
-	14, // 20: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
-	22, // 21: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	26, // 22: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	30, // 23: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
-	24, // 24: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	34, // 25: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
-	1,  // 26: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 27: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 28: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 29: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 30: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 31: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	18, // 32: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
-	15, // 33: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
-	23, // 34: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	29, // 35: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	32, // 36: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	25, // 37: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	3,  // 38: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
-	26, // [26:39] is the sub-list for method output_type
-	13, // [13:26] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	39, // 13: parker.v1.FakeRequest.headers:type_name -> parker.v1.FakeRequest.HeadersEntry
+	36, // 14: parker.v1.FakeResponse.services:type_name -> parker.v1.FakeService
+	0,  // 15: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 16: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 17: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 18: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 19: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 20: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
+	17, // 21: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
+	14, // 22: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
+	22, // 23: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	26, // 24: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	30, // 25: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	24, // 26: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	34, // 27: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	35, // 28: parker.v1.ParkerService.Fake:input_type -> parker.v1.FakeRequest
+	1,  // 29: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 30: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 31: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 32: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 33: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 34: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	18, // 35: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
+	15, // 36: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
+	23, // 37: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	29, // 38: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	32, // 39: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	25, // 40: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 41: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	37, // 42: parker.v1.ParkerService.Fake:output_type -> parker.v1.FakeResponse
+	29, // [29:43] is the sub-list for method output_type
+	15, // [15:29] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -2586,7 +2877,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   36,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

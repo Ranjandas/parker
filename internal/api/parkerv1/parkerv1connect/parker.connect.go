@@ -59,6 +59,8 @@ const (
 	ParkerServiceShutdownProcedure = "/parker.v1.ParkerService/Shutdown"
 	// ParkerServiceRunProcedure is the fully-qualified name of the ParkerService's Run RPC.
 	ParkerServiceRunProcedure = "/parker.v1.ParkerService/Run"
+	// ParkerServiceFakeProcedure is the fully-qualified name of the ParkerService's Fake RPC.
+	ParkerServiceFakeProcedure = "/parker.v1.ParkerService/Fake"
 )
 
 // ParkerServiceClient is a client for the parker.v1.ParkerService service.
@@ -100,6 +102,9 @@ type ParkerServiceClient interface {
 	// Run plays a scenario of a running lab, streaming its progress. A
 	// failed step ends the stream with FAILED_PRECONDITION.
 	Run(context.Context, *connect.Request[parkerv1.RunRequest]) (*connect.ServerStreamForClient[parkerv1.LogLine], error)
+	// Fake lists, changes or resets the fake services (run: fake-service)
+	// on a lab's nodes, or sends one request to a fake from inside its node.
+	Fake(context.Context, *connect.Request[parkerv1.FakeRequest]) (*connect.Response[parkerv1.FakeResponse], error)
 }
 
 // NewParkerServiceClient constructs a client for the parker.v1.ParkerService service. By default,
@@ -191,6 +196,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Run")),
 			connect.WithClientOptions(opts...),
 		),
+		fake: connect.NewClient[parkerv1.FakeRequest, parkerv1.FakeResponse](
+			httpClient,
+			baseURL+ParkerServiceFakeProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Fake")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -209,6 +220,7 @@ type parkerServiceClient struct {
 	dial     *connect.Client[parkerv1.DialRequest, parkerv1.DialResponse]
 	shutdown *connect.Client[parkerv1.ShutdownRequest, parkerv1.ShutdownResponse]
 	run      *connect.Client[parkerv1.RunRequest, parkerv1.LogLine]
+	fake     *connect.Client[parkerv1.FakeRequest, parkerv1.FakeResponse]
 }
 
 // Version calls parker.v1.ParkerService.Version.
@@ -276,6 +288,11 @@ func (c *parkerServiceClient) Run(ctx context.Context, req *connect.Request[park
 	return c.run.CallServerStream(ctx, req)
 }
 
+// Fake calls parker.v1.ParkerService.Fake.
+func (c *parkerServiceClient) Fake(ctx context.Context, req *connect.Request[parkerv1.FakeRequest]) (*connect.Response[parkerv1.FakeResponse], error) {
+	return c.fake.CallUnary(ctx, req)
+}
+
 // ParkerServiceHandler is an implementation of the parker.v1.ParkerService service.
 type ParkerServiceHandler interface {
 	// Version of the daemon.
@@ -315,6 +332,9 @@ type ParkerServiceHandler interface {
 	// Run plays a scenario of a running lab, streaming its progress. A
 	// failed step ends the stream with FAILED_PRECONDITION.
 	Run(context.Context, *connect.Request[parkerv1.RunRequest], *connect.ServerStream[parkerv1.LogLine]) error
+	// Fake lists, changes or resets the fake services (run: fake-service)
+	// on a lab's nodes, or sends one request to a fake from inside its node.
+	Fake(context.Context, *connect.Request[parkerv1.FakeRequest]) (*connect.Response[parkerv1.FakeResponse], error)
 }
 
 // NewParkerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -402,6 +422,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Run")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceFakeHandler := connect.NewUnaryHandler(
+		ParkerServiceFakeProcedure,
+		svc.Fake,
+		connect.WithSchema(parkerServiceMethods.ByName("Fake")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/parker.v1.ParkerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ParkerServiceVersionProcedure:
@@ -430,6 +456,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceShutdownHandler.ServeHTTP(w, r)
 		case ParkerServiceRunProcedure:
 			parkerServiceRunHandler.ServeHTTP(w, r)
+		case ParkerServiceFakeProcedure:
+			parkerServiceFakeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -489,4 +517,8 @@ func (UnimplementedParkerServiceHandler) Shutdown(context.Context, *connect.Requ
 
 func (UnimplementedParkerServiceHandler) Run(context.Context, *connect.Request[parkerv1.RunRequest], *connect.ServerStream[parkerv1.LogLine]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Run is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Fake(context.Context, *connect.Request[parkerv1.FakeRequest]) (*connect.Response[parkerv1.FakeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Fake is not implemented"))
 }

@@ -150,6 +150,10 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		v := *b.RequestFaults
 		out.RequestFaults = &v
 	}
+	if b.Facts != nil {
+		v := *b.Facts
+		out.Facts = &v
+	}
 	if b.Ready != nil {
 		r := spec.FakeReady{}
 		if out.Ready != nil {

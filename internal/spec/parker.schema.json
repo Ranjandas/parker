@@ -26,6 +26,10 @@
           "$ref": "#/$defs/ExecAssert",
           "description": "Exec passes when the command exits 0 (and its output contains\noutput:, if set)."
         },
+        "call": {
+          "$ref": "#/$defs/CallAssert",
+          "description": "Call sends one request to a fake service (run: fake-service) and\nchecks the answer and the hops it went through."
+        },
         "within": {
           "type": "string",
           "description": "Within is how long to keep retrying, e.g. 20s; default once."
@@ -45,6 +49,48 @@
       "type": "object",
       "required": [
         "ip"
+      ]
+    },
+    "CallAssert": {
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "On is the node whose fake service answers (one node), e.g. dc1/web."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service picks one fake when the node runs several."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to request; default /."
+        },
+        "header": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Header adds request headers, e.g. X-Parker-Fault."
+        },
+        "code": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Code the answer must have; default 200."
+        },
+        "reaches": {
+          "type": "string",
+          "description": "Reaches: some hop of the chain is this service: api, dc2/api, or a\nnode name (dc2-api)."
+        },
+        "body": {
+          "type": "string",
+          "description": "Body: the answer contains this text."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on"
       ]
     },
     "ConfigEntry": {
@@ -439,6 +485,10 @@
         "request_faults": {
           "type": "boolean",
           "description": "RequestFaults lets a caller ask for faults on one request\n(?error-rate=50\u0026delay=2s, or the X-Parker-Fault header); default\ntrue."
+        },
+        "facts": {
+          "type": "boolean",
+          "description": "Facts adds a short space fact to each answer (default true; the\nset depends on the version). false keeps output clean for sharing."
         }
       },
       "additionalProperties": false,

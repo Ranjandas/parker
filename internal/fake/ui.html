@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fake service</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --fg: #1c2330; --muted: #667085; --line: #e3e6eb;
+  --accent: #e2561b; --ok: #12805c; --bad: #c4321f; --warn: #b26b00;
+  --c0: #2f6fdb; --c1: #e2561b; --c2: #12805c; --c3: #8a46d1; --c4: #b26b00; --c5: #0f8d9c;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c; --card: #1a2029; --fg: #e8ecf2; --muted: #98a2b3; --line: #2b3340;
+    --accent: #ff7a3d; --ok: #3ccf91; --bad: #ff6b57; --warn: #f0b429;
+    --c0: #6aa1ff; --c1: #ff7a3d; --c2: #3ccf91; --c3: #b98cff; --c4: #f0b429; --c5: #4fd1dd;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
+header h1 { font-size: 18px; margin: 0; }
+.where { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.badge { border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+.badge.ok { color: var(--ok); } .badge.bad { color: var(--bad); }
+main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 16px; padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
+@media (max-width: 820px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+input[type=text], input[type=number], select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
+input[type=text] { flex: 1; min-width: 120px; font-family: ui-monospace, Menlo, monospace; }
+.strip { display: flex; gap: 3px; margin: 12px 0 6px; min-height: 22px; flex-wrap: wrap; }
+.strip span { width: 14px; height: 22px; border-radius: 3px; }
+.strip span.fail { background: repeating-linear-gradient(45deg, var(--bad), var(--bad) 3px, transparent 3px, transparent 6px) !important; border: 1px solid var(--bad); }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.split { font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-top: 6px; }
+.hop { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.hop:last-child { border-bottom: 0; }
+.hop .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hop .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700; padding: 0 6px; border-radius: 4px; margin-left: 6px; }
+.code.ok { color: var(--ok); } .code.bad { color: var(--bad); }
+.bar { height: 8px; background: var(--line); border-radius: 4px; position: relative; overflow: hidden; }
+.bar b { position: absolute; top: 0; bottom: 0; background: var(--c0); border-radius: 4px; }
+.bar + small { display: block; text-align: right; font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.empty { color: var(--muted); }
+label.field { display: block; margin: 10px 0; }
+label.field > span:first-child { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+label.field output { font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.toggle button { border: 0; border-radius: 0; }
+.toggle button.on.pass { background: var(--ok); color: #fff; }
+.toggle button.on.crit { background: var(--bad); color: #fff; }
+.note { font-size: 12px; color: var(--warn); margin: 6px 0 0; }
+.summary { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.fact { font-size: 15px; }
+.fact small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.err { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Fake service</h1>
+  <span class="where" id="where"></span>
+  <span class="badge ok" id="state" hidden></span>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2>Request</h2>
+      <div class="row">
+        <button class="primary" id="send">Send request</button>
+        <input type="text" id="path" value="/" aria-label="Path">
+        <button id="loop" aria-pressed="false">Loop</button>
+        <select id="every" aria-label="Interval">
+          <option value="500">every 0.5s</option>
+          <option value="1000" selected>every 1s</option>
+          <option value="2000">every 2s</option>
+          <option value="5000">every 5s</option>
+        </select>
+      </div>
+      <div class="strip" id="strip" aria-label="Recent requests"></div>
+      <div class="legend" id="legend"></div>
+      <div class="split" id="split"></div>
+    </div>
+    <div class="card">
+      <h2>Chain</h2>
+      <div id="chain" class="empty">Send a request to see the hops it goes through.</div>
+    </div>
+  </section>
+  <aside>
+    <div class="card" id="controls">
+      <h2>Faults</h2>
+      <label class="field"><span>Health check</span>
+        <span class="toggle"><button id="pass" class="pass">passing</button><button id="crit" class="crit">critical</button></span>
+      </label>
+      <label class="field"><span>Error rate <output id="erate-o">0%</output></span>
+        <input type="range" id="erate" min="0" max="100" step="5" value="0"></label>
+      <label class="field"><span>Error code</span>
+        <select id="ecode"><option>500</option><option>502</option><option>503</option><option>504</option><option>429</option></select></label>
+      <label class="field"><span>Latency p50 <output id="p50-o">0ms</output></span>
+        <input type="range" id="p50" min="0" max="2000" step="10" value="0"></label>
+      <label class="field"><span>Latency p99 <output id="p99-o">0ms</output></span>
+        <input type="range" id="p99" min="0" max="5000" step="50" value="0"></label>
+      <label class="field"><span>Rate limit (requests/s, 0 is off)</span>
+        <input type="number" id="rps" min="0" step="1" value="0"></label>
+      <div class="row"><button id="reset">Reset</button></div>
+      <div class="summary" id="summary"></div>
+      <p class="note" id="ro" hidden>Read only here: open this page from the Parker UI (or use <code>parker fake</code>) to change faults.</p>
+      <p class="err" id="cerr" hidden></p>
+    </div>
+    <div class="card">
+      <h2>Space fact</h2>
+      <div class="fact" id="fact"><span class="empty">A new one comes with each answer.</span></div>
+    </div>
+  </aside>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const CTL = "/.parker/fake/";
+
+// Go durations ("1.5ms", "2m3.1s") to milliseconds.
+function ms(d) {
+  if (!d) return 0;
+  const units = { ns: 1e-6, us: 1e-3, "µs": 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
+  let t = 0;
+  for (const m of String(d).matchAll(/([\d.]+)(ns|us|µs|ms|s|m|h)/g)) t += parseFloat(m[1]) * units[m[2]];
+  return t;
+}
+const fmtMs = (v) => v >= 1000 ? (v / 1000).toFixed(2) + "s" : v >= 10 ? Math.round(v) + "ms" : v.toFixed(1) + "ms";
+
+function hops(r, depth = 0, out = []) {
+  out.push({ r, depth });
+  for (const k of Object.keys(r.upstream_calls || {}).sort()) hops(r.upstream_calls[k], depth + 1, out);
+  return out;
+}
+const failed = (r) => r.code < 0 || r.code >= 400;
+const label = (h) => [h.dc, h.version].filter(Boolean).join(" ") || h.node || "";
+
+// The strip colours each answer by who answered past the first hop.
+const colors = ["--c0", "--c1", "--c2", "--c3", "--c4", "--c5"];
+const sigColor = new Map();
+const recent = [];
+const counts = new Map(); // service -> label -> n
+
+function sig(r) {
+  const hs = hops(r).slice(1).map(({ r }) => (r.name || r.uri) + "@" + label(r));
+  return hs.length ? hs.join(" → ") : (r.name + "@" + label(r));
+}
+function colorFor(s) {
+  if (!sigColor.has(s)) sigColor.set(s, colors[sigColor.size % colors.length]);
+  return `var(${sigColor.get(s)})`;
+}
+
+function record(r) {
+  const s = sig(r);
+  recent.push({ s, fail: failed(r), title: `${r.code} · ${r.duration} · ${s}` });
+  if (recent.length > 40) recent.shift();
+  for (const { r: h } of hops(r)) {
+    if (!h.name) continue;
+    if (!counts.has(h.name)) counts.set(h.name, new Map());
+    const m = counts.get(h.name);
+    m.set(label(h), (m.get(label(h)) || 0) + 1);
+  }
+  $("strip").innerHTML = recent.map((x) => `<span class="${x.fail ? "fail" : ""}" style="background:${colorFor(x.s)}" title="${esc(x.title)}"></span>`).join("");
+  $("legend").innerHTML = [...new Set(recent.map((x) => x.s))].map((s) => `<span><i style="background:${colorFor(s)}"></i>${esc(s)}</span>`).join("");
+  const lines = [];
+  for (const [svc, m] of [...counts].sort()) {
+    if (m.size < 2) continue;
+    const total = [...m.values()].reduce((a, b) => a + b, 0);
+    lines.push(esc(svc) + ": " + [...m].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${esc(l)} ${Math.round(n * 100 / total)}%`).join(" · "));
+  }
+  $("split").innerHTML = lines.join("<br>");
+}
+
+function drawChain(r) {
+  const all = hops(r);
+  const t0 = Date.parse(r.start_time) || 0;
+  const span = Math.max(ms(r.duration), 0.001);
+  $("chain").className = "";
+  $("chain").innerHTML = all.map(({ r: h, depth }) => {
+    const start = Math.max(0, (Date.parse(h.start_time) || t0) - t0);
+    const left = Math.min(100, start / span * 100);
+    const width = Math.max(1.5, Math.min(100 - left, ms(h.duration) / span * 100));
+    const meta = [h.node, h.dc, h.version, h.type !== "HTTP" ? h.type : ""].filter(Boolean).join(" · ");
+    const extra = h.injected ? ` · injected ${h.injected}` : h.cycle ? " · cycle" : h.error ? " · " + h.error : "";
+    return `<div class="hop" style="padding-left:${depth * 18}px">
+      <div><div class="name">${depth ? "└ " : ""}${esc(h.name || h.uri)}<span class="code ${failed(h) ? "bad" : "ok"}">${h.code < 0 ? "failed" : h.code}</span></div>
+      <div class="meta">${esc(meta + extra)}</div></div>
+      <div><div class="bar"><b style="left:${left}%;width:${width}%;background:${failed(h) ? "var(--bad)" : "var(--c0)"}"></b></div><small>${h.duration ? fmtMs(ms(h.duration)) : ""}</small></div></div>`;
+  }).join("");
+  if (r.fact) $("fact").innerHTML = `${esc(r.fact)}<small>from ${esc(r.name)}${r.version ? " " + esc(r.version) : ""}</small>`;
+}
+
+async function send() {
+  const path = $("path").value.trim() || "/";
+  try {
+    const res = await fetch(path.startsWith("/") ? path : "/" + path, { cache: "no-store" });
+    const r = await res.json();
+    if (!r.name) throw new Error("not a fake service's answer");
+    record(r); drawChain(r);
+  } catch (e) {
+    recent.push({ s: "error", fail: true, title: String(e) });
+    $("chain").className = "err"; $("chain").textContent = String(e);
+  }
+}
+
+let timer = null;
+function setLoop(on) {
+  clearInterval(timer); timer = null;
+  $("loop").setAttribute("aria-pressed", String(on));
+  $("loop").classList.toggle("primary", on);
+  $("loop").textContent = on ? "Stop" : "Loop";
+  if (on) { send(); timer = setInterval(send, +$("every").value); }
+}
+$("send").onclick = send;
+$("loop").onclick = () => setLoop(!timer);
+$("every").onchange = () => { if (timer) setLoop(true); };
+$("path").onkeydown = (e) => { if (e.key === "Enter") send(); };
+
+// ---------- faults ----------
+let editable = false;
+function showFaults(j) {
+  const f = j.faults;
+  const crit = f.health_code >= 400;
+  $("pass").classList.toggle("on", !crit); $("crit").classList.toggle("on", crit);
+  $("erate").value = Math.round((f.error_rate || 0) * 100); $("erate-o").value = $("erate").value + "%";
+  $("ecode").value = String(f.error_code || 500);
+  $("p50").value = Math.round((f.p50 || 0) / 1e6); $("p50-o").value = $("p50").value + "ms";
+  $("p99").value = Math.round((f.p99 || 0) / 1e6); $("p99-o").value = $("p99").value + "ms";
+  $("rps").value = f.rate_limit || 0;
+  $("summary").textContent = j.summary;
+  const st = $("state");
+  st.hidden = false;
+  st.className = "badge " + (j.injected ? "bad" : "ok");
+  st.textContent = j.injected ? "faults injected" : "healthy";
+}
+function setEditable(on) {
+  editable = on;
+  for (const el of $("controls").querySelectorAll("button, input, select")) el.disabled = !on;
+  $("ro").hidden = on;
+}
+async function control(path, body) {
+  const opts = body === undefined ? { cache: "no-store" } :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(CTL + path, opts);
+  if (r.status === 403 || r.status === 404) { setEditable(false); return null; }
+  if (!r.ok) { $("cerr").hidden = false; $("cerr").textContent = await r.text(); return null; }
+  $("cerr").hidden = true;
+  const j = await r.json();
+  setEditable(true);
+  showFaults(j);
+  return j;
+}
+let pending = null;
+function change(body, now) {
+  if (!editable) return;
+  clearTimeout(pending);
+  pending = setTimeout(() => control("faults", body), now ? 0 : 250);
+}
+$("pass").onclick = () => change({ health: { code: 200 } }, true);
+$("crit").onclick = () => change({ health: { code: 503 } }, true);
+$("erate").oninput = () => { $("erate-o").value = $("erate").value + "%"; change({ errors: { rate: $("erate").value / 100, code: +$("ecode").value } }); };
+$("ecode").onchange = () => change({ errors: { code: +$("ecode").value } }, true);
+const lat = () => ({ latency: { p50: $("p50").value + "ms", p90: $("p50").value + "ms", p99: Math.max(+$("p99").value, +$("p50").value) + "ms" } });
+$("p50").oninput = () => { $("p50-o").value = $("p50").value + "ms"; change(lat()); };
+$("p99").oninput = () => { $("p99-o").value = $("p99").value + "ms"; change(lat()); };
+$("rps").onchange = () => change({ rate_limit: { rps: Math.max(0, +$("rps").value || 0) } }, true);
+$("reset").onclick = () => editable && control("reset", {});
+
+// Who am I: the first answer names the service.
+(async () => {
+  setEditable(false);
+  try {
+    const r = await (await fetch("/", { cache: "no-store" })).json();
+    document.title = r.name + " · fake service";
+    $("title").textContent = r.name;
+    $("where").textContent = [r.node, r.dc, r.version].filter(Boolean).join(" · ");
+    record(r); drawChain(r);
+  } catch (e) { /* the service may be failing on purpose */ }
+  await control("faults").catch(() => setEditable(false));
+  setInterval(() => editable && control("faults").catch(() => {}), 5000);
+})();
+</script>
+</body>
+</html>

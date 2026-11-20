@@ -86,8 +86,25 @@ if grep "^name: fake-chain" "$F" >/dev/null; then
   [ "$code" = 500 ] || { echo "web answered $code with api failing" >&2; exit 1; }
   $P fake "$F" dc1/api | grep "errors 100%"
   $P fake "$F" dc1/api --reset | grep "errors off"
-  $P exec "$F" dc1-web -- curl -sf -o /dev/null http://127.0.0.1:8080/ </dev/null
+  $P exec "$F" dc1-web -- sh -c 'curl -s -w "\n%{http_code}\n" http://127.0.0.1:8080/ | tee /tmp/web.out | tail -1 | grep -x 200 || { cat /tmp/web.out; exit 1; }' </dev/null
   echo "faults changed at runtime and reset"
+  echo "--- parker call"
+  $P call "$F" dc1/web | tee /dev/stderr | grep "└─ db  dc1-db · dc1  200" >/dev/null
+  $P call "$F" dc1/web --json | grep '"fact":' >/dev/null
+  $P call "$F" dc1/web --every 100ms --count 3 | grep -- "--- 3 requests, 0 failed" >/dev/null
+  if $P call "$F" dc1/web -H 'X-Parker-Fault: db=error-rate:100' >/dev/null; then echo "call with a fault at db passed" >&2; exit 1; fi
+  echo "--- fake /ui through the daemon's app proxy"
+  sock=$PARKER_RUN_DIR/parker.sock
+  app="http://parker/app/fake-chain/dc1-db/http/7000"
+  curl -sf --unix-socket "$sock" "$app/ui" | grep "Fake service" >/dev/null
+  # api sits behind a transparent proxy: its page is reached on the node's loopback.
+  curl -sf --unix-socket "$sock" "http://parker/app/fake-chain/dc1-api/http/9090/ui" | grep "Fake service" >/dev/null
+  curl -sf --unix-socket "$sock" -H 'Content-Type: application/json' -d '{"health":{"code":503}}' "$app/.parker/fake/faults" | grep '"injected":true' >/dev/null
+  $P fake "$F" dc1/db | grep "health 503" >/dev/null
+  curl -sf --unix-socket "$sock" -X POST "$app/.parker/fake/reset" | grep '"injected":false' >/dev/null
+  code=$($P exec "$F" dc1-db -- curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"health":{"code":503}}' http://127.0.0.1:7000/.parker/fake/faults </dev/null)
+  [ "$code" = 403 ] || { echo "the service port took a fault change ($code)" >&2; exit 1; }
+  echo "parker call and the fake UI work"
 fi
 if grep "^name: faults" "$F" >/dev/null; then
   echo "--- parker fault"

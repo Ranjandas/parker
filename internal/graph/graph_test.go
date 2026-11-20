@@ -151,7 +151,8 @@ func linksOf(t *testing.T, g *Graph, name string) []string {
 func TestLinks(t *testing.T) {
 	g := build(t, "mesh.yaml")
 	want(t, "server", linksOf(t, g, "dc1-server-1"), "Consul UI http:8500/ui/")
-	want(t, "service", linksOf(t, g, "dc1-web"), "web http:8080/")
+	// A fake service links to its own page.
+	want(t, "service", linksOf(t, g, "dc1-web"), "web (fake service) http:8080/ui")
 	// TLS turns the HTTP port off: the UI is on 8501 (and the example has ACLs).
 	want(t, "tls server", linksOf(t, build(t, "tls.yaml"), "dc1-server-1"), "Consul UI https:8501/ui/ token")
 	// With ACLs the UI link carries the management token to sign in with.

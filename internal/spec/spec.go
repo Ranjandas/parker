@@ -211,6 +211,9 @@ type Assert struct {
 	// Exec passes when the command exits 0 (and its output contains
 	// output:, if set).
 	Exec *ExecAssert `yaml:"exec,omitempty"`
+	// Call sends one request to a fake service (run: fake-service) and
+	// checks the answer and the hops it went through.
+	Call *CallAssert `yaml:"call,omitempty"`
 	// Within is how long to keep retrying, e.g. 20s; default once.
 	Within string `yaml:"within,omitempty"`
 }
@@ -226,6 +229,24 @@ type ConsulAssert struct {
 	Peers string `yaml:"peers,omitempty"`
 	// ServiceHealthy: at least one instance of the service passes.
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`
+}
+
+type CallAssert struct {
+	// On is the node whose fake service answers (one node), e.g. dc1/web.
+	On string `yaml:"on"`
+	// Service picks one fake when the node runs several.
+	Service string `yaml:"service,omitempty"`
+	// Path to request; default /.
+	Path string `yaml:"path,omitempty"`
+	// Header adds request headers, e.g. X-Parker-Fault.
+	Header map[string]string `yaml:"header,omitempty"`
+	// Code the answer must have; default 200.
+	Code int `yaml:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// Reaches: some hop of the chain is this service: api, dc2/api, or a
+	// node name (dc2-api).
+	Reaches string `yaml:"reaches,omitempty"`
+	// Body: the answer contains this text.
+	Body string `yaml:"body,omitempty"`
 }
 
 type ExecAssert struct {
@@ -711,6 +732,9 @@ type Fake struct {
 	// (?error-rate=50&delay=2s, or the X-Parker-Fault header); default
 	// true.
 	RequestFaults *bool `yaml:"request_faults,omitempty" json:"request_faults,omitempty"`
+	// Facts adds a short space fact to each answer (default true; the
+	// set depends on the version). false keeps output clean for sharing.
+	Facts *bool `yaml:"facts,omitempty" json:"facts,omitempty"`
 }
 
 type FakeLatency struct {
