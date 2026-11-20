@@ -69,6 +69,7 @@ var (
 		{".github/ISSUE_TEMPLATE/", nil},
 		{"LICENSE", nil},
 		{".gitignore", nil},
+		{".goreleaser.yaml", nil},
 	}
 )
 

@@ -25,6 +25,7 @@ func TestPlan(t *testing.T) {
 		want    []string
 	}{
 		{"docs only", []string{"README.md", "docs/x.png"}, nil},
+		{"release config only", []string{".goreleaser.yaml"}, nil},
 		{"website only", []string{"site/index.html", "site/install.sh", ".github/workflows/pages.yml"}, nil},
 		{"unit tests only", []string{"internal/lab/lab_test.go"}, nil},
 		{"tui", []string{"internal/tui/model.go", "cmd/parker/tui.go"}, nil},
