@@ -74,7 +74,15 @@ func TestPeeringViaMeshGateways(t *testing.T) {
 		t.Errorf("acceptor server ports: %v", p)
 	}
 	if _, ok := acc.Networks[WANNetwork]; ok {
-		t.Error("servers stay off the wan when peering through gateways")
+		t.Error("the acceptor's servers stay off the wan when peering through gateways")
+	}
+	// The dialer's servers reach the peer's gateway directly too (#122);
+	// serf stays on the LAN.
+	if _, ok := dial.Networks[WANNetwork]; !ok {
+		t.Error("the dialer's servers reach the wan")
+	}
+	if cfg := agentConfig(t, dial); cfg["serf_wan"] != cfg["serf_lan"] || cfg["advertise_addr_wan"] != nil {
+		t.Errorf("dialer serf: lan %v, wan %v, advertise wan %v", cfg["serf_lan"], cfg["serf_wan"], cfg["advertise_addr_wan"])
 	}
 	if _, ok := low.Nodes["dc2-mesh"].Networks[WANNetwork]; !ok {
 		t.Error("peered mesh gateways join the wan")
