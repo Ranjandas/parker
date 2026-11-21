@@ -88,4 +88,4 @@ case ":$PATH:" in
 esac
 "$dir/parker" version 2>/dev/null || true
 say "next: parker init lab.yaml && parker up lab.yaml"
-say "guide: https://ranjandas.github.io/parker/start.html"
+say "guide: https://ranjandas.github.io/parker/docs/quick-start.html"

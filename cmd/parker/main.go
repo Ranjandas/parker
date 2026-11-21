@@ -25,6 +25,14 @@ import (
 var varFlags, overlayFlags, setFlags []string
 
 func main() {
+	if err := newRoot().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+// newRoot builds the parker command tree.
+func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "parker",
 		Short: "Consul repros at probe speed: Linux network namespaces, no containers",
@@ -41,10 +49,7 @@ func main() {
 	root.PersistentFlags().StringArrayVar(&setFlags, "set", nil, "set a value over FILE and overlays: PATH=VALUE or SELECTOR:PATH=VALUE (dc1/web:service.port=9000); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
 	root.AddCommand(versionCmd(), tuiCmd(), uiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), dataplaneHealthCmd(), runCmd(), faultCmd(), fakeCmd(), callCmd(), sidecarCmd())
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
+	return root
 }
 
 // layers are the --overlay, --var and --set flags.

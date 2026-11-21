@@ -66,11 +66,13 @@ var (
 		{"cmd/parker/tui.go", nil},
 		{"hack/e2eplan/", nil},
 		{"hack/genschema/", nil},
+		{"hack/sitegen/", nil},
 		{"docs/", nil},
 		{"site/", nil},
 		{".github/workflows/pages.yml", nil},
 		{".github/ISSUE_TEMPLATE/", nil},
 		{"LICENSE", nil},
+		{"CLAUDE.md", nil},
 		{".gitignore", nil},
 		{".goreleaser.yaml", nil},
 	}

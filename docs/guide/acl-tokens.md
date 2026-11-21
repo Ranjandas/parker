@@ -1,4 +1,7 @@
-# ACL tokens
+---
+title: ACL tokens
+description: Every token Parker creates when ACLs are on, where it is used, and its exact rules.
+---
 
 With `acl: true`, parker sets up ACLs the way Consul's docs do: deny by
 default, and every agent, service and gateway gets its own token with
