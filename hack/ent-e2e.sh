@@ -67,7 +67,12 @@ echo "only $lic"
 
 if grep "^scenario:" "$F" >/dev/null; then
   echo "--- scenario"
-  $P run --no-up "$F"
+  if ! $P run --no-up "$F"; then
+    # The lab dies with this namespace, so look at it now.
+    P=$P hack/lab-diag.sh "$F" 2>&1 | grep -vF "$NEEDLE" || true
+    $P down "$F" >/dev/null 2>&1 || true; $P daemon stop >/dev/null 2>&1 || true
+    echo "FAIL: scenario (diagnostics above)" >&2; exit 1
+  fi
 fi
 
 echo "--- down removes it"
