@@ -48,6 +48,8 @@ docs set them up:
 | Servers | the `parker-agent` token |
 | Setup jobs (acl-setup, tenancy, config entries, peering, dataplane-health), `parker exec` | management |
 
+[ACL tokens](acl.md) lists every token's policies and their exact rules.
+
 With namespaces (Consul Enterprise), services and gateways also get
 `parker-read-everywhere`: service and node read in every namespace of
 their partition, which cross-namespace upstreams need. A service or

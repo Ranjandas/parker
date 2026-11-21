@@ -647,7 +647,8 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   `examples/acl.yaml`); `parker exec FILE NODE --env` prints it with the
   address and CA for the `consul` CLI on the host, and `parker describe`
   names each token a node uses. Federated dcs replicate tokens from the
-  primary. See [docs/troubleshooting.md](docs/troubleshooting.md).
+  primary. [docs/acl.md](docs/acl.md) lists every token and its exact
+  rules; see also [docs/troubleshooting.md](docs/troubleshooting.md).
 - `tls: true`: a CA per lab signs the servers' certificates
   (`server.<dc>.consul`, node IPs, their `parker proxy` names) and is the
   Connect root, so clients' `auto_encrypt` certificates chain to it too.
