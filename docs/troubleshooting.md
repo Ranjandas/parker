@@ -50,7 +50,13 @@ docs set them up:
 
 With namespaces (Consul Enterprise), services and gateways also get
 `parker-read-everywhere`: service and node read in every namespace of
-their partition, which cross-namespace upstreams need.
+their partition, which cross-namespace upstreams need. A service or
+gateway in a namespace other than `default` has its token in the
+partition's default namespace instead, with a `parker-service-<ns>-<svc>`
+(or `parker-<kind>-gateway-<ns>-<svc>`) policy that grants the service
+identity's rules inside a `namespace "<ns>"` block: Enterprise only
+links a token to its own namespace's policies, and only default-namespace
+policies can grant partition-wide rules.
 
 The `tenancy` process on each datacenter's `server-1` creates the
 policies and tokens before any client starts; its log lists each one.

@@ -102,6 +102,15 @@ func TestEnsureIdentityToken(t *testing.T) {
 		len(got.Policies) != 1 || got.Policies[0].ID != "pol-1" {
 		t.Fatalf("token: %+v", got)
 	}
+	// A scoped token sits in the partition's default namespace, with no
+	// service identity: its policy carries the rules.
+	scoped := expand.IdentityToken{SecretID: "s-3", Partition: "part-a", Namespace: "app", Service: "tgw", Scoped: true, Policies: []string{"parker-tgw"}}
+	if err := ensureIdentityToken(f, scoped); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.tokens["s-3"]; got == nil || got.Partition != "part-a" || got.Namespace != "" || len(got.ServiceIdentities) != 0 || len(got.Policies) != 1 {
+		t.Fatalf("scoped token: %+v", got)
+	}
 	node := expand.IdentityToken{SecretID: "s-2", Node: "web", Datacenter: "dc1"}
 	if err := ensureIdentityToken(f, node); err != nil {
 		t.Fatal(err)

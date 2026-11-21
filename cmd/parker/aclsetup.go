@@ -150,20 +150,26 @@ func ensurePolicy(a identityACL, p expand.IdentityPolicy) error {
 // ensureIdentityToken creates a token with the SecretID expand picked
 // unless it is there (a re-up keeps Consul's data).
 func ensureIdentityToken(a identityACL, t expand.IdentityToken) error {
-	q := &api.QueryOptions{Token: t.SecretID, Partition: t.Partition, Namespace: t.Namespace}
+	ns := t.Namespace
+	if t.Scoped {
+		// In the partition's default namespace, with its policies; its
+		// policy grants the service identity's rules in t.Namespace.
+		ns = ""
+	}
+	q := &api.QueryOptions{Token: t.SecretID, Partition: t.Partition, Namespace: ns}
 	if got, _, err := a.TokenReadSelf(q); err == nil && got != nil {
 		return nil
 	}
-	tok := &api.ACLToken{SecretID: t.SecretID, Description: t.Description, Partition: t.Partition, Namespace: t.Namespace}
+	tok := &api.ACLToken{SecretID: t.SecretID, Description: t.Description, Partition: t.Partition, Namespace: ns}
 	if t.Node != "" {
 		tok.NodeIdentities = []*api.ACLNodeIdentity{{NodeName: t.Node, Datacenter: t.Datacenter}}
 	}
-	if t.Service != "" {
+	if t.Service != "" && !t.Scoped {
 		tok.ServiceIdentities = []*api.ACLServiceIdentity{{ServiceName: t.Service}}
 	}
 	for _, name := range t.Policies {
-		// The policies are in the partition's default namespace, which a
-		// token in another namespace links by ID.
+		// The policies are in the partition's default namespace, as is
+		// every token that links one.
 		p, _, err := a.PolicyReadByName(name, &api.QueryOptions{Partition: t.Partition})
 		if err != nil {
 			return fmt.Errorf("policy %s: %w", name, err)
@@ -173,6 +179,6 @@ func ensureIdentityToken(a identityACL, t expand.IdentityToken) error {
 		}
 		tok.Policies = append(tok.Policies, &api.ACLTokenPolicyLink{ID: p.ID})
 	}
-	_, _, err := a.TokenCreate(tok, &api.WriteOptions{Partition: t.Partition, Namespace: t.Namespace})
+	_, _, err := a.TokenCreate(tok, &api.WriteOptions{Partition: t.Partition, Namespace: ns})
 	return err
 }

@@ -34,6 +34,14 @@ type IdentityToken struct {
 	// Policies (by name, from TenancySpec.Policies in the token's
 	// partition) add to the identity.
 	Policies []string `json:"policies,omitempty"`
+	// Scoped: the service is in a namespace other than default, and the
+	// token lives in its partition's default namespace with no service
+	// identity; its policy grants the identity's rules inside a namespace
+	// block. Consul Enterprise links a token only to policies of its own
+	// namespace, and only default-namespace policies may name other
+	// namespaces, which partition-wide rules (mesh, peering, read
+	// everywhere) need.
+	Scoped bool `json:"scoped,omitempty"`
 }
 
 // IdentityPolicy is a policy the tenancy process creates, in its
@@ -119,12 +127,30 @@ query_prefix "" { policy = "read" }
 	})
 }
 
+// identityRules are what Consul's service identity grants (service
+// identity template), inside a namespace block.
+func identityRules(namespace, svc string) string {
+	return fmt.Sprintf("namespace %q {\n%s}\n", namespace, identityBody(svc, "  "))
+}
+
+func identityBody(svc, indent string) string {
+	return fmt.Sprintf(`%[1]sservice %[2]q { policy = "write" }
+%[1]sservice %[3]q { policy = "write" }
+%[1]sservice_prefix "" { policy = "read" }
+%[1]snode_prefix "" { policy = "read" }
+`, indent, svc, svc+"-sidecar-proxy")
+}
+
 // service is a service's token: a service identity, which covers its
 // sidecar too.
 func (id *identities) service(partition, namespace, svc string) (string, error) {
 	return id.token("service/"+partition+"/"+namespace+"/"+svc, func() IdentityToken {
 		t := IdentityToken{Description: "Parker service " + svc, Partition: partition, Namespace: namespace, Service: svc}
-		if id.ent {
+		switch {
+		case namespace != "" && namespace != spec.DefaultNamespace:
+			t.Scoped = true
+			t.Policies = []string{id.policy(partition, "parker-service-"+namespace+"-"+svc, identityRules(namespace, svc)+readEverywhere)}
+		case id.ent:
 			t.Policies = []string{id.policy(partition, "parker-read-everywhere", readEverywhere)}
 		}
 		return t
@@ -137,6 +163,7 @@ func (id *identities) service(partition, namespace, svc string) (string, error) 
 func (id *identities) gateway(g gatewayNode, partition, namespace string, linked []linkedService) (string, error) {
 	svc := g.service()
 	return id.token("gateway/"+partition+"/"+namespace+"/"+svc, func() IdentityToken {
+		scoped := namespace != "" && namespace != spec.DefaultNamespace
 		var rules string
 		switch g.kind {
 		case "mesh":
@@ -148,16 +175,28 @@ node_prefix "" { policy = "read" }
 agent_prefix "" { policy = "read" }
 `, svc)
 		case "terminating":
-			rules = linkedRules(linked, namespace, id.ent)
+			own := ""
+			if scoped {
+				own = svc // its identity's rules join its namespace's block
+			}
+			rules = linkedRules(linked, namespace, id.ent, own)
 		case "api":
 			rules = `mesh = "read"
 `
 		}
 		t := IdentityToken{Description: "Parker " + g.kind + " gateway " + svc, Partition: partition, Namespace: namespace, Service: svc}
+		name := "parker-" + g.kind + "-gateway-" + svc
+		if scoped {
+			t.Scoped = true
+			if g.kind != "terminating" {
+				rules += identityRules(namespace, svc)
+			}
+			name = "parker-" + g.kind + "-gateway-" + namespace + "-" + svc
+		}
 		if rules = id.entRead(rules); rules != "" {
 			// Partition-wide rules (mesh, peering, other namespaces) only
 			// go in a policy of the partition's default namespace.
-			t.Policies = []string{id.policy(partition, "parker-"+g.kind+"-gateway-"+svc, rules)}
+			t.Policies = []string{id.policy(partition, name, rules)}
 		}
 		return t
 	})
@@ -186,9 +225,14 @@ func linkedServices(e spec.ConfigEntry) []linkedService {
 
 // linkedRules let a terminating gateway write (register) the services it
 // fronts, which Consul requires. A service with no namespace is in the
-// gateway's (gwNS, "" for the default).
-func linkedRules(linked []linkedService, gwNS string, ent bool) string {
+// gateway's (gwNS, "" for the default). own, when set, is the gateway's
+// service, whose identity rules go in gwNS's block (one block per
+// namespace).
+func linkedRules(linked []linkedService, gwNS string, ent bool, own string) string {
 	byNS := map[string][]string{}
+	if own != "" {
+		byNS[gwNS] = nil
+	}
 	for _, s := range linked {
 		ns := s.namespace
 		if ns == "" {
@@ -212,6 +256,9 @@ func linkedRules(linked []linkedService, gwNS string, ent bool) string {
 			} else {
 				fmt.Fprintf(&b, "%sservice %q { policy = \"write\" }\n", indent, name)
 			}
+		}
+		if own != "" && ns == gwNS {
+			b.WriteString(identityBody(own, indent))
 		}
 		if ns != "" {
 			b.WriteString("}\n")
