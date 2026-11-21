@@ -178,6 +178,10 @@ type Model struct {
 
 	forwards []forward // port-forwards running until quit or :pf stop
 
+	// raised are the targets (node or node/process) L put at debug, so
+	// the next L resets them.
+	raised map[string]bool
+
 	err     error
 	flash   string
 	updated time.Time
@@ -201,6 +205,8 @@ type (
 	actionDone  struct {
 		label, last string
 		err         error
+		// result replaces "done" in the flash (log level steps).
+		result string
 	}
 	runEndMsg struct{ err error }
 )
@@ -370,6 +376,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = ""
 		if msg.err != nil {
 			m.flash = msg.label + ": " + msg.err.Error()
+		} else if msg.result != "" {
+			m.flash = msg.result
 		} else {
 			m.flash = msg.label + ": done"
 		}
@@ -983,6 +991,12 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "K", "R", "S", "P", "x", "H":
 			return m.hotkey(k.String())
+		case "L":
+			r, ok := m.selected()
+			if !ok {
+				return m, nil
+			}
+			return m.toggleLevel(r.node)
 		}
 		var cmd tea.Cmd
 		m.nodeTable, cmd = m.nodeTable.Update(k)
@@ -1034,6 +1048,10 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.follow = false
 			m.vp.GotoTop()
 			return m, nil
+		case "L":
+			if m.view == viewLogs {
+				return m.toggleLevel(m.logTarget)
+			}
 		}
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(k)
@@ -1197,6 +1215,12 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.openRun(arg)
+	case "level", "log-level":
+		if m.lab == "" {
+			m.flash = ":level needs a lab open"
+			return m, nil
+		}
+		return m.levelCommand(arg)
 	case "partition", "heal", "kill", "stop", "start", "restart", "pause", "resume":
 		if m.lab == "" {
 			m.flash = ":" + verb + " needs a lab open"
@@ -1225,7 +1249,7 @@ func (m Model) command(c string) (tea.Model, tea.Cmd) {
 	case "":
 		return m, nil
 	}
-	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc [NAME[/PARTITION]], :svc, :kill, :partition, :heal, :run, :q)", verb)
+	m.flash = fmt.Sprintf("unknown command %q (try :labs, :lab NAME, :dc [NAME[/PARTITION]], :svc, :kill, :partition, :heal, :level, :run, :q)", verb)
 	return m, nil
 }
 
@@ -1338,6 +1362,129 @@ func (m Model) act(label string, st *spec.Step) (tea.Model, tea.Cmd) {
 		})
 		return actionDone{label: label, last: last, err: err}
 	}
+}
+
+// levelTarget splits "node" or "node/process" for a log_level step.
+func levelTarget(t string) (node, proc string) {
+	node, proc, _ = strings.Cut(t, "/")
+	return node, proc
+}
+
+// toggleLevel puts target (a node, or node/process) at debug, or, if L
+// already did, back to the lab's levels.
+func (m Model) toggleLevel(target string) (tea.Model, tea.Cmd) {
+	if m.raised[target] {
+		return m.setLevel(target, "reset")
+	}
+	return m.setLevel(target, "debug")
+}
+
+// levelCommand handles :level LEVEL|reset|show [SELECTOR]: the open log's
+// process, else the selected node, unless a selector is given.
+func (m Model) levelCommand(arg string) (tea.Model, tea.Cmd) {
+	args := strings.Fields(arg)
+	if len(args) == 0 {
+		m.flash = ":level LEVEL|reset|show [SELECTOR] (trace, debug, info, warn, error)"
+		return m, nil
+	}
+	target := ""
+	switch {
+	case len(args) > 1:
+		target = args[1]
+	case m.view == viewLogs:
+		target = m.logTarget
+	default:
+		r, ok := m.selected()
+		if !ok {
+			m.flash = ":level needs a selector or a selected node"
+			return m, nil
+		}
+		target = r.node
+	}
+	return m.setLevel(target, args[0])
+}
+
+// setLevel plays a log_level step on target and flashes the levels in
+// force after it.
+func (m Model) setLevel(target, level string) (tea.Model, tea.Cmd) {
+	if m.o.Run == nil {
+		m.flash = "log levels need the daemon's Run API"
+		return m, nil
+	}
+	if m.busy != "" {
+		m.flash = "still running: " + m.busy
+		return m, nil
+	}
+	sel, proc := levelTarget(target)
+	// A selector like dc1/web isn't node/process: only a node name
+	// (dc1-web-1) comes before a process.
+	if proc != "" && !strings.Contains(sel, "-") {
+		sel, proc = target, ""
+	}
+	ll := &spec.LogLevelStep{On: sel, Process: proc}
+	switch level {
+	case "reset":
+		ll.Reset = true
+	case "show":
+	default:
+		ll.Level = level
+	}
+	st := &spec.Step{LogLevel: ll}
+	if err := scenario.Validate(&spec.Scenario{Steps: []*spec.Step{st}}); err != nil {
+		m.flash = err.Error()
+		return m, nil
+	}
+	y, err := scenario.Inline(st)
+	if err != nil {
+		m.flash = err.Error()
+		return m, nil
+	}
+	if m.raised == nil {
+		m.raised = map[string]bool{}
+	}
+	switch level {
+	case "reset":
+		delete(m.raised, target)
+	case "debug", "trace":
+		m.raised[target] = true
+	case "show":
+	default:
+		delete(m.raised, target)
+	}
+	label := scenario.Label(st)
+	m.busy = label
+	run, lab := m.o.Run, m.lab
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		var got []string
+		var fail string
+		err := run(ctx, lab, "", y, func(l string) {
+			line, ok := levelResult(l)
+			switch {
+			case strings.HasPrefix(line, "FAIL "):
+				fail = strings.TrimPrefix(line, "FAIL ")
+			case ok:
+				got = append(got, line)
+			}
+		})
+		if err != nil && fail != "" {
+			err = errors.New(fail)
+		}
+		return actionDone{label: label, err: err, result: strings.Join(got, " · ")}
+	}
+}
+
+var runClock = regexp.MustCompile(`^\[\s*[^\]]*\]\s?`)
+
+// levelResult keeps a log_level step's per-process lines ("dc1-web/consul
+// (consul): debug"), without the clock, step and PASS lines.
+func levelResult(l string) (string, bool) {
+	l = strings.TrimSpace(runClock.ReplaceAllString(l, ""))
+	if l == "" || strings.HasPrefix(l, "step ") || strings.HasPrefix(l, "PASS") {
+		return l, false
+	}
+	return l, true
 }
 
 // openRun plays a scenario (name, or the lab's only one) and streams its
@@ -1659,14 +1806,14 @@ func (m Model) footer() (string, lipgloss.Style) {
 	case viewLabs:
 		keys = [][2]string{{"enter", "open"}, {":", "command"}, {"q", "quit"}}
 	case viewNodes:
-		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"d", "describe"}, {"←/→", "fold"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
+		keys = [][2]string{{"s", "shell"}, {"l", "logs"}, {"L", "debug logs"}, {"d", "describe"}, {"←/→", "fold"}, {"K", "kill"}, {"R", "restart"}, {"S", "stop/start"},
 			{"P", "pause"}, {"x", "partition"}, {"H", "heal"}, {"/", "filter"}, {":", "command"}, {"esc", "back"}}
 	case viewDCs:
 		keys = [][2]string{{"enter", "open"}, {":svc", "services"}, {":", "command"}, {"esc", "back"}}
 	case viewServices:
 		keys = [][2]string{{"enter", "go to node"}, {":", "command"}, {"esc", "back"}}
 	case viewLogs:
-		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"/", "filter"}, {"g/G", "top/end"}, {"esc", "back"}}
+		keys = [][2]string{{"f", "follow"}, {"w", "wrap"}, {"L", "debug level"}, {"/", "filter"}, {"g/G", "top/end"}, {"esc", "back"}}
 	case viewDescribe:
 		keys = [][2]string{{"↑/↓", "scroll"}, {"esc", "back"}}
 	case viewRun:

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ type Lab interface {
 	// Call sends one request to a fake service on node (svc "" for its
 	// only one) and returns the status and body.
 	Call(ctx context.Context, node, svc, path string, hdr map[string]string) (int, []byte, error)
+	// LogLevel changes (or, for an empty step, reads) the log levels of
+	// the processes on node and returns a line per process.
+	LogLevel(ctx context.Context, node string, st *spec.LogLevelStep) ([]string, error)
 }
 
 // Upgrades lists a scenario's upgrade steps, so their binaries can be
@@ -206,6 +210,11 @@ func validateStep(st *spec.Step) error {
 			return fmt.Errorf("fake: %w", err)
 		}
 	}
+	if ll := st.LogLevel; ll != nil {
+		if err := ValidateLogLevel(ll); err != nil {
+			return err
+		}
+	}
 	for i, g := range st.Partition {
 		if len(g) == 0 || slices.Contains(g, "") {
 			return fmt.Errorf("partition: group %d is empty", i+1)
@@ -242,6 +251,9 @@ func actions(st *spec.Step) []string {
 	}
 	if st.Fake != nil {
 		a = append(a, "fake")
+	}
+	if st.LogLevel != nil {
+		a = append(a, "log_level")
 	}
 	for _, x := range []struct{ name, sel string }{
 		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
@@ -288,6 +300,9 @@ func Selectors(sc *spec.Scenario) []string {
 		}
 		if st.Fake != nil {
 			out = append(out, st.Fake.On)
+		}
+		if st.LogLevel != nil {
+			out = append(out, st.LogLevel.On)
 		}
 	}
 	return out
@@ -349,6 +364,8 @@ func Label(st *spec.Step) string {
 		return fmt.Sprintf("upgrade %s %s to %s", st.Upgrade.On, st.Upgrade.Product(), st.Upgrade.To)
 	case st.Fake != nil:
 		return fakeLabel(st.Fake)
+	case st.LogLevel != nil:
+		return logLevelLabel(st.LogLevel)
 	}
 	if a, sel := procTarget(st); a != "" {
 		return a + " " + sel
@@ -517,6 +534,23 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		}
 		return nil
 	}
+	if ll := st.LogLevel; ll != nil {
+		nodes, err := l.Resolve(ll.On)
+		if err != nil {
+			return err
+		}
+		var errs []error
+		for _, n := range nodes {
+			lines, err := l.LogLevel(ctx, n, ll)
+			for _, line := range lines {
+				say("  %s", line)
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
 	if action, sel := procTarget(st); action != "" {
 		nodes, err := l.Resolve(sel)
 		if err != nil {
@@ -672,4 +706,77 @@ func fakeLabel(f *spec.FakeStep) string {
 		parts = append(parts, "rate limit")
 	}
 	return "fake " + on + ": " + strings.Join(parts, ", ")
+}
+
+// logLevelKinds are what log_level: only: takes.
+var logLevelKinds = []string{"consul", "envoy", "fake"}
+
+// logLevels are the levels log_level: takes; critical and off are Envoy's.
+var logLevels = []string{"trace", "debug", "info", "warn", "error", "critical", "off"}
+
+// ValidateLogLevel checks a log_level step without a lab.
+func ValidateLogLevel(ll *spec.LogLevelStep) error {
+	if ll.On == "" {
+		return errors.New("log_level: needs on:")
+	}
+	if ll.Only != "" && !slices.Contains(logLevelKinds, ll.Only) {
+		return fmt.Errorf("log_level: only: want consul, envoy or fake, got %q", ll.Only)
+	}
+	if ll.Reset && (ll.Level != "" || len(ll.Loggers) > 0) {
+		return errors.New("log_level: reset: true takes no level or loggers")
+	}
+	check := func(what, l string) error {
+		if !slices.Contains(logLevels, l) {
+			return fmt.Errorf("log_level: %s %q: want %s", what, l, strings.Join(logLevels, ", "))
+		}
+		return nil
+	}
+	if ll.Level != "" {
+		if err := check("level", ll.Level); err != nil {
+			return err
+		}
+		if (ll.Level == "critical" || ll.Level == "off") && ll.Only != "envoy" && ll.Process == "" {
+			return fmt.Errorf("log_level: level %s is Envoy's only: add only: envoy", ll.Level)
+		}
+	}
+	if len(ll.Loggers) > 0 && ll.Only != "" && ll.Only != "envoy" {
+		return errors.New("log_level: loggers are Envoy's (only: envoy)")
+	}
+	for _, k := range slices.Sorted(maps.Keys(ll.Loggers)) {
+		if k == "" || k == "level" || k == "paths" {
+			return fmt.Errorf("log_level: logger %q: name an Envoy logger (upstream, http, router, ...)", k)
+		}
+		if err := check("logger "+k, ll.Loggers[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// logLevelLabel is "log level debug on dc1/web (envoy)".
+func logLevelLabel(ll *spec.LogLevelStep) string {
+	var what string
+	switch {
+	case ll.Reset:
+		what = "reset log levels"
+	case ll.Empty():
+		what = "show log levels"
+	default:
+		var parts []string
+		if ll.Level != "" {
+			parts = append(parts, ll.Level)
+		}
+		for _, k := range slices.Sorted(maps.Keys(ll.Loggers)) {
+			parts = append(parts, k+"="+ll.Loggers[k])
+		}
+		what = "log level " + strings.Join(parts, " ")
+	}
+	what += " on " + ll.On
+	switch {
+	case ll.Process != "":
+		what += "/" + ll.Process
+	case ll.Only != "":
+		what += " (" + ll.Only + ")"
+	}
+	return what
 }

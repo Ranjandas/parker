@@ -443,6 +443,7 @@ function renderNode() {
         <div class="logbar">
           <div class="tabs">${ps.map((p) => `<button data-proc="${esc(p.name)}" class="${p.name === S.logs.proc ? "on" : ""}"><i style="background:var(--${procState(p) === "ready" && procHealth(n, p) !== "critical" ? "ok" : "bad"})"></i>${esc(p.name)}</button>`).join("")}</div>
           <div style="flex:1"></div>
+          ${levelTarget(n.name, S.logs.proc) ? `<select id="setlevel" class="lvsel" aria-label="Change ${esc(S.logs.proc)}'s log level" title="Change ${esc(S.logs.proc)}'s log level while it runs"><option value="">Log level…</option>${["trace", "debug", "info", "warn", "error"].map((l) => `<option value="${l}">${l}</option>`).join("")}<option value="reset">reset</option><option value="show">show</option></select>` : ""}
           <div class="seg">${["all", "warn", "error"].map((l) => `<button data-level="${l}" class="${S.logs.level === l ? "on" : ""}">${l[0].toUpperCase() + l.slice(1)}</button>`).join("")}</div>
           <label class="lf">${ICON.search}<input id="logfilter" placeholder="Filter lines" value="${esc(S.logs.filter)}" aria-label="Filter log lines"></label>
           <button class="toggle ${S.logs.follow ? "" : "off"}" data-act="follow"><i></i>Follow</button>
@@ -453,6 +454,8 @@ function renderNode() {
     </div></div>`;
   ensureLogs(st.lab, n.name, S.logs.proc);
   paintLogs(keep ? logScroll : null);
+  const sl = $("#setlevel");
+  if (sl) sl.onchange = () => { const l = sl.value; sl.value = ""; if (l) setLogLevel(n.name, S.logs.proc, l); };
   const f = $("#logfilter");
   f.oninput = () => { S.logs.filter = f.value; paintLogs(null); };
   if (S.focusFilter) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); S.focusFilter = false; }
@@ -549,6 +552,32 @@ async function openApp(btn) {
   } catch (e) {
     if (win) win.close();
     toast("Can't open it: " + e.message);
+  }
+}
+
+// ---------- log levels ----------
+// levelTarget is a process whose log level can change while it runs: the
+// Consul agent, an Envoy (sidecar or gateway) or a fake service.
+function levelTarget(nodeName, proc) {
+  return proc === "consul" || /-(sidecar|gateway)$/.test(proc || "") || fakesOn(nodeName).some((f) => f.service === proc);
+}
+
+// setLogLevel plays a log_level: step on one process and toasts the level
+// in force after it.
+async function setLogLevel(node, proc, level) {
+  const step = { log_level: { on: node, process: proc } };
+  if (level === "reset") step.log_level.reset = true;
+  else if (level !== "show") step.log_level.level = level;
+  let got = "", fail = "";
+  try {
+    await stream("Run", { lab: S.route.lab, inline: JSON.stringify({ steps: [step] }) }, (m) => {
+      const line = (m.line || "").replace(/^\[[^\]]*\]\s*/, "").trim();
+      if (line.startsWith("FAIL ")) fail = line.slice(5);
+      else if (line && !/^(step \d+:|PASS)/.test(line)) got = line;
+    });
+    toast(got || `${proc}: log level ${level}`);
+  } catch (e) {
+    toast("Can't change the log level: " + (fail || e.message));
   }
 }
 
@@ -1150,12 +1179,14 @@ async function poll() {
   // Don't redraw a node page under the user's text selection or typing.
   const typing = document.activeElement && document.activeElement.id === "logfilter";
   const selecting = String(window.getSelection && window.getSelection()).length > 0;
+  // Nor under an open log level picker.
+  const picking = document.activeElement && document.activeElement.id === "setlevel";
   // On a node page, redraw only when something changed: the log view
   // updates itself as lines stream in.
   // The topology redraws only on change too, and never mid-drag.
   const still = (S.route.node || S.route.view === "topology") && S.unchanged;
   if (S.route.view === "build") renderNav(); // the builder draws itself
-  else if (!selecting && !still && !T.drag) { if (typing) S.focusFilter = true; render(); }
+  else if (!selecting && !picking && !still && !T.drag) { if (typing) S.focusFilter = true; render(); }
   S.unchanged = false;
   pollTimer = setTimeout(poll, document.hidden ? 10000 : 2000);
 }

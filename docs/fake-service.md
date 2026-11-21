@@ -70,6 +70,7 @@ you prefer them. The `fake:` block wins over env vars.
 | `seed` | `RAND_SEED` | random | Makes error and latency draws repeatable. |
 | `request_faults` | | `true` | Lets a caller ask for faults on one request (below). |
 | `facts` | | `true` | Adds a space fact to each answer. `false` keeps shared output clean. |
+| `log_level` | `LOG_LEVEL` | `info` | `debug` adds each request's headers and upstream calls; `info` logs every request; `warn` only failed or faulted ones; `error` only failed ones. Changes at runtime with a `log_level:` step or `parker logs --level`. |
 
 The order on each request is: rate limit, then errors, then latency, then
 the upstream calls.

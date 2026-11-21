@@ -180,6 +180,14 @@ func (f *fake) Run(_ context.Context, r *connect.Request[parkerv1.RunRequest], s
 				f.broken = false
 				f.mu.Unlock()
 			}
+			if ll, ok := st["log_level"].(map[string]any); ok {
+				lvl, _ := ll["level"].(string)
+				if lvl == "" {
+					lvl = "info"
+				}
+				_ = s.Send(&parkerv1.LogLine{Line: fmt.Sprintf("[  0.1s]   %v/%v: %s", ll["on"], ll["process"], lvl)})
+				continue
+			}
 			b, _ := json.Marshal(st)
 			_ = s.Send(&parkerv1.LogLine{Line: "fault " + string(b) + ": ok"})
 		}

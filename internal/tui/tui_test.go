@@ -439,3 +439,53 @@ func TestPortForward(t *testing.T) {
 		t.Errorf("stop:\n%s", v)
 	}
 }
+
+func TestLogLevelKeys(t *testing.T) {
+	var calls []runCall
+	lines := []string{"[  0.0s] step 1: log level debug on dc1-server-1", "[  0.1s]   dc1-server-1/consul (consul): debug", "[  0.1s] PASS: 1 steps"}
+	m := tea.Model(New(Options{Client: sample(), Lab: "a", Run: fakeRun(&calls, lines, nil)}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("L"))
+	if len(calls) != 1 || !strings.Contains(calls[0].inline, `"on": dc1-server-1`) || !strings.Contains(calls[0].inline, "level: debug") {
+		t.Fatalf("L: %+v", calls)
+	}
+	if v := m.View(); !strings.Contains(v, "dc1-server-1/consul (consul): debug") {
+		t.Errorf("no result:\n%s", v)
+	}
+	// L again goes back to the lab's levels.
+	m = drive(t, m, key("L"))
+	if len(calls) != 2 || !strings.Contains(calls[1].inline, "reset: true") {
+		t.Fatalf("second L: %+v", calls)
+	}
+	// :level with a level and a selector.
+	m = drive(t, m, cmdline("level trace dc1")...)
+	if len(calls) != 3 || !strings.Contains(calls[2].inline, `"on": dc1`+"\n") || !strings.Contains(calls[2].inline, "level: trace") {
+		t.Fatalf(":level: %+v", calls)
+	}
+	// From the logs view it targets the open process.
+	m = drive(t, m, key("l"))
+	m = drive(t, m, cmdline("level warn")...)
+	if len(calls) != 4 || !strings.Contains(calls[3].inline, "process: consul") {
+		t.Fatalf(":level in logs: %+v", calls)
+	}
+	m = drive(t, m, cmdline("level loud")...)
+	if v := m.View(); len(calls) != 4 || !strings.Contains(v, `"loud"`) {
+		t.Errorf("bad level: %+v\n%s", calls, v)
+	}
+	// A failing step says why.
+	m = tea.Model(New(Options{Client: sample(), Lab: "a", Run: fakeRun(&calls, []string{"[ 0.1s] FAIL step 1 (log level debug on dc1-server-1): no processes with a log level"}, connectErr("step failed"))}))
+	m = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 20}, m.(Model).refresh()(), key("L"))
+	if v := m.View(); !strings.Contains(v, "no processes with a log level") {
+		t.Errorf("error not shown:\n%s", v)
+	}
+}
+
+func TestLevelResult(t *testing.T) {
+	if l, ok := levelResult("[  0.1s]   dc1-web/web (fake): debug"); !ok || l != "dc1-web/web (fake): debug" {
+		t.Errorf("%q %v", l, ok)
+	}
+	for _, in := range []string{"[ 0s] step 1: show log levels on dc1", "[ 0.1s] PASS: 1 steps", ""} {
+		if _, ok := levelResult(in); ok {
+			t.Errorf("%q kept", in)
+		}
+	}
+}

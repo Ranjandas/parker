@@ -44,6 +44,8 @@ var (
 		{"cmd/parker/fake.go", fakeLabs},
 		{"cmd/parker/call.go", fakeLabs},
 		{"internal/daemon/fake.go", fakeLabs},
+		{"internal/lab/loglevel.go", append(slices.Clone(fakeLabs), secure...)},
+		{"cmd/parker/loglevel.go", append(slices.Clone(fakeLabs), secure...)},
 		{"internal/daemon/appproxy.go", fakeLabs},
 		{"internal/tproxy/", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
 		{"cmd/parker/sidecar.go", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
