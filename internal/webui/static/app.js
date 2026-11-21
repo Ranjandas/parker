@@ -807,6 +807,31 @@ function curve(a, b, horiz) {
   return `M${a[0]},${a[1]} C${a[0]},${a[1] + dy} ${b[0]},${b[1] - dy} ${b[0]},${b[1]}`;
 }
 
+// cards a straight segment from a to b would run under, other than its ends.
+function blockers(pos, a, b, A) {
+  const lo = (i) => Math.min(A.p[i], A.q[i]), hi = (i) => Math.max(A.p[i], A.q[i]);
+  const [x, y] = A.h ? [0, 1] : [1, 0]; // along, across
+  const size = A.h ? [TW, TH] : [TH, TW];
+  return Object.entries(pos).filter(([n, c]) => {
+    const at = A.h ? [c.x, c.y] : [c.y, c.x];
+    return n !== a && n !== b && at[0] + size[0] > lo(x) && at[0] < hi(x) && at[1] + size[1] > lo(y) - 6 && at[1] < hi(y) + 6;
+  }).map(([, c]) => c);
+}
+// route draws a segment, going round the cards in its way: a hop between
+// two gateways must not look like it passes through a third one.
+function route(pos, a, b, A, off) {
+  const bl = blockers(pos, a, b, A);
+  if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
+  if (A.h) {
+    const y = Math.max(...bl.map((c) => c.y + TH)) + 22 + off, r = Math.sign(A.q[0] - A.p[0]) || 1;
+    const [px, py] = A.p, [qx, qy] = A.q;
+    return { d: `M${px},${py} C${px + r * 34},${py} ${px + r * 34},${y} ${px + r * 68},${y} L${qx - r * 68},${y} C${qx - r * 34},${y} ${qx - r * 34},${qy} ${qx},${qy}`, mid: [(px + qx) / 2, y], lane: true };
+  }
+  const x = Math.max(...bl.map((c) => c.x + TW)) + 22 + off, r = Math.sign(A.q[1] - A.p[1]) || 1;
+  const [px, py] = A.p, [qx, qy] = A.q;
+  return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
+}
+
 function topoState() {
   const st = S.status && S.status.lab === S.route.lab ? S.status : null;
   const byName = new Map(((st && st.nodes) || []).map((n) => [n.name, n]));
@@ -884,7 +909,7 @@ function renderTopology() {
     const i = (pairI[k] = (pairI[k] || 0) + 1) - 1;
     const off = (i - (pairN[k] - 1) / 2) * 14;
     const A = anchors(L.pos[s.a], L.pos[s.b], off);
-    const d = curve(A.p, A.q, A.h);
+    const R = route(L.pos, s.a, s.b, A, off), d = R.d;
     const c = color(s);
     const fo = s.e.kind === "failover", live = fo && active(s.e);
     // A standby failover path is a quiet dashed line; it flows once it's live.
@@ -895,7 +920,7 @@ function renderTopology() {
     svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${traffic ? 2.4 : 1.8}" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ""} class="${traffic && !s.broken && !ts.labDown ? "flow" : ""}" ${marker}/>`;
     if (s.e.label && s.mid && !labelled.has(pk(s) + "|" + s.e.label)) {
       labelled.add(pk(s) + "|" + s.e.label);
-      const mx = (A.p[0] + A.q[0]) / 2, my = (A.p[1] + A.q[1]) / 2 + (A.h ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
+      const mx = R.mid[0], my = R.mid[1] + (A.h && !R.lane ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
       labels += `<div class="elbl ${esc(s.e.kind)} ${s.broken ? "broken" : ""}" style="left:${mx}px;top:${my}px">${esc(s.e.label)}</div>`;
     }
     if (s.broken && s.badNode) badges.add(s.badNode);
