@@ -807,6 +807,38 @@ function curve(a, b, horiz) {
   return `M${a[0]},${a[1]} C${a[0]},${a[1] + dy} ${b[0]},${b[1] - dy} ${b[0]},${b[1]}`;
 }
 
+// cards a straight segment from a to b would run under, other than its ends.
+function blockers(pos, a, b, A) {
+  const lo = (i) => Math.min(A.p[i], A.q[i]), hi = (i) => Math.max(A.p[i], A.q[i]);
+  const [x, y] = A.h ? [0, 1] : [1, 0]; // along, across
+  const size = A.h ? [TW, TH] : [TH, TW];
+  return Object.entries(pos).filter(([n, c]) => {
+    const at = A.h ? [c.x, c.y] : [c.y, c.x];
+    return n !== a && n !== b && at[0] + size[0] > lo(x) && at[0] < hi(x) && at[1] + size[1] > lo(y) - 6 && at[1] < hi(y) + 6;
+  }).map(([, c]) => c);
+}
+// route draws a segment, going round the cards in its way: a hop between
+// two gateways must not look like it passes through a third one.
+// lanes holds the detours drawn so far, so two detours don't share a lane.
+function route(pos, a, b, A, off, lanes) {
+  const bl = blockers(pos, a, b, A);
+  if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
+  const free = (at, i) => {
+    const lo = Math.min(A.p[i], A.q[i]), hi = Math.max(A.p[i], A.q[i]);
+    while (lanes.some((l) => l.h === A.h && Math.abs(l.at - at) < 10 && l.lo < hi && lo < l.hi)) at += 14;
+    lanes.push({ h: A.h, at, lo, hi });
+    return at;
+  };
+  if (A.h) {
+    const y = free(Math.max(...bl.map((c) => c.y + TH)) + 22 + off, 0), r = Math.sign(A.q[0] - A.p[0]) || 1;
+    const [px, py] = A.p, [qx, qy] = A.q;
+    return { d: `M${px},${py} C${px + r * 34},${py} ${px + r * 34},${y} ${px + r * 68},${y} L${qx - r * 68},${y} C${qx - r * 34},${y} ${qx - r * 34},${qy} ${qx},${qy}`, mid: [(px + qx) / 2, y], lane: true };
+  }
+  const x = free(Math.max(...bl.map((c) => c.x + TW)) + 22 + off, 1), r = Math.sign(A.q[1] - A.p[1]) || 1;
+  const [px, py] = A.p, [qx, qy] = A.q;
+  return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
+}
+
 function topoState() {
   const st = S.status && S.status.lab === S.route.lab ? S.status : null;
   const byName = new Map(((st && st.nodes) || []).map((n) => [n.name, n]));
@@ -878,13 +910,13 @@ function renderTopology() {
   const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
   let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
   let labels = "";
-  const badges = new Set(), labelled = new Set();
+  const badges = new Set(), labelled = new Set(), lanes = [];
   for (const s of segs) {
     const k = pk(s);
     const i = (pairI[k] = (pairI[k] || 0) + 1) - 1;
     const off = (i - (pairN[k] - 1) / 2) * 14;
     const A = anchors(L.pos[s.a], L.pos[s.b], off);
-    const d = curve(A.p, A.q, A.h);
+    const R = route(L.pos, s.a, s.b, A, off, lanes), d = R.d;
     const c = color(s);
     const fo = s.e.kind === "failover", live = fo && active(s.e);
     // A standby failover path is a quiet dashed line; it flows once it's live.
@@ -895,7 +927,7 @@ function renderTopology() {
     svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${traffic ? 2.4 : 1.8}" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ""} class="${traffic && !s.broken && !ts.labDown ? "flow" : ""}" ${marker}/>`;
     if (s.e.label && s.mid && !labelled.has(pk(s) + "|" + s.e.label)) {
       labelled.add(pk(s) + "|" + s.e.label);
-      const mx = (A.p[0] + A.q[0]) / 2, my = (A.p[1] + A.q[1]) / 2 + (A.h ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
+      const mx = R.mid[0], my = R.mid[1] + (A.h && !R.lane ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
       labels += `<div class="elbl ${esc(s.e.kind)} ${s.broken ? "broken" : ""}" style="left:${mx}px;top:${my}px">${esc(s.e.label)}</div>`;
     }
     if (s.broken && s.badNode) badges.add(s.badNode);
@@ -1016,7 +1048,7 @@ function topoPanel(g, ts) {
       return `<a class="prow ${bad ? "bad" : ""}" href="${nodeHref}?p=${encodeURIComponent(p.name)}" style="color:inherit;text-decoration:none"><span><b>${esc(p.name)}</b> <span class="mono">${p.pid ? "pid " + p.pid : ""}${h ? " · " + esc(h) : ""}</span></span><span class="st ${st}"><i></i>${st}</span><span class="mono" ${p.restarts ? 'style="color:var(--bad)"' : ""}>${p.restarts || 0}↻</span></a>`;
     }).join("") || `<span class="muted">${n ? "No processes" : "Not running"}</span>`}</div></section>
     ${health.length ? `<section><h4>Consul health</h4><div class="checks">${health.map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("")}</div></section>` : ""}
-    ${outs.length || ins.length || through.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}${ins.map((e) => conn(e, "in")).join("")}${through.map((e) => `<a href="#" data-tnode="${esc(e.from)}"><span class="k" style="color:var(--fed)">carries</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><small>${esc(e.label)}</small></a>`).join("")}</div></section>` : ""}
+    ${outs.length || ins.length || through.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}${ins.map((e) => conn(e, "in")).join("")}${through.map((e) => `<a href="#" data-tnode="${esc(e.from)}"><span class="k" style="color:var(--fed)">carries</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><small>${esc(e.kind === "peering" ? `peering ${e.label} (control plane)` : e.label)}</small></a>`).join("")}</div></section>` : ""}
     ${fakeSection(gn.name, false, (h) => `<section><h4>Fake service</h4>${h}</section>`)}
     ${openSection(gn.name, (h) => `<section><h4>Open</h4>${h}</section>`)}
     <section><h4>Actions</h4><div class="actions"><a class="btn sm" href="${nodeHref}">Logs</a><button class="btn sm" data-act="shell" data-sel="${esc(gn.name)}">${ICON.term}Shell</button><button class="btn sm" data-act="restart" data-sel="${esc(gn.name)}">Restart</button><button class="btn sm" data-act="partition" data-sel="${esc(gn.name)}">Partition</button><button class="btn sm danger" data-act="kill" data-sel="${esc(gn.name)}">Kill</button></div></section>`;

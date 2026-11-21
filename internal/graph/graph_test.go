@@ -96,8 +96,17 @@ func TestPeering(t *testing.T) {
 	if g.Federation != "" {
 		t.Errorf("federation %q", g.Federation)
 	}
-	want(t, "peering", edges(g, Peering), "dc1-server-1>dc2-server-1 dc1-dc2")
+	// via_mesh_gateways: the control plane goes through each dc's gateway.
+	want(t, "peering", edges(g, Peering), "dc1-server-1>dc2-server-1 dc1-dc2 ~dc1-mesh ~dc2-mesh")
 	want(t, "upstreams", edges(g, Upstream), "dc1-web>dc2-api api :9091 ~dc1-mesh ~dc2-mesh")
+}
+
+func TestPeeringPartitions(t *testing.T) {
+	g := build(t, "peering-partitions.yaml")
+	// The control plane goes through the default partitions' gateways,
+	// service traffic through the peered partitions' own.
+	want(t, "peering", edges(g, Peering), "dc1-server-1>dc2-server-1 billing ~dc1-mesh ~dc2-mesh")
+	want(t, "upstreams", edges(g, Upstream), "dc1-team-a-frontend>dc2-team-b-billing billing :9091 (ns payments) ~dc1-team-a-mesh ~dc2-team-b-mesh")
 }
 
 func TestDataplane(t *testing.T) {
@@ -214,4 +223,17 @@ func TestFailoverDatacentersAndPartitions(t *testing.T) {
 	t.Setenv("CONSUL_LICENSE", "test")
 	want(t, "failovers", edges(build(t, "partitions.yaml"), Failover),
 		"dc1-frontend>dc1-team-b-billing billing failover (dc1/team-b, ns payments) ~dc1-mesh ~dc1-team-b-mesh")
+}
+
+func TestPeeringDirect(t *testing.T) {
+	g := build(t, "terminating-failover.yaml")
+	// No via_mesh_gateways: the servers peer directly.
+	for _, e := range g.Edges {
+		if e.Kind == Peering && len(e.Via) > 0 {
+			t.Errorf("peering %s goes via %v", e.Label, e.Via)
+		}
+	}
+	if len(edges(g, Peering)) == 0 {
+		t.Error("no peering edge")
+	}
 }
