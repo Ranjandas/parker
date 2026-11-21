@@ -611,9 +611,23 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if it := byID[tokB.(string)]; it.Partition != "team-b" || it.Node != "billing" {
 		t.Errorf("team-b billing's agent token: %+v", it)
 	}
-	if it := byID[reg["token"].(string)]; it.Partition != "team-a" || it.Namespace != "payments" || it.Service != "billing" ||
-		!slices.Equal(it.Policies, []string{"parker-read-everywhere"}) {
+	// billing is in payments: its token sits in team-a's default namespace
+	// (Enterprise links a token only to its own namespace's policies) and
+	// its policy grants the service identity's rules in payments.
+	if it := byID[reg["token"].(string)]; it.Partition != "team-a" || it.Namespace != "payments" || it.Service != "billing" || !it.Scoped ||
+		!slices.Equal(it.Policies, []string{"parker-service-payments-billing"}) {
 		t.Errorf("billing's service token: %+v", it)
+	}
+	var billingRules string
+	for _, p := range ten.Policies {
+		if p.Partition == "team-a" && p.Name == "parker-service-payments-billing" {
+			billingRules = p.Rules
+		}
+	}
+	for _, w := range []string{`namespace "payments" {`, `service "billing" { policy = "write" }`, `service "billing-sidecar-proxy" { policy = "write" }`, `namespace_prefix "" {`} {
+		if !strings.Contains(billingRules, w) {
+			t.Errorf("billing's rules lack %s:\n%s", w, billingRules)
+		}
 	}
 	gwTok := low.Nodes["dc1-team-a-mesh"].Processes["mesh-gateway"].Env["CONSUL_HTTP_TOKEN"]
 	if it := byID[gwTok]; it.Partition != "team-a" || it.Service != "mesh-gateway" || !slices.Equal(it.Policies, []string{"parker-mesh-gateway-mesh-gateway"}) {
