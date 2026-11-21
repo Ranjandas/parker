@@ -119,6 +119,10 @@ func Describe(labName, node string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("lab %q: %w", labName, err)
 	}
+	return describeFile(low, node)
+}
+
+func describeFile(low *spec.File, node string) (string, string, error) {
 	name, err := ResolveNode(low, node)
 	if err != nil {
 		return "", "", err
@@ -128,5 +132,5 @@ func Describe(labName, node string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return name, string(b), nil
+	return name, string(b) + tokenNotes(low, string(b)), nil
 }
