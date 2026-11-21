@@ -306,10 +306,12 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				return fmt.Errorf("consul.datacenters.%s.gateways: no room on the %s wan network", dcName, wanSubnet)
 			}
 			ip := addrAt(wanBase, off)
-			gwWAN[dcName+"-"+g.name] = ip
+			// The node's key: a partition's gateway is dc-partition-name.
+			gk := spec.NodeKey(dcName, g.partition, g.name)
+			gwWAN[gk] = ip
 			if dcName == primary && g.kind == "mesh" {
 				primaryGWs = append(primaryGWs, fmt.Sprintf("%s:%d", ip, MeshGatewayPort))
-				primaryGWRefs = append(primaryGWRefs, dcName+"-"+g.name+"/"+g.process())
+				primaryGWRefs = append(primaryGWRefs, gk+"/"+g.process())
 			}
 			k++
 		}

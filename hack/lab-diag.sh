@@ -61,6 +61,18 @@ for part in parts:
                 print("  %-9s node=%s service=%s check=%s %s" % (c["Status"], c["Node"], c.get("ServiceName") or "-", c["CheckID"], (c.get("Output") or "").strip()[:120]))
         elif not isinstance(checks, list):
             print("--- checks in %s/%s: %s" % (part, ns, checks))
+        # What a sidecar dialing each service is given: its proxies,
+        # or the terminating gateways that link it.
+        svcs = get("/v1/catalog/services?" + q)
+        if isinstance(svcs, dict):
+            for name in sorted(svcs):
+                conn = get("/v1/health/connect/%s?%s" % (name, q))
+                if isinstance(conn, list) and conn:
+                    print("--- connect endpoints of %s in %s/%s: %s" % (name, part, ns, ", ".join(
+                        "%s %s:%s (%s)" % (e["Node"]["Node"], e["Service"]["Address"] or e["Node"]["Address"], e["Service"]["Port"], e["Service"]["Kind"] or "service")
+                        for e in conn)))
+                elif isinstance(conn, list) and not name.endswith("-sidecar-proxy") and "gateway" not in name:
+                    print("--- connect endpoints of %s in %s/%s: none" % (name, part, ns))
         for kind in ("terminating-gateway", "service-resolver", "service-intentions", "exported-services", "proxy-defaults", "mesh"):
             es = get("/v1/config/%s?%s" % (kind, q))
             if isinstance(es, list):
