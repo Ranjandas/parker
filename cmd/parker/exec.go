@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -22,17 +23,24 @@ import (
 )
 
 func execCmd() *cobra.Command {
-	var noTTY bool
+	var noTTY, printEnv bool
 	c := &cobra.Command{
 		Use:   "exec FILE|LAB NODE [-- COMMAND...]",
 		Short: "Run a command (default: $SHELL) inside a node's network namespace",
 		Long: "NODE is a selector that names one node: dc1/server-1, dc1/web-2, dc1/leader,\n" +
 			"svc:api (when one node runs it), a top-level node, or the expanded name dc1-server-1.\n\n" +
 			"Locally the command runs directly in the namespace. With --host / PARKER_HOST it runs\n" +
-			"on that daemon, streamed over the API with a terminal when stdin is one.",
+			"on that daemon, streamed over the API with a terminal when stdin is one.\n\n" +
+			"--env prints, instead, the export lines that point the consul CLI on this machine at\n" +
+			"the node's agent: its address, the lab's management token and CA. eval them where the\n" +
+			"host can reach the node's address (not under a rootless daemon); inside the node,\n" +
+			"`parker exec` already sets them.",
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			argv := args[2:]
+			if printEnv {
+				return execEnv(cmd.OutOrStdout(), args[0], args[1])
+			}
 			// Remote daemons, and a rootless one (whose namespaces this
 			// process can't enter), get exec over the API.
 			if target().Host != "" || isRootless() {
@@ -54,7 +62,41 @@ func execCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVarP(&noTTY, "no-tty", "T", false, "don't allocate a terminal (remote exec)")
+	c.Flags().BoolVar(&printEnv, "env", false, "print export lines for the consul CLI on this machine (address, management token, CA) instead of running a command")
 	return c
+}
+
+// execEnv prints the consul CLI's environment for a node, to eval on the
+// host.
+func execEnv(w io.Writer, arg, nodeArg string) error {
+	if target().Host != "" {
+		return errors.New("--env needs the lab on this machine (no --host)")
+	}
+	low, err := topologyFor(arg)
+	if err != nil {
+		return err
+	}
+	node, err := lab.ResolveNode(low, nodeArg)
+	if err != nil {
+		return err
+	}
+	env, err := lab.ConsulEnv(low, node)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "# %s in lab %s; eval \"$(parker exec %s %s --env)\"\n", node, low.Name, arg, nodeArg)
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		fmt.Fprintf(w, "export %s=%s\n", k, shellQuote(v))
+	}
+	return nil
+}
+
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // topologyFor returns the running lab's saved topology, for FILE or LAB.

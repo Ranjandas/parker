@@ -309,6 +309,9 @@ func upCmd() *cobra.Command {
 				return err
 			}
 			say("shell: parker exec %s %s -- consul members", args[0], firstNode(low))
+			if lab.ManagementToken(low) != "" {
+				say("token: parker exec %s %s --env   (Consul address, management token and CA for this shell)", args[0], firstNode(low))
+			}
 			say("logs:  parker logs %s %s -f", args[0], firstNode(low))
 			say("down:  parker down %s", args[0])
 			return nil
