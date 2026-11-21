@@ -323,7 +323,9 @@ dialog label{display:flex;gap:8px;align-items:center;color:var(--ink-2)}
 .ico.svc{background:var(--ok-soft);color:var(--ok)}
 .ico.out{background:color-mix(in srgb,var(--peer) 14%,transparent);color:var(--peer)}
 .nd .nm{font-weight:650;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nd .sub{font:11.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nd .sub{display:flex;align-items:center;gap:5px;font:11.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden}
+.nd .sub .t{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.nsc{flex:none;display:inline-flex;align-items:center;font:550 10.5px var(--f-mono);line-height:1.4;padding:0 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
 .nd .hs{margin-left:auto;width:10px;height:10px;border-radius:50%;flex:none}
 .nd .ps{display:flex;flex-wrap:wrap;gap:4px;padding:2px 12px 10px;max-height:24px;overflow:hidden}
 .nd .p{display:inline-flex;align-items:center;gap:5px;font:500 11px var(--f-mono);padding:1px 6px;border-radius:5px;background:var(--sunken);color:var(--ink-2)}

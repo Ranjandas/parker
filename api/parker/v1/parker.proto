@@ -202,6 +202,9 @@ message GraphNode {
   repeated string gateways = 6; // mesh, ingress, terminating, api
   repeated string ips = 7;
   repeated GraphLink links = 8; // web UIs the node serves
+  // Consul namespace of each service and gateway ("<kind>-gateway"), when
+  // its partition has namespaces other than default.
+  map<string, string> namespaces = 9;
 }
 
 // GraphLink is a web UI on a node, opened through the daemon's app proxy.

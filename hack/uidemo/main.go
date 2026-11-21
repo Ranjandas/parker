@@ -40,7 +40,7 @@ type fake struct {
 }
 
 // labExamples are the examples the demo labs are expanded from.
-var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml"}
+var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml", "tgw-failover-ent": "terminating-failover-partitions.yaml"}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -83,7 +83,7 @@ func (f *fake) Version(context.Context, *connect.Request[parkerv1.VersionRequest
 
 func (f *fake) ListLabs(context.Context, *connect.Request[parkerv1.ListLabsRequest]) (*connect.Response[parkerv1.ListLabsResponse], error) {
 	return connect.NewResponse(&parkerv1.ListLabsResponse{Labs: []*parkerv1.LabSummary{
-		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}}}), nil
+		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}, {Name: "tgw-failover-ent", Namespaces: 14, Supervised: true}}}), nil
 }
 
 func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error) {
@@ -97,7 +97,7 @@ func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusReque
 				Namespace: true, Role: role, Dc: "dc1", MembersAlive: 3, MembersTotal: 3, Processes: []*parkerv1.ProcessStatus{proc("consul", int32(3100+i), true, 0)}})
 		}
 		return connect.NewResponse(st), nil
-	case "tgw-failover":
+	case "tgw-failover", "tgw-failover-ent":
 		return f.allUp(r.Msg.Lab, "")
 	case "tgw-failover-down":
 		// dc1's terminating gateway is stopped: web's calls fail over.

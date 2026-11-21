@@ -260,7 +260,7 @@ func GraphToProto(name string, g *graph.Graph) *parkerv1.GraphResponse {
 	out := &parkerv1.GraphResponse{Lab: name, Federation: g.Federation}
 	for _, n := range g.Nodes {
 		pn := &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role,
-			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs}
+			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs, Namespaces: n.Namespaces}
 		for _, l := range n.Links {
 			pn.Links = append(pn.Links, &parkerv1.GraphLink{Name: l.Name, Port: int32(l.Port), Scheme: l.Scheme, Path: l.Path, Token: l.Token})
 		}

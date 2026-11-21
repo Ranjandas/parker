@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -118,8 +119,22 @@ func TestPartitions(t *testing.T) {
 	}
 	// frontend calls billing in team-a, not the billing in team-b.
 	want(t, "upstreams", edges(g, Upstream),
-		"dc1-frontend>dc1-team-a-billing-1 billing :9091 ~dc1-mesh ~dc1-team-a-mesh",
-		"dc1-frontend>dc1-team-a-billing-2 billing :9091 ~dc1-mesh ~dc1-team-a-mesh")
+		"dc1-frontend>dc1-team-a-billing-1 billing :9091 (ns payments) ~dc1-mesh ~dc1-team-a-mesh",
+		"dc1-frontend>dc1-team-a-billing-2 billing :9091 (ns payments) ~dc1-mesh ~dc1-team-a-mesh")
+	// Each service and gateway carries its namespace where a partition has
+	// more than default (#134).
+	wantNS(t, g, "dc1-team-a-billing-1", map[string]string{"billing": "payments"})
+	wantNS(t, g, "dc1-team-a-mesh", map[string]string{"mesh-gateway": "default"})
+	// The default partition has only default: no chips.
+	wantNS(t, g, "dc1-frontend", nil)
+	wantNS(t, g, "dc1-mesh", nil)
+}
+
+func wantNS(t *testing.T, g *Graph, name string, w map[string]string) {
+	t.Helper()
+	if got := node(t, g, name).Namespaces; !maps.Equal(got, w) {
+		t.Errorf("%s namespaces: got %v, want %v", name, got, w)
+	}
 }
 
 func TestGateways(t *testing.T) {
@@ -185,7 +200,13 @@ func TestTerminatingFailoverPartitions(t *testing.T) {
 	want(t, "upstreams", edges(g, Upstream), "dc1-part-a-web>api api :9091 ~dc1-part-a-terminating")
 	want(t, "routes", edges(g, Route), "dc1-part-a-terminating>api api", "dc2-part-b-terminating>api api")
 	want(t, "failovers", edges(g, Failover),
-		"dc1-part-a-web>api api failover (peer dc1-dc2, ns app) ~dc1-part-a-mesh ~dc2-part-b-mesh ~dc2-part-b-terminating")
+		"dc1-part-a-web>api api failover (peer dc1-dc2) ~dc1-part-a-mesh ~dc2-part-b-mesh ~dc2-part-b-terminating")
+	// web, its terminating gateway and the external api sit in app; the
+	// mesh gateway in default.
+	wantNS(t, g, "dc1-part-a-web", map[string]string{"web": "app"})
+	wantNS(t, g, "dc1-part-a-terminating", map[string]string{"terminating-gateway": "app"})
+	wantNS(t, g, "dc1-part-a-mesh", map[string]string{"mesh-gateway": "default"})
+	wantNS(t, g, "api", map[string]string{"api": "app"})
 }
 
 func TestFailoverDatacentersAndPartitions(t *testing.T) {
