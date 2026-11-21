@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/consul/api"
@@ -67,5 +68,17 @@ func (failingACL) PolicyReadByName(string, *api.QueryOptions) (*api.ACLPolicy, *
 func TestEnsureAgentTokenNoLeader(t *testing.T) {
 	if err := ensureAgentToken(&failingACL{}, "x", aclAgentRules, ""); err == nil {
 		t.Error("want error without a leader, so acl-setup retries")
+	}
+}
+
+// Consul Enterprise checks node:read in the namespace of each instance it
+// returns, so every namespace needs node read for a sidecar to see its
+// upstreams' nodes (a terminating gateway's, in tgw-failover-ent).
+func TestAgentRulesNamespaceNodeRead(t *testing.T) {
+	for name, rules := range map[string]string{"default partition": aclAgentRulesEnt, "partition": aclPartitionAgentRules} {
+		_, ns, ok := strings.Cut(rules, `namespace_prefix "" {`)
+		if !ok || !strings.Contains(ns, `node_prefix "" { policy = "read" }`) || !strings.Contains(ns, `service_prefix "" { policy = "write" }`) {
+			t.Errorf("%s: namespace block lacks node read or service write:\n%s", name, rules)
+		}
 	}
 }

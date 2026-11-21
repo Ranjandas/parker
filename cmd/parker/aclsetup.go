@@ -18,20 +18,25 @@ const aclAgentRules = `node_prefix "" { policy = "write" }
 service_prefix "" { policy = "write" }
 `
 
-// aclAgentRulesEnt add services in every namespace (Consul Enterprise),
-// for labs with namespaces.
-const aclAgentRulesEnt = aclAgentRules + `namespace_prefix "" {
+// aclNamespaceRules give every namespace (Consul Enterprise) its
+// services and node read. Consul checks node:read in the namespace of the
+// service it returns, so without the node rule here a sidecar in a
+// non-default namespace can't see the nodes of its upstreams' instances,
+// e.g. a terminating gateway's.
+const aclNamespaceRules = `namespace_prefix "" {
+  node_prefix "" { policy = "read" }
   service_prefix "" { policy = "write" }
 }
 `
 
+// aclAgentRulesEnt add services in every namespace (Consul Enterprise),
+// for labs with namespaces.
+const aclAgentRulesEnt = aclAgentRules + aclNamespaceRules
+
 // aclPartitionAgentRules are the agent policy inside a non-default admin
 // partition.
 const aclPartitionAgentRules = `node_prefix "" { policy = "write" }
-namespace_prefix "" {
-  service_prefix "" { policy = "write" }
-}
-`
+` + aclNamespaceRules
 
 // aclSetupCmd runs inside the ACL primary's first server once its leader
 // is up: it creates the agent policy and the agent token (with the
