@@ -642,6 +642,16 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if !strings.Contains(meshRules, `mesh = "write"`) || !strings.Contains(meshRules, `namespace_prefix "" {`) {
 		t.Errorf("team-a mesh gateway rules:\n%s", meshRules)
 	}
+	// Only the default partition's mesh gateway reads other partitions
+	// (failover to them); a team-a policy can't name partitions.
+	if strings.Contains(meshRules, "partition_prefix") {
+		t.Errorf("team-a mesh gateway reads other partitions:\n%s", meshRules)
+	}
+	if i := slices.IndexFunc(ten.Policies, func(p IdentityPolicy) bool {
+		return p.Partition == "" && p.Name == "parker-mesh-gateway-mesh-gateway"
+	}); i < 0 || !strings.Contains(ten.Policies[i].Rules, `partition_prefix "" {`) {
+		t.Errorf("default mesh gateway's policy lacks partition_prefix (%d)", i)
+	}
 	p := s1.Processes[Tenancy]
 	if p == nil || p.DependsOn["dc1-server-1/"+ACLSetup] == nil {
 		t.Fatalf("tenancy process: %+v", p)

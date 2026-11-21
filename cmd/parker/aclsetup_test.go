@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -122,5 +123,18 @@ func TestEnsureIdentityToken(t *testing.T) {
 	creates := f.creates
 	if err := ensurePolicy(f, pol); err != nil || ensureIdentityToken(f, tok) != nil || f.creates != creates {
 		t.Errorf("rerun created %d more", f.creates-creates)
+	}
+}
+
+// docs/acl.md quotes the servers' rules; keep it in step.
+func TestACLDocQuotesAgentRules(t *testing.T) {
+	b, err := os.ReadFile("../../docs/acl.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rules := range []string{aclAgentRules, aclNamespaceRules} {
+		if !strings.Contains(string(b), "```hcl\n"+rules+"```") {
+			t.Errorf("docs/acl.md doesn't quote:\n%s", rules)
+		}
 	}
 }

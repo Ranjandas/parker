@@ -119,10 +119,7 @@ func (id *identities) node(partition, node string) (string, error) {
 // dns is the token an agent answers DNS with (transparent proxy nodes).
 func (id *identities) dns(partition string) (string, error) {
 	return id.token("dns/"+partition, func() IdentityToken {
-		p := id.policy(partition, "parker-dns", id.entRead(`node_prefix "" { policy = "read" }
-service_prefix "" { policy = "read" }
-query_prefix "" { policy = "read" }
-`))
+		p := id.policy(partition, "parker-dns", id.entRead(dnsRules))
 		return IdentityToken{Description: "Parker DNS", Partition: partition, Policies: []string{p}}
 	})
 }
@@ -157,6 +154,42 @@ func (id *identities) service(partition, namespace, svc string) (string, error) 
 	})
 }
 
+// meshGatewayRules are a mesh gateway's (Consul's mesh gateway docs, and
+// consul-k8s's server-acl-init). allPartitions adds read in every
+// partition, which the default partition's gateway needs (Consul
+// Enterprise) to route failover to other local partitions; only a
+// default-partition policy may name other partitions.
+func meshGatewayRules(svc string, allPartitions bool) string {
+	rules := fmt.Sprintf(`mesh = "write"
+peering = "read"
+service %q { policy = "write" }
+service_prefix "" { policy = "read" }
+node_prefix "" { policy = "read" }
+agent_prefix "" { policy = "read" }
+`, svc)
+	if allPartitions {
+		rules += `partition_prefix "" {
+  peering = "read"
+  namespace_prefix "" {
+    service_prefix "" { policy = "read" }
+    node_prefix "" { policy = "read" }
+  }
+}
+`
+	}
+	return rules
+}
+
+// apiGatewayRules are an API gateway's, beside its service identity.
+const apiGatewayRules = `mesh = "read"
+`
+
+// dnsRules are the parker-dns policy's.
+const dnsRules = `node_prefix "" { policy = "read" }
+service_prefix "" { policy = "read" }
+query_prefix "" { policy = "read" }
+`
+
 // gateway is a gateway's token: a service identity for the gateway and
 // the rules Consul documents for its kind. linked are a terminating
 // gateway's services (from its entry).
@@ -167,13 +200,7 @@ func (id *identities) gateway(g gatewayNode, partition, namespace string, linked
 		var rules string
 		switch g.kind {
 		case "mesh":
-			rules = fmt.Sprintf(`mesh = "write"
-peering = "read"
-service %q { policy = "write" }
-service_prefix "" { policy = "read" }
-node_prefix "" { policy = "read" }
-agent_prefix "" { policy = "read" }
-`, svc)
+			rules = meshGatewayRules(svc, partition == "" && id.ent)
 		case "terminating":
 			own := ""
 			if scoped {
@@ -181,8 +208,7 @@ agent_prefix "" { policy = "read" }
 			}
 			rules = linkedRules(linked, namespace, id.ent, own)
 		case "api":
-			rules = `mesh = "read"
-`
+			rules = apiGatewayRules
 		}
 		t := IdentityToken{Description: "Parker " + g.kind + " gateway " + svc, Partition: partition, Namespace: namespace, Service: svc}
 		name := "parker-" + g.kind + "-gateway-" + svc
