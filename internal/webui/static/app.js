@@ -175,6 +175,8 @@ const ICON = {
   term: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 4.5l3 3-3 3M8 11.5h5"/></svg>',
   svc: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/></svg>',
   server: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="12" height="4.5" rx="1.2"/><rect x="2" y="9" width="12" height="4.5" rx="1.2"/></svg>',
+  // A globe with a browser window: clients outside the lab.
+  out: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.5" cy="6.5" r="5"/><path d="M1.5 6.5h10M6.5 1.5c-2.2 2.6-2.2 7.4 0 10M6.5 1.5c2.2 2.6 2.2 7.4 0 10"/><rect x="8.5" y="8.5" width="6.5" height="5.5" rx="1" fill="var(--panel,#fff)"/><path d="M8.5 10.2h6.5"/></svg>',
   gw: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8l5.4 3.1v6.2L8 14.2l-5.4-3.1V4.9z"/><path d="M5.5 8h5M8.5 6l2 2-2 2"/></svg>',
 };
 const LOGO = '<svg width="30" height="30" viewBox="0 0 60 60" aria-hidden="true"><defs><radialGradient id="sun" cx="35%" cy="35%" r="75%"><stop offset="0" stop-color="#FFC94A"/><stop offset=".7" stop-color="#FF7A1A"/><stop offset="1" stop-color="#FF4D2E"/></radialGradient></defs><circle cx="43" cy="24" r="17" fill="url(#sun)"/><rect x="23" y="7" width="10" height="50" rx="5" fill="var(--logo-ink,#F4F1EA)"/><rect x="3" y="12" width="15" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)"/><rect x="7" y="21.5" width="11" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)" opacity=".65"/><rect x="11" y="31" width="7" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)" opacity=".35"/></svg>';
@@ -673,7 +675,7 @@ async function fakeChange(node, svc, change, reset) {
 // refreshed now and then); health comes from the Status poll, so a failing
 // sidecar turns its paths red within a poll.
 const TW = 210, TH = 88, GX = 40, GY = 60, PAD = 28, DCGAP = 120;
-const T = { layers: { upstream: true, wan: true, peering: true }, sel: "", view: null, drag: null };
+const T = { layers: { upstream: true, failover: true, wan: true, peering: true }, sel: "", view: null, drag: null };
 
 async function loadGraph(lab) {
   try {
@@ -685,6 +687,7 @@ async function loadGraph(lab) {
 }
 
 function graphRole(gn) {
+  if (gn.role === "outside") return "out";
   if (gn.role === "server") return "srv";
   if (gn.role === "gateway" || (gn.gateways || []).length) return "gw";
   if ((gn.services || []).length) return "svc";
@@ -699,6 +702,8 @@ function problemOf(n) {
   if (down) return /-sidecar$/.test(down.name) ? "sidecar down" : down.name + " down";
   const crit = Object.entries(n.health || {}).find(([, h]) => h === "critical");
   if (crit) return /-sidecar-proxy$/.test(crit[0]) ? "sidecar failing" : crit[0] + " failing";
+  const idle = (n.processes || []).find((p) => p.stopped || p.paused);
+  if (idle) return idle.name + (idle.stopped ? " stopped" : " paused");
   return "";
 }
 
@@ -759,7 +764,9 @@ function layout(g) {
     const gws = dn.filter((n) => n.role === "gateway").length;
     const others = dn.length - servers.length - gws;
     const sub = [servers.length && plural(servers.length, "server"), gws && plural(gws, "gateway"), others && plural(others, "other node")].filter(Boolean).join(" · ");
-    regions.unshift({ x, y: 0, w: w + 2 * PAD, h, label: dc, sub });
+    // External services and the outside world sit beside the datacenters.
+    const beyond = dn.length > 0 && dn.every((n) => n.role === "outside" || n.role === "external");
+    regions.unshift({ x, y: 0, w: w + 2 * PAD, h, label: beyond ? "outside Consul" : dc, sub: beyond ? plural(dn.length, "node") : sub });
     maxH = Math.max(maxH, h);
     x += w + 2 * PAD + DCGAP;
   }
@@ -792,15 +799,20 @@ function topoState() {
   const st = S.status && S.status.lab === S.route.lab ? S.status : null;
   const byName = new Map(((st && st.nodes) || []).map((n) => [n.name, n]));
   const labDown = !st || labState(st) === "down";
-  const state = (name) => (byName.has(name) ? nodeState(byName.get(name)) : "down");
-  return { st, byName, labDown, state };
+  // The outside world isn't a node of the lab: it's always there.
+  const outside = new Set(((S.graph && S.graph.nodes) || []).filter((n) => n.role === "outside").map((n) => n.name));
+  const state = (name) => (outside.has(name) ? "ok" : byName.has(name) ? nodeState(byName.get(name)) : "down");
+  // A node with a stopped or paused process carries no traffic, though it
+  // isn't failing: a stopped gateway is how you test a failover.
+  const idle = (name) => byName.has(name) && (byName.get(name).processes || []).some((p) => p.stopped || p.paused);
+  return { st, byName, labDown, state, idle };
 }
 
 // hops of an edge, and the first of them that is broken.
 function edgeHealth(e, ts) {
   const hops = [e.from, ...(e.via || []), e.to];
-  if (ts.labDown || (e.kind !== "upstream" && e.kind !== "route")) return { hops, bad: -1 };
-  const bad = hops.findIndex((h) => ["bad", "down"].includes(ts.state(h)));
+  if (ts.labDown || (e.kind !== "upstream" && e.kind !== "route" && e.kind !== "failover")) return { hops, bad: -1 };
+  const bad = hops.findIndex((h) => ["bad", "down"].includes(ts.state(h)) || ts.idle(h));
   return { hops, bad };
 }
 
@@ -819,6 +831,13 @@ function renderTopology() {
     T.sel = (bad || (g.nodes || [])[0] || {}).name || "";
   }
   const shown = (e) => T.layers[e.kind === "route" ? "upstream" : e.kind] !== false;
+  // A failover path carries the traffic once every primary path of its
+  // caller to that service is broken.
+  const svcOf = (e) => (e.label || "").split(" ")[0];
+  const active = (f) => {
+    const prim = (g.edges || []).filter((e) => e.kind === "upstream" && e.from === f.from && svcOf(e) === svcOf(f));
+    return !ts.labDown && prim.length > 0 && prim.every((e) => edgeHealth(e, ts).bad >= 0);
+  };
 
   // Spread edges that share a pair of cards so they don't draw on top of each other.
   const segs = [];
@@ -844,8 +863,8 @@ function renderTopology() {
   const pk = (s) => [s.a, s.b].sort().join("|");
   for (const s of segs) pairN[pk(s)] = (pairN[pk(s)] || 0) + 1;
 
-  const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : "var(--accent)");
-  let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
+  const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
+  let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
   let labels = "";
   const badges = new Set(), labelled = new Set();
   for (const s of segs) {
@@ -855,10 +874,12 @@ function renderTopology() {
     const A = anchors(L.pos[s.a], L.pos[s.b], off);
     const d = curve(A.p, A.q, A.h);
     const c = color(s);
-    const traffic = s.e.kind === "upstream" || s.e.kind === "route";
-    const dash = s.e.kind === "wan" ? "5 5" : s.e.kind === "peering" ? "2 5" : "";
+    const fo = s.e.kind === "failover", live = fo && active(s.e);
+    // A standby failover path is a quiet dashed line; it flows once it's live.
+    const traffic = s.e.kind === "upstream" || s.e.kind === "route" || live;
+    const dash = s.e.kind === "wan" ? "5 5" : s.e.kind === "peering" ? "2 5" : fo && !live ? "1 5" : "";
     if (traffic) svg += `<path d="${d}" fill="none" stroke="${c}" stroke-opacity=".16" stroke-width="7.4" stroke-linecap="round"/>`;
-    const marker = traffic && s.last ? `marker-end="url(#ah-${s.broken ? "bad" : ts.labDown ? "line-2" : "accent"})"` : "";
+    const marker = (traffic || fo) && s.last ? `marker-end="url(#ah-${s.broken ? "bad" : ts.labDown ? "line-2" : fo ? "fo" : "accent"})"` : "";
     svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${traffic ? 2.4 : 1.8}" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ""} class="${traffic && !s.broken && !ts.labDown ? "flow" : ""}" ${marker}/>`;
     if (s.e.label && s.mid && !labelled.has(pk(s) + "|" + s.e.label)) {
       labelled.add(pk(s) + "|" + s.e.label);
@@ -884,25 +905,25 @@ function renderTopology() {
     const n = ts.byName.get(gn.name);
     const s = ts.state(gn.name);
     const ico = graphRole(gn);
-    const icon = ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ICON.svc;
+    const icon = ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ico === "out" ? ICON.out : ICON.svc;
     const hs = { ok: "var(--ok)", warn: "var(--warn)", bad: "var(--bad)", down: "var(--line-2)" }[s];
-    const what = gn.role === "server" ? (n && n.role === "leader" ? "leader" : n && n.role === "follower" ? "follower" : "server")
+    const what = gn.role === "outside" ? "browsers, curl" : gn.role === "server" ? (n && n.role === "leader" ? "leader" : n && n.role === "follower" ? "follower" : "server")
       : (gn.gateways || []).length ? gn.gateways.join(", ") : (gn.services || []).join(", ") || gn.role;
     const procs = (n && n.processes) || [];
     const pills = procs.slice(0, 4).map((pr) => {
       const ps = procState(pr), bad = ps === "down" || procHealth(n, pr) === "critical";
       return `<span class="p"><i style="background:var(--${bad ? "bad" : ps === "ready" ? "ok" : ps === "stopped" ? "line-2" : "warn"})"></i>${esc(pr.name.replace(new RegExp("^" + (gn.services || [])[0] + "-sidecar$"), "sidecar"))}</span>`;
-    }).join("") + (procs.length > 4 ? `<span class="p">+${procs.length - 4}</span>` : "") + (!n || !n.namespace ? '<span class="p">not running</span>' : "");
+    }).join("") + (procs.length > 4 ? `<span class="p">+${procs.length - 4}</span>` : "") + ((!n || !n.namespace) && gn.role !== "outside" ? '<span class="p">not running</span>' : "");
     const ff = fakesOn(gn.name).filter((f) => f.faulted);
     const hit = S.fakeCall && S.fakeCall.hits && Date.now() - S.fakeCall.t < 10000 && S.fakeCall.hits.has(gn.name);
     const fbadge = ff.length ? `<span class="fbadge" title="${esc(ff.map((f) => f.service + ": " + f.summary).join("\n"))}">⚡ faults</span>` : "";
     cards += `<div class="nd ${T.sel === gn.name ? "sel" : ""} ${s === "bad" ? "bad" : ""} ${s === "down" ? "down" : ""} ${hit ? "hit" : ""}" data-tnode="${esc(gn.name)}" style="left:${p.x}px;top:${p.y}px" tabindex="0" role="button" aria-label="${esc(gn.name)}, ${s === "ok" ? "healthy" : s}">
-      <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub">${esc(((gn.ips || [])[0] || "") + " · " + what)}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
+      <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub">${esc([(gn.ips || [])[0], what].filter(Boolean).join(" · "))}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
       <div class="ps">${pills}</div>${fbadge}</div>`;
   }
 
   const layerBtn = (k, label, sw) => kinds.has(k) ? `<button data-layer="${k}" class="${T.layers[k] !== false ? "on" : ""}" aria-pressed="${T.layers[k] !== false}"><span class="sw" style="background:var(${sw})"></span>${label}</button>` : "";
-  const layerBtns = layerBtn("upstream", "Upstreams", "--accent") + layerBtn("wan", g.federation === "mesh-gateways" ? "WAN federation (mesh gateways)" : "WAN federation", "--fed") + layerBtn("peering", "Peering", "--peer");
+  const layerBtns = layerBtn("upstream", "Upstreams", "--accent") + layerBtn("failover", "Failover", "--fo") + layerBtn("wan", g.federation === "mesh-gateways" ? "WAN federation (mesh gateways)" : "WAN federation", "--fed") + layerBtn("peering", "Peering", "--peer");
   const keep = $("#stage");
   v.innerHTML = `<div class="topo">
     <div class="stage" id="stage">
@@ -914,6 +935,7 @@ function renderTopology() {
         <span><i style="background:var(--warn)"></i>Starting</span>${kinds.has("wan") ? '<span><em style="border-color:var(--fed);border-top-style:dashed"></em>WAN federation</span>' : kinds.has("peering") ? '<span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : "<span></span>"}
         <span><i style="background:var(--bad)"></i>Failing</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--bad)"></em>Path broken</span>' : "<span></span>"}
         ${kinds.has("wan") && kinds.has("peering") ? '<span></span><span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : ""}
+        ${kinds.has("failover") ? '<span></span><span><em style="border-color:var(--fo);border-top-style:dotted"></em>Failover (flows when used)</span>' : ""}
       </div>
       <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
     </div>
@@ -953,20 +975,27 @@ function topoPanel(g, ts) {
   const ico = graphRole(gn);
   const lab = encodeURIComponent(S.route.lab);
   const nodeHref = `#/lab/${lab}/node/${encodeURIComponent(gn.name)}`;
-  const kind = gn.role === "server" ? "Consul server" : (gn.gateways || []).length ? gn.gateways.map((x) => x[0].toUpperCase() + x.slice(1)).join(", ") + " gateway"
+  const kind = gn.role === "outside" ? "Clients outside the lab" : gn.role === "external" ? "External service" : gn.role === "server" ? "Consul server" : (gn.gateways || []).length ? gn.gateways.map((x) => x[0].toUpperCase() + x.slice(1)).join(", ") + " gateway"
     : gn.role === "dataplane" ? "Dataplane node" : (gn.services || []).length ? "Service node" : gn.role === "client" ? "Client agent" : "Node";
   const ps = (n && n.processes) || [];
   const health = Object.entries((n && n.health) || {}).sort();
   const conn = (e, dir) => {
     const { bad } = edgeHealth(e, ts);
     const other = dir === "out" ? e.to : e.from;
-    const k = { upstream: dir === "out" ? "calls" : "called by", route: dir === "out" ? "routes to" : "routed from", wan: "wan", peering: dir === "out" ? "peers with" : "peered from" }[e.kind] || e.kind;
+    const k = { upstream: dir === "out" ? "calls" : "called by", route: dir === "out" ? "routes to" : "routed from", failover: dir === "out" ? "fails over to" : "failover from", wan: "wan", peering: dir === "out" ? "peers with" : "peered from" }[e.kind] || e.kind;
     const via = (e.via || []).length ? `via ${e.via.join(" → ")}` : "";
-    return `<a href="#" data-tnode="${esc(other)}" class="${bad >= 0 ? "bad" : ""}"><span class="k" style="color:var(--${e.kind === "wan" ? "fed" : e.kind === "peering" ? "peer" : bad >= 0 ? "bad" : "accent"})">${esc(k)}</span><span class="mono">${esc(other)}${e.label && e.kind !== "wan" ? " · " + esc(e.label) : ""}</span>${via || bad >= 0 ? `<small>${esc(via)}${bad >= 0 ? `${via ? " · " : ""}<span style="color:var(--bad)">broken at ${esc(edgeHealth(e, ts).hops[bad])}: ${esc(problemOf(ts.byName.get(edgeHealth(e, ts).hops[bad])) || "failing")}</span>` : ""}</small>` : ""}</a>`;
+    return `<a href="#" data-tnode="${esc(other)}" class="${bad >= 0 ? "bad" : ""}"><span class="k" style="color:var(--${e.kind === "wan" ? "fed" : e.kind === "peering" ? "peer" : bad >= 0 ? "bad" : e.kind === "failover" ? "fo" : "accent"})">${esc(k)}</span><span class="mono">${esc(other)}${e.label && e.kind !== "wan" ? " · " + esc(e.label) : ""}</span>${via || bad >= 0 ? `<small>${esc(via)}${bad >= 0 ? `${via ? " · " : ""}<span style="color:var(--bad)">broken at ${esc(edgeHealth(e, ts).hops[bad])}: ${esc(problemOf(ts.byName.get(edgeHealth(e, ts).hops[bad])) || "failing")}</span>` : ""}</small>` : ""}</a>`;
   };
   const outs = (g.edges || []).filter((e) => e.from === gn.name), ins = (g.edges || []).filter((e) => e.to === gn.name);
   const through = (g.edges || []).filter((e) => (e.via || []).includes(gn.name));
-  return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico ${ico}" style="width:34px;height:34px">${ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ICON.svc}</div>
+  if (gn.role === "outside") {
+    // Not a node: no processes, logs or shell. Just what it calls.
+    return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico out" style="width:34px;height:34px">${ICON.out}</div>
+      <div style="min-width:0"><div style="font-weight:650;font-size:15px">${esc(gn.name)}</div><div class="muted" style="font-size:12.5px">${esc(kind)}</div></div></div>
+      <p class="muted" style="margin:10px 0 0;font-size:12.5px">Browsers and other clients outside the lab, calling the ingress and API gateways' listeners.</p></section>
+    ${outs.length ? `<section><h4>Connections</h4><div class="conns">${outs.map((e) => conn(e, "out")).join("")}</div></section>` : ""}`;
+  }
+  return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico ${ico}" style="width:34px;height:34px">${ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ico === "out" ? ICON.out : ICON.svc}</div>
       <div style="min-width:0"><div style="font-weight:650;font-size:15px;overflow-wrap:anywhere">${esc(gn.name)}</div><div class="muted" style="font-size:12.5px">${esc(gn.dc || "lab")}${gn.partition && gn.partition !== "default" ? " · " + esc(gn.partition) : ""} · ${esc(kind)}</div></div>
       <span style="margin-left:auto">${stateChip(s)}</span></div>
       <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map(esc).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
