@@ -46,6 +46,9 @@ func (s *Server) Exec(ctx context.Context, stream *connect.BidiStream[parkerv1.E
 	}
 	home := supervisor.NodeDir(lab.RunDir(st.Lab), node)
 	path, env := lab.ExecEnv(low, node, append([]string{"HOME=" + home}, st.Env...), io.Discard)
+	// HOME is the node's dir; the shell still loads the daemon user's
+	// ~/.bashrc before naming the node.
+	argv, env = lab.NodeShell(low, node, argv, env, os.Getenv("HOME"))
 	bin, err := lab.LookPath(argv[0], path)
 	if err != nil {
 		return connect.NewError(connect.CodeNotFound, err)

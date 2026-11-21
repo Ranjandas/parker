@@ -34,7 +34,9 @@ func execCmd() *cobra.Command {
 			"--env prints, instead, the export lines that point the consul CLI on this machine at\n" +
 			"the node's agent: its address, the lab's management token and CA. eval them where the\n" +
 			"host can reach the node's address (not under a rootless daemon); inside the node,\n" +
-			"`parker exec` already sets them.",
+			"`parker exec` already sets them.\n\n" +
+			"A plain shell keeps its history per node, in the node's run dir, and its prompt\n" +
+			"and terminal title name the node (bash still loads your ~/.bashrc first).",
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			argv := args[2:]
@@ -135,6 +137,7 @@ func localExec(low *spec.File, nodeArg string, argv []string) error {
 		argv = []string{sh}
 	}
 	path, env := lab.ExecEnv(low, node, os.Environ(), os.Stderr)
+	argv, env = lab.NodeShell(low, node, argv, env, os.Getenv("HOME"))
 	bin, err := lab.LookPath(argv[0], path)
 	if err != nil {
 		return err

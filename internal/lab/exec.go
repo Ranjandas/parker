@@ -134,3 +134,81 @@ func describeFile(low *spec.File, node string) (string, string, error) {
 	}
 	return name, string(b) + tokenNotes(low, string(b)), nil
 }
+
+// NodeShell makes an interactive shell feel like the node's own: its
+// history is kept per node (in the node's run dir) and its prompt and
+// terminal title name the node. It applies only when argv is just a shell
+// (what exec runs by default); anything else is returned unchanged.
+// userHome is whose ~/.bashrc a bash shell still loads first.
+func NodeShell(low *spec.File, node string, argv, env []string, userHome string) ([]string, []string) {
+	if len(argv) != 1 {
+		return argv, env
+	}
+	sh := filepath.Base(argv[0])
+	switch sh {
+	case "bash", "sh", "zsh", "dash", "ash", "ksh", "mksh":
+	default:
+		return argv, env
+	}
+	dir := supervisor.NodeDir(RunDir(low.Name), node)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return argv, env
+	}
+	label := ShellLabel(low, node)
+	hist := filepath.Join(dir, "."+sh+"_history")
+	mark := "$"
+	if os.Geteuid() == 0 {
+		mark = "#"
+	}
+	env = append(env, "HISTFILE="+hist, "PS1="+label+" "+mark+" ")
+	if sh != "bash" {
+		return argv, env
+	}
+	rc := filepath.Join(dir, ".parker-bashrc")
+	if err := os.WriteFile(rc, []byte(bashRC(low, node, hist, userHome)), 0o644); err != nil {
+		return argv, env
+	}
+	return []string{argv[0], "--rcfile", rc}, env
+}
+
+// ShellLabel names a node for a prompt: dc1/server-1, plus its admin
+// partition when it has one other than the default.
+func ShellLabel(low *spec.File, node string) string {
+	n := low.Nodes[node]
+	if n == nil || n.Labels == nil || n.Labels.DC == "" || n.Labels.Name == "" {
+		return node
+	}
+	s := n.Labels.DC + "/" + n.Labels.Name
+	if p := n.Labels.Partition; p != "" && p != "default" {
+		s += " · " + p
+	}
+	return s
+}
+
+// bashRC loads the user's usual bash setup, then names the node in the
+// prompt and title and points history at the node's own file.
+func bashRC(low *spec.File, node, hist, userHome string) string {
+	label := ShellLabel(low, node)
+	var b strings.Builder
+	b.WriteString("# Written by parker exec for " + node + " in lab " + low.Name + "; rewritten on each shell.\n")
+	if userHome != "" {
+		fmt.Fprintf(&b, "if [ -f %s ]; then . %s\n", sq(userHome+"/.bashrc"), sq(userHome+"/.bashrc"))
+		b.WriteString("elif [ -f /etc/bashrc ]; then . /etc/bashrc\n")
+	} else {
+		b.WriteString("if [ -f /etc/bashrc ]; then . /etc/bashrc\n")
+	}
+	b.WriteString("elif [ -f /etc/bash.bashrc ]; then . /etc/bash.bashrc\nfi\n")
+	fmt.Fprintf(&b, "HISTFILE=%s\nshopt -s histappend\n", sq(hist))
+	// Bold cyan node, dim lab, then the working dir and $ (# as root).
+	fmt.Fprintf(&b, "PS1=%s\n", sq(`\[\e[1;36m\]`+promptEscape(label)+`\[\e[0;2m\] (`+promptEscape(low.Name)+`)\[\e[0m\] \W \$ `))
+	fmt.Fprintf(&b, "printf '\\033]0;%%s\\007' %s\n", sq("parker "+low.Name+": "+label))
+	return b.String()
+}
+
+// sq single-quotes s for sh.
+func sq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// promptEscape keeps a name literal inside PS1 (\ and $ are special).
+func promptEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, "$", `\$`, "`", "\\`").Replace(s)
+}

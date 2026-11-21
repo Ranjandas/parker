@@ -489,3 +489,17 @@ func TestLevelResult(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeShellClearsScreen(t *testing.T) {
+	var out strings.Builder
+	c := &nodeShell{Cmd: exec.Command("echo", "inside"), node: "dc1-web-1"}
+	c.SetStdout(&out)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.HasPrefix(s, clearScreen) || !strings.HasSuffix(s, clearScreen) ||
+		!strings.Contains(s, "shell in dc1-web-1") || !strings.Contains(s, "inside") {
+		t.Errorf("%q", s)
+	}
+}
