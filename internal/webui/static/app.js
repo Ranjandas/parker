@@ -707,6 +707,18 @@ function problemOf(n) {
   return "";
 }
 
+// Namespaces (#134): a Consul namespace scopes a service registration, not
+// a node, so each service and gateway gets its own chip. The graph sets
+// them only where a partition has namespaces other than default.
+const nsOf = (gn, key) => (gn.namespaces || {})[key] || "";
+const nsChip = (gn, key) => nsOf(gn, key) ? ` <span class="nsc" title="Consul namespace">ns ${esc(nsOf(gn, key))}</span>` : "";
+// nsChips: one chip per namespace on a node card, titled with what sits in it.
+function nsChips(gn) {
+  const by = new Map();
+  for (const [k, ns] of Object.entries(gn.namespaces || {}).sort()) by.set(ns, [...(by.get(ns) || []), k]);
+  return [...by].map(([ns, ks]) => `<span class="nsc" title="Consul namespace of ${esc(ks.join(", "))}">ns ${esc(ns)}</span>`).join("");
+}
+
 // layout places datacenters side by side; inside one, servers come first,
 // then each partition's gateways and other nodes.
 function layout(g) {
@@ -918,7 +930,7 @@ function renderTopology() {
     const hit = S.fakeCall && S.fakeCall.hits && Date.now() - S.fakeCall.t < 10000 && S.fakeCall.hits.has(gn.name);
     const fbadge = ff.length ? `<span class="fbadge" title="${esc(ff.map((f) => f.service + ": " + f.summary).join("\n"))}">⚡ faults</span>` : "";
     cards += `<div class="nd ${T.sel === gn.name ? "sel" : ""} ${s === "bad" ? "bad" : ""} ${s === "down" ? "down" : ""} ${hit ? "hit" : ""}" data-tnode="${esc(gn.name)}" style="left:${p.x}px;top:${p.y}px" tabindex="0" role="button" aria-label="${esc(gn.name)}, ${s === "ok" ? "healthy" : s}">
-      <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub">${esc([(gn.ips || [])[0], what].filter(Boolean).join(" · "))}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
+      <div class="h"><div class="ico ${ico}">${icon}</div><div style="min-width:0"><div class="nm">${esc(gn.name)}${n && n.role === "leader" ? ' <span class="star">★</span>' : ""}</div><div class="sub"><span class="t">${esc([(gn.ips || [])[0], what].filter(Boolean).join(" · "))}</span>${nsChips(gn)}</div></div><span class="hs" style="background:${hs};box-shadow:0 0 0 3px color-mix(in srgb,${hs} 20%,transparent)"></span></div>
       <div class="ps">${pills}</div>${fbadge}</div>`;
   }
 
@@ -998,7 +1010,7 @@ function topoPanel(g, ts) {
   return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico ${ico}" style="width:34px;height:34px">${ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ico === "out" ? ICON.out : ICON.svc}</div>
       <div style="min-width:0"><div style="font-weight:650;font-size:15px;overflow-wrap:anywhere">${esc(gn.name)}</div><div class="muted" style="font-size:12.5px">${esc(gn.dc || "lab")}${gn.partition && gn.partition !== "default" ? " · " + esc(gn.partition) : ""} · ${esc(kind)}</div></div>
       <span style="margin-left:auto">${stateChip(s)}</span></div>
-      <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map(esc).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
+      <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map((sv) => esc(sv) + nsChip(gn, sv)).join(", ")}</dd>` : ""}${(gn.gateways || []).some((k) => nsOf(gn, k + "-gateway")) ? `<dt>gateway</dt><dd>${gn.gateways.map((k) => esc(k) + nsChip(gn, k + "-gateway")).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
     <section><h4>Processes</h4><div class="plist">${ps.map((p) => {
       const st = procState(p), h = procHealth(n, p), bad = st === "down" || h === "critical";
       return `<a class="prow ${bad ? "bad" : ""}" href="${nodeHref}?p=${encodeURIComponent(p.name)}" style="color:inherit;text-decoration:none"><span><b>${esc(p.name)}</b> <span class="mono">${p.pid ? "pid " + p.pid : ""}${h ? " · " + esc(h) : ""}</span></span><span class="st ${st}"><i></i>${st}</span><span class="mono" ${p.restarts ? 'style="color:var(--bad)"' : ""}>${p.restarts || 0}↻</span></a>`;

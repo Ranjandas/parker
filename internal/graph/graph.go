@@ -31,6 +31,10 @@ type Node struct {
 	IPs      []string
 	// Links are the web UIs the node serves, for the UI's Open links.
 	Links []Link
+	// Namespaces: the Consul namespace of each service, and of each
+	// gateway (keyed "<kind>-gateway"). Set only when the node's partition
+	// has namespaces other than default, so CE labs carry none.
+	Namespaces map[string]string
 }
 
 // Link is a web UI on a node.
@@ -86,6 +90,7 @@ type upstream struct {
 	DC        string `json:"datacenter"`
 	Peer      string `json:"destination_peer"`
 	Partition string `json:"destination_partition"`
+	Namespace string `json:"destination_namespace"`
 }
 
 type proxy struct {
@@ -94,11 +99,12 @@ type proxy struct {
 }
 
 type service struct {
-	Name    string `json:"name"`
-	Port    int    `json:"port"`
-	Kind    string `json:"kind"`
-	Proxy   *proxy `json:"proxy"`
-	Connect *struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Port      int    `json:"port"`
+	Kind      string `json:"kind"`
+	Proxy     *proxy `json:"proxy"`
+	Connect   *struct {
 		Sidecar *struct {
 			Proxy *proxy `json:"proxy"`
 		} `json:"sidecar_service"`
@@ -170,6 +176,7 @@ type place struct{ dc, partition string }
 
 type caller struct {
 	node string
+	ns   string // the calling service's namespace ("" for default)
 	ups  []upstream
 }
 
@@ -184,6 +191,7 @@ func Build(f *spec.File) *Graph {
 	// externals: where each external service's node is registered (it
 	// sits on several dcs' LANs, so it has no DC of its own).
 	externals := map[string][]place{}
+	var dpNS [][3]string // dataplane node, service, namespace
 
 	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
 		rn := f.Nodes[name]
@@ -207,6 +215,7 @@ func Build(f *spec.File) *Graph {
 					if i := slices.Index(pr.Run, "-service"); i >= 0 && i+1 < len(pr.Run) {
 						gateways[n.DC+"/"+partName(n.Partition)+"/"+pr.Run[i+1]] = name
 					}
+					setNS(&n, p, pr.Env["CONSUL_NAMESPACE"])
 				}
 			}
 			if pn, ok := strings.CutPrefix(p, "peering-"); ok {
@@ -245,8 +254,11 @@ func Build(f *spec.File) *Graph {
 					n.Links = append(n.Links, l)
 				}
 				for _, s := range cfg.Services {
+					if s.Kind == "" {
+						setNS(&n, s.Name, s.Namespace)
+					}
 					if s.Connect != nil && s.Connect.Sidecar != nil && s.Connect.Sidecar.Proxy != nil && len(s.Connect.Sidecar.Proxy.Upstreams) > 0 {
-						callers = append(callers, caller{node: name, ups: s.Connect.Sidecar.Proxy.Upstreams})
+						callers = append(callers, caller{node: name, ns: s.Namespace, ups: s.Connect.Sidecar.Proxy.Upstreams})
 					}
 				}
 			}
@@ -271,13 +283,16 @@ func Build(f *spec.File) *Graph {
 			var es []dataplaneEntry
 			if json.Unmarshal([]byte(raw), &es) == nil {
 				for _, e := range es {
+					if e.Service.Kind == "" {
+						dpNS = append(dpNS, [3]string{e.Node, e.Service.Name, e.Service.Namespace})
+					}
 					if rn := f.Nodes[e.Node]; rn != nil && rn.Labels != nil && rn.Labels.Role == expand.ExternalRole {
 						externals[e.Node] = append(externals[e.Node], place{e.Datacenter, e.Partition})
 					}
 					if e.Service.Kind == "connect-proxy" && e.Service.Proxy != nil && len(e.Service.Proxy.Upstreams) > 0 {
 						// Dataplane nodes are keyed <dc>-<name>; the manifest
 						// names them by their Consul node name.
-						callers = append(callers, caller{node: e.Node, ups: e.Service.Proxy.Upstreams})
+						callers = append(callers, caller{node: e.Node, ns: e.Service.Namespace, ups: e.Service.Proxy.Upstreams})
 					}
 				}
 			}
@@ -299,6 +314,11 @@ func Build(f *spec.File) *Graph {
 		}
 		return nil
 	}
+	for _, x := range dpNS {
+		if n := resolve(x[0]); n != nil {
+			setNS(n, x[1], x[2])
+		}
+	}
 
 	// at: the node sits in (or, for an external service, is registered
 	// in) dc's partition.
@@ -312,6 +332,33 @@ func Build(f *spec.File) *Graph {
 			}
 		}
 		return false
+	}
+	// Namespaces show only where a partition has more than default.
+	var spaced []place
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		for _, ns := range n.Namespaces {
+			if ns != spec.DefaultNamespace {
+				spaced = append(spaced, place{n.DC, n.Partition})
+				for _, x := range externals[n.Name] {
+					spaced = append(spaced, x)
+				}
+				break
+			}
+		}
+	}
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if !slices.ContainsFunc(spaced, func(p place) bool { return at(n, p) }) {
+			n.Namespaces = nil
+			continue
+		}
+		for _, s := range n.Services {
+			setNS(n, s, spec.DefaultNamespace)
+		}
+		for _, gw := range n.Gateways {
+			setNS(n, gw+"-gateway", spec.DefaultNamespace)
+		}
 	}
 	meshGW := func(p place) string {
 		for i := range g.Nodes {
@@ -460,6 +507,9 @@ func Build(f *spec.File) *Graph {
 			if u.Port > 0 {
 				label += " :" + itoa(u.Port)
 			}
+			if u.Namespace != "" && nsName(u.Namespace) != nsName(c.ns) {
+				label += " (ns " + u.Namespace + ")"
+			}
 			edges(Upstream, from, p, u.Name, label)
 
 			// Failover: the resolver in the upstream's own dc/partition.
@@ -502,7 +552,7 @@ func Build(f *spec.File) *Graph {
 					default:
 						where = "same dc"
 					}
-					if t.Namespace != "" {
+					if t.Namespace != "" && nsName(t.Namespace) != nsName(c.ns) {
 						where += ", ns " + t.Namespace
 					}
 					edges(Failover, from, tp, svc, svc+" failover ("+where+")")
@@ -593,6 +643,27 @@ func links(cfg agentConfig) []Link {
 		}
 	}
 	return out
+}
+
+// setNS records the namespace of a node's service or gateway, keeping the
+// first one seen.
+func setNS(n *Node, key, ns string) {
+	if ns == "" {
+		return
+	}
+	if n.Namespaces == nil {
+		n.Namespaces = map[string]string{}
+	}
+	if _, ok := n.Namespaces[key]; !ok {
+		n.Namespaces[key] = ns
+	}
+}
+
+func nsName(ns string) string {
+	if ns == "" {
+		return spec.DefaultNamespace
+	}
+	return ns
 }
 
 func itoa(n int) string {

@@ -1159,15 +1159,18 @@ func (x *GraphResponse) GetFederation() string {
 }
 
 type GraphNode struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Dc            string                 `protobuf:"bytes,2,opt,name=dc,proto3" json:"dc,omitempty"`
-	Partition     string                 `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
-	Role          string                 `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"` // server, client, gateway, dataplane or none
-	Services      []string               `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"`
-	Gateways      []string               `protobuf:"bytes,6,rep,name=gateways,proto3" json:"gateways,omitempty"` // mesh, ingress, terminating, api
-	Ips           []string               `protobuf:"bytes,7,rep,name=ips,proto3" json:"ips,omitempty"`
-	Links         []*GraphLink           `protobuf:"bytes,8,rep,name=links,proto3" json:"links,omitempty"` // web UIs the node serves
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Dc        string                 `protobuf:"bytes,2,opt,name=dc,proto3" json:"dc,omitempty"`
+	Partition string                 `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
+	Role      string                 `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"` // server, client, gateway, dataplane or none
+	Services  []string               `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"`
+	Gateways  []string               `protobuf:"bytes,6,rep,name=gateways,proto3" json:"gateways,omitempty"` // mesh, ingress, terminating, api
+	Ips       []string               `protobuf:"bytes,7,rep,name=ips,proto3" json:"ips,omitempty"`
+	Links     []*GraphLink           `protobuf:"bytes,8,rep,name=links,proto3" json:"links,omitempty"` // web UIs the node serves
+	// Consul namespace of each service and gateway ("<kind>-gateway"), when
+	// its partition has namespaces other than default.
+	Namespaces    map[string]string `protobuf:"bytes,9,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1254,6 +1257,13 @@ func (x *GraphNode) GetIps() []string {
 func (x *GraphNode) GetLinks() []*GraphLink {
 	if x != nil {
 		return x.Links
+	}
+	return nil
+}
+
+func (x *GraphNode) GetNamespaces() map[string]string {
+	if x != nil {
+		return x.Namespaces
 	}
 	return nil
 }
@@ -2625,7 +2635,7 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x05edges\x18\x03 \x03(\v2\x14.parker.v1.GraphEdgeR\x05edges\x12\x1e\n" +
 	"\n" +
 	"federation\x18\x04 \x01(\tR\n" +
-	"federation\"\xd7\x01\n" +
+	"federation\"\xdc\x02\n" +
 	"\tGraphNode\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02dc\x18\x02 \x01(\tR\x02dc\x12\x1c\n" +
@@ -2634,7 +2644,13 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\bservices\x18\x05 \x03(\tR\bservices\x12\x1a\n" +
 	"\bgateways\x18\x06 \x03(\tR\bgateways\x12\x10\n" +
 	"\x03ips\x18\a \x03(\tR\x03ips\x12*\n" +
-	"\x05links\x18\b \x03(\v2\x14.parker.v1.GraphLinkR\x05links\"u\n" +
+	"\x05links\x18\b \x03(\v2\x14.parker.v1.GraphLinkR\x05links\x12D\n" +
+	"\n" +
+	"namespaces\x18\t \x03(\v2$.parker.v1.GraphNode.NamespacesEntryR\n" +
+	"namespaces\x1a=\n" +
+	"\x0fNamespacesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"u\n" +
 	"\tGraphLink\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x16\n" +
@@ -2752,7 +2768,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -2793,7 +2809,8 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*FakeService)(nil),      // 36: parker.v1.FakeService
 	(*FakeResponse)(nil),     // 37: parker.v1.FakeResponse
 	nil,                      // 38: parker.v1.NodeStatus.HealthEntry
-	nil,                      // 39: parker.v1.FakeRequest.HeadersEntry
+	nil,                      // 39: parker.v1.GraphNode.NamespacesEntry
+	nil,                      // 40: parker.v1.FakeRequest.HeadersEntry
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
 	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
@@ -2804,46 +2821,47 @@ var file_parker_v1_parker_proto_depIdxs = []int32{
 	19, // 5: parker.v1.GraphResponse.nodes:type_name -> parker.v1.GraphNode
 	21, // 6: parker.v1.GraphResponse.edges:type_name -> parker.v1.GraphEdge
 	20, // 7: parker.v1.GraphNode.links:type_name -> parker.v1.GraphLink
-	27, // 8: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
-	28, // 9: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
-	28, // 10: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
-	31, // 11: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
-	33, // 12: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
-	39, // 13: parker.v1.FakeRequest.headers:type_name -> parker.v1.FakeRequest.HeadersEntry
-	36, // 14: parker.v1.FakeResponse.services:type_name -> parker.v1.FakeService
-	0,  // 15: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 16: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 17: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 18: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 19: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 20: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
-	17, // 21: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
-	14, // 22: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
-	22, // 23: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	26, // 24: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	30, // 25: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
-	24, // 26: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	34, // 27: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
-	35, // 28: parker.v1.ParkerService.Fake:input_type -> parker.v1.FakeRequest
-	1,  // 29: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 30: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 31: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 32: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 33: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 34: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	18, // 35: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
-	15, // 36: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
-	23, // 37: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	29, // 38: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	32, // 39: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	25, // 40: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	3,  // 41: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
-	37, // 42: parker.v1.ParkerService.Fake:output_type -> parker.v1.FakeResponse
-	29, // [29:43] is the sub-list for method output_type
-	15, // [15:29] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	39, // 8: parker.v1.GraphNode.namespaces:type_name -> parker.v1.GraphNode.NamespacesEntry
+	27, // 9: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
+	28, // 10: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
+	28, // 11: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
+	31, // 12: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
+	33, // 13: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
+	40, // 14: parker.v1.FakeRequest.headers:type_name -> parker.v1.FakeRequest.HeadersEntry
+	36, // 15: parker.v1.FakeResponse.services:type_name -> parker.v1.FakeService
+	0,  // 16: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 17: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 18: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 19: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 20: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 21: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
+	17, // 22: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
+	14, // 23: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
+	22, // 24: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	26, // 25: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	30, // 26: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	24, // 27: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	34, // 28: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	35, // 29: parker.v1.ParkerService.Fake:input_type -> parker.v1.FakeRequest
+	1,  // 30: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 31: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 32: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 33: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 34: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 35: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	18, // 36: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
+	15, // 37: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
+	23, // 38: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	29, // 39: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	32, // 40: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	25, // 41: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 42: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	37, // 43: parker.v1.ParkerService.Fake:output_type -> parker.v1.FakeResponse
+	30, // [30:44] is the sub-list for method output_type
+	16, // [16:30] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -2877,7 +2895,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   40,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
