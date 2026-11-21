@@ -674,7 +674,7 @@ async function fakeChange(node, svc, change, reset) {
 // The lab's architecture comes from the Graph call (fetched once per lab and
 // refreshed now and then); health comes from the Status poll, so a failing
 // sidecar turns its paths red within a poll.
-const TW = 210, TH = 88, GX = 40, GY = 60, PAD = 28, DCGAP = 120;
+const { TW, TH, layout, anchors, route } = window.Topo;
 const T = { layers: { upstream: true, failover: true, wan: true, peering: true }, sel: "", view: null, drag: null };
 
 async function loadGraph(lab) {
@@ -717,126 +717,6 @@ function nsChips(gn) {
   const by = new Map();
   for (const [k, ns] of Object.entries(gn.namespaces || {}).sort()) by.set(ns, [...(by.get(ns) || []), k]);
   return [...by].map(([ns, ks]) => `<span class="nsc" title="Consul namespace of ${esc(ks.join(", "))}">ns ${esc(ns)}</span>`).join("");
-}
-
-// layout places datacenters side by side; inside one, servers come first,
-// then each partition's gateways and other nodes.
-function layout(g) {
-  const nodes = g.nodes || [];
-  const dcs = [...new Set(nodes.map((n) => n.dc || "lab"))].sort();
-  const pos = {}, regions = [];
-  let x = 0, maxH = 0;
-  const part = (n) => (n.partition && n.partition !== "default" ? n.partition : "default");
-  const plural = (k, s) => `${k} ${s}${k === 1 ? "" : "s"}`;
-  for (const dc of dcs) {
-    const dn = nodes.filter((n) => (n.dc || "lab") === dc);
-    const servers = dn.filter((n) => n.role === "server");
-    const rest = dn.filter((n) => n.role !== "server");
-    const parts = [...new Set(rest.map(part))].sort((a, b) => (a === "default" ? -1 : b === "default" ? 1 : a.localeCompare(b)));
-    const boxed = parts.length > 1 || (parts.length === 1 && parts[0] !== "default");
-    const groups = parts.map((p) => {
-      const pn = rest.filter((n) => part(n) === p);
-      return { p, gws: pn.filter((n) => n.role === "gateway"), others: pn.filter((n) => n.role !== "gateway") };
-    });
-    const widest = Math.max(servers.length, ...groups.map((gr) => Math.max(gr.gws.length, gr.others.length)));
-    // Without partitions everything shares one grid; with them, servers
-    // sit on top and each partition gets a box of its own, side by side.
-    const scols = Math.max(1, Math.min(3, boxed ? servers.length : widest));
-    let y = PAD + 8;
-    const place = (list, x0, cols, y0) => {
-      list.forEach((n, i) => { pos[n.name] = { x: x0 + (i % cols) * (TW + GX), y: y0 + Math.floor(i / cols) * (TH + GY) }; });
-      return list.length ? Math.ceil(list.length / cols) * (TH + GY) : 0;
-    };
-    y += place(servers, x + PAD, scols, y);
-    let w = scols * TW + (scols - 1) * GX;
-    if (!boxed) {
-      for (const gr of groups) {
-        y += place(gr.gws, x + PAD, scols, y);
-        y += place(gr.others, x + PAD, scols, y);
-      }
-    } else {
-      const inset = 16;
-      let bx = x + PAD, bottom = y;
-      for (const gr of groups) {
-        const cols = Math.max(1, Math.min(2, Math.max(gr.gws.length, gr.others.length)));
-        const innerW = cols * TW + (cols - 1) * GX;
-        let by = y + 30;
-        by += place(gr.gws, bx + inset, cols, by);
-        by += place(gr.others, bx + inset, cols, by);
-        const h = by - GY + 16 - y;
-        const k = gr.gws.length + gr.others.length;
-        regions.push({ part: true, x: bx, y, w: innerW + 2 * inset, h, label: gr.p, sub: plural(k, "node") });
-        bottom = Math.max(bottom, y + h + GY);
-        bx += innerW + 2 * inset + GX;
-      }
-      w = Math.max(w, bx - GX - (x + PAD));
-      y = bottom;
-    }
-    const h = y - GY + PAD;
-    const gws = dn.filter((n) => n.role === "gateway").length;
-    const others = dn.length - servers.length - gws;
-    const sub = [servers.length && plural(servers.length, "server"), gws && plural(gws, "gateway"), others && plural(others, "other node")].filter(Boolean).join(" · ");
-    // External services and the outside world sit beside the datacenters.
-    const beyond = dn.length > 0 && dn.every((n) => n.role === "outside" || n.role === "external");
-    regions.unshift({ x, y: 0, w: w + 2 * PAD, h, label: beyond ? "outside Consul" : dc, sub: beyond ? plural(dn.length, "node") : sub });
-    maxH = Math.max(maxH, h);
-    x += w + 2 * PAD + DCGAP;
-  }
-  // Same height for every datacenter, so they read as peers.
-  for (const r of regions) if (!r.part) r.h = maxH;
-  return { pos, regions, w: Math.max(0, x - DCGAP), h: maxH };
-}
-
-// Anchor points between two cards: sides when they sit apart horizontally,
-// top and bottom when stacked.
-function anchors(a, b, off) {
-  const ac = { x: a.x + TW / 2, y: a.y + TH / 2 }, bc = { x: b.x + TW / 2, y: b.y + TH / 2 };
-  if (Math.abs(bc.x - ac.x) > TW * 0.75) {
-    const r = bc.x > ac.x ? 1 : -1;
-    return { p: [ac.x + (r * TW) / 2, ac.y + off], q: [bc.x - (r * TW) / 2, bc.y + off], h: true };
-  }
-  const d = bc.y > ac.y ? 1 : -1;
-  return { p: [ac.x + off, ac.y + (d * TH) / 2], q: [bc.x + off, bc.y - (d * TH) / 2], h: false };
-}
-function curve(a, b, horiz) {
-  if (horiz) {
-    const dx = Math.max(30, Math.abs(b[0] - a[0]) / 2) * Math.sign(b[0] - a[0] || 1);
-    return `M${a[0]},${a[1]} C${a[0] + dx},${a[1]} ${b[0] - dx},${b[1]} ${b[0]},${b[1]}`;
-  }
-  const dy = Math.max(24, Math.abs(b[1] - a[1]) / 2) * Math.sign(b[1] - a[1] || 1);
-  return `M${a[0]},${a[1]} C${a[0]},${a[1] + dy} ${b[0]},${b[1] - dy} ${b[0]},${b[1]}`;
-}
-
-// cards a straight segment from a to b would run under, other than its ends.
-function blockers(pos, a, b, A) {
-  const lo = (i) => Math.min(A.p[i], A.q[i]), hi = (i) => Math.max(A.p[i], A.q[i]);
-  const [x, y] = A.h ? [0, 1] : [1, 0]; // along, across
-  const size = A.h ? [TW, TH] : [TH, TW];
-  return Object.entries(pos).filter(([n, c]) => {
-    const at = A.h ? [c.x, c.y] : [c.y, c.x];
-    return n !== a && n !== b && at[0] + size[0] > lo(x) && at[0] < hi(x) && at[1] + size[1] > lo(y) - 6 && at[1] < hi(y) + 6;
-  }).map(([, c]) => c);
-}
-// route draws a segment, going round the cards in its way: a hop between
-// two gateways must not look like it passes through a third one.
-// lanes holds the detours drawn so far, so two detours don't share a lane.
-function route(pos, a, b, A, off, lanes) {
-  const bl = blockers(pos, a, b, A);
-  if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
-  const free = (at, i) => {
-    const lo = Math.min(A.p[i], A.q[i]), hi = Math.max(A.p[i], A.q[i]);
-    while (lanes.some((l) => l.h === A.h && Math.abs(l.at - at) < 10 && l.lo < hi && lo < l.hi)) at += 14;
-    lanes.push({ h: A.h, at, lo, hi });
-    return at;
-  };
-  if (A.h) {
-    const y = free(Math.max(...bl.map((c) => c.y + TH)) + 22 + off, 0), r = Math.sign(A.q[0] - A.p[0]) || 1;
-    const [px, py] = A.p, [qx, qy] = A.q;
-    return { d: `M${px},${py} C${px + r * 34},${py} ${px + r * 34},${y} ${px + r * 68},${y} L${qx - r * 68},${y} C${qx - r * 34},${y} ${qx - r * 34},${qy} ${qx},${qy}`, mid: [(px + qx) / 2, y], lane: true };
-  }
-  const x = free(Math.max(...bl.map((c) => c.x + TW)) + 22 + off, 1), r = Math.sign(A.q[1] - A.p[1]) || 1;
-  const [px, py] = A.p, [qx, qy] = A.q;
-  return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
 }
 
 function topoState() {

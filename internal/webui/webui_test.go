@@ -205,11 +205,11 @@ func compatMinor(v string) string {
 	return parts[0] + "." + parts[1]
 }
 
-// The builder's scripts are served next to the UI.
+// The topology layout and builder scripts are served next to the UI.
 func TestBuilderScriptsServed(t *testing.T) {
 	h, _ := newTest(t)
 	idx := do(h, "GET", "/", "", nil).Body.String()
-	for _, f := range []string{"buildmodel.js", "builder.js"} {
+	for _, f := range []string{"topolayout.js", "buildmodel.js", "builder.js"} {
 		if !strings.Contains(idx, `src="`+f+`"`) {
 			t.Errorf("index.html doesn't load %s", f)
 		}
