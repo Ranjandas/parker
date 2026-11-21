@@ -75,6 +75,12 @@ func TestPeeringPartitions(t *testing.T) {
 		if n.Labels.Partition != "default" && p.Env["CONSUL_PARTITION"] != n.Labels.Partition {
 			t.Errorf("%s: gateway partition %v", key, p.Env)
 		}
+		// The peer's gateways dial it on the wan network, so a
+		// partition's gateway is on it too and advertises that address.
+		wan := n.Networks[WANNetwork]
+		if wan == nil || !strings.Contains(strings.Join(p.Run, " "), "-wan-address "+wan.IP+":") {
+			t.Errorf("%s: mesh gateway not on the wan network: %v %v", key, n.Networks, p.Run)
+		}
 	}
 	if low.Nodes["dc2-team-b-mesh"] == nil || low.Nodes["dc1-team-a-mesh"] == nil {
 		t.Error("each peered partition gets its own mesh gateway")
