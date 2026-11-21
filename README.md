@@ -547,8 +547,8 @@ dc1:
 Parker creates the partitions and namespaces as soon as the leader is up
 (the `tenancy` process on `server-1`), joins each agent to its partition,
 registers services, checks and sidecars in their namespace, and writes a
-partition's `config_entries` into it. With ACLs each partition gets its own
-agent token. Partitions can reuse a node name, as Consul allows: nodes
+partition's `config_entries` into it. With ACLs every agent, service and
+gateway gets its own token in its partition (and namespace). Partitions can reuse a node name, as Consul allows: nodes
 outside the default partition expand to `<dc>-<partition>-<name>`, so
 `billing-1` above is `dc1-team-a-billing-1` (and `billing-1` to Consul).
 `dc1/team-a/billing-1` or `billing-1.team-a.dc1.<lab>.parker` name it. Partitions and namespaces need an
@@ -573,7 +573,7 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   consul-k8s endpoints controller does; each sidecar is `consul-dataplane`,
   which finds the servers over gRPC (8502, or 8503 with `tls: true`, where
   servers don't ask dataplanes for a client certificate) and logs in with
-  the agent token under ACLs. Dataplane nodes can't use `connect: tproxy`
+  its service's identity token under ACLs. Dataplane nodes can't use `connect: tproxy`
   yet (see `examples/dataplane.yaml`)
 - `run: fake-service`: built-in fake service (`parker fake-service`). It answers with its name, node, dc and version, and on each request calls its upstreams (by default the service's `upstreams:`, through its sidecar), nesting their answers under `upstream_calls` with the time each hop took. The `fake:` block sets the message, version, upstreams, latency, error and rate-limit faults, health and ready codes, and `protocol: http|grpc|tcp`; nicholasjackson/fake-service's env vars (`MESSAGE`, `UPSTREAM_URIS`, ...) work too. `parker fake` changes faults while it runs, `parker call` prints a request's path as a tree, and the fake serves its own page with fault controls at `/ui`. See [docs/fake-service.md](docs/fake-service.md) and the failover demo in [`examples/fake-chain.yaml`](examples/fake-chain.yaml).
 - Several datacenters, each on its own LAN (`10.<n>.0.0/24` by default);
@@ -634,10 +634,17 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   with `Consumers: [{ Partition: ... }]` instead (see
   `examples/peering-partitions.yaml`, run by `make e2e-ent`)
 - `acl: true` (under `consul.defaults` or a dc): ACLs with default deny
-  plus gossip encryption. Parker generates the management token, an agent
-  token and the gossip key; `parker exec` (and the TUI shell) sets
-  `CONSUL_HTTP_TOKEN` to the management token (see `examples/acl.yaml`).
-  Federated dcs replicate tokens from the primary.
+  plus gossip encryption. Parker generates the management token and the
+  gossip key, and gives everything its own token, as Consul's docs set
+  them up: each client agent a node identity, each service (and its
+  sidecar, or its consul-dataplane) a service identity, each gateway a
+  service identity plus the rules for its kind (a terminating gateway
+  writes the services it fronts), and transparent-proxy nodes a DNS
+  token. The `tenancy` process on `server-1` creates them before any
+  client starts. Servers use an agent token, and setup jobs (config
+  entries, peering, tenancy) the management token. `parker exec` (and the
+  TUI shell) sets `CONSUL_HTTP_TOKEN` to the management token (see
+  `examples/acl.yaml`). Federated dcs replicate tokens from the primary.
 - `tls: true`: a CA per lab signs the servers' certificates
   (`server.<dc>.consul`, node IPs, their `parker proxy` names) and is the
   Connect root, so clients' `auto_encrypt` certificates chain to it too.

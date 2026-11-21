@@ -12,8 +12,9 @@ import (
 	"github.com/Ranjandas/parker/internal/expand"
 )
 
-// aclAgentRules let agents register their node and the services in their
-// config. Broad on purpose: a lab, not a hardened cluster.
+// aclAgentRules are the servers' agent token's. Client agents, services
+// and gateways get identity tokens (expand/identity.go, created by
+// tenancy).
 const aclAgentRules = `node_prefix "" { policy = "write" }
 service_prefix "" { policy = "write" }
 `
@@ -32,11 +33,6 @@ const aclNamespaceRules = `namespace_prefix "" {
 // aclAgentRulesEnt add services in every namespace (Consul Enterprise),
 // for labs with namespaces.
 const aclAgentRulesEnt = aclAgentRules + aclNamespaceRules
-
-// aclPartitionAgentRules are the agent policy inside a non-default admin
-// partition.
-const aclPartitionAgentRules = `node_prefix "" { policy = "write" }
-` + aclNamespaceRules
 
 // aclSetupCmd runs inside the ACL primary's first server once its leader
 // is up: it creates the agent policy and the agent token (with the
@@ -127,4 +123,56 @@ func ensureAgentToken(a aclAPI, secret, rules, partition string) error {
 		return fmt.Errorf("create agent token: %w", err)
 	}
 	return nil
+}
+
+type identityACL interface {
+	PolicyReadByName(string, *api.QueryOptions) (*api.ACLPolicy, *api.QueryMeta, error)
+	PolicyCreate(*api.ACLPolicy, *api.WriteOptions) (*api.ACLPolicy, *api.WriteMeta, error)
+	TokenReadSelf(*api.QueryOptions) (*api.ACLToken, *api.QueryMeta, error)
+	TokenCreate(*api.ACLToken, *api.WriteOptions) (*api.ACLToken, *api.WriteMeta, error)
+}
+
+// ensurePolicy creates a policy in its partition's default namespace
+// unless it is there.
+func ensurePolicy(a identityACL, p expand.IdentityPolicy) error {
+	got, _, err := a.PolicyReadByName(p.Name, &api.QueryOptions{Partition: p.Partition})
+	if err != nil && !strings.Contains(err.Error(), "404") {
+		return err
+	}
+	if got != nil {
+		return nil
+	}
+	_, _, err = a.PolicyCreate(&api.ACLPolicy{Name: p.Name, Description: "Parker lab", Rules: p.Rules, Partition: p.Partition},
+		&api.WriteOptions{Partition: p.Partition})
+	return err
+}
+
+// ensureIdentityToken creates a token with the SecretID expand picked
+// unless it is there (a re-up keeps Consul's data).
+func ensureIdentityToken(a identityACL, t expand.IdentityToken) error {
+	q := &api.QueryOptions{Token: t.SecretID, Partition: t.Partition, Namespace: t.Namespace}
+	if got, _, err := a.TokenReadSelf(q); err == nil && got != nil {
+		return nil
+	}
+	tok := &api.ACLToken{SecretID: t.SecretID, Description: t.Description, Partition: t.Partition, Namespace: t.Namespace}
+	if t.Node != "" {
+		tok.NodeIdentities = []*api.ACLNodeIdentity{{NodeName: t.Node, Datacenter: t.Datacenter}}
+	}
+	if t.Service != "" {
+		tok.ServiceIdentities = []*api.ACLServiceIdentity{{ServiceName: t.Service}}
+	}
+	for _, name := range t.Policies {
+		// The policies are in the partition's default namespace, which a
+		// token in another namespace links by ID.
+		p, _, err := a.PolicyReadByName(name, &api.QueryOptions{Partition: t.Partition})
+		if err != nil {
+			return fmt.Errorf("policy %s: %w", name, err)
+		}
+		if p == nil {
+			return fmt.Errorf("policy %s: not found", name)
+		}
+		tok.Policies = append(tok.Policies, &api.ACLTokenPolicyLink{ID: p.ID})
+	}
+	_, _, err := a.TokenCreate(tok, &api.WriteOptions{Partition: t.Partition, Namespace: t.Namespace})
+	return err
 }

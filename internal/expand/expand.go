@@ -529,28 +529,19 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 		}
 
-		// Partitions and namespaces, and an agent token in each partition.
+		// Partitions and namespaces, and with ACLs a token for every
+		// agent, service and gateway (identity.go). The manifest is
+		// written once the nodes below have asked for their tokens.
 		ten := tenancyFor(c, dc)
-		agentToken := map[string]string{"": sec.agent}
-		if acl {
-			for _, p := range ten.Partitions {
-				id, err := uuid()
-				if err != nil {
-					return err
-				}
-				agentToken[p] = id
-				ten.AgentTokens = append(ten.AgentTokens, AgentToken{Partition: p, SecretID: id})
-			}
-		}
+		ids := newIdentities(dcName, c.UsesTenancy())
 		setupDeps := maps.Clone(aclDeps) // what clients and config entries wait for
-		if !ten.empty() {
+		if acl || !ten.empty() {
 			deps := map[string]*spec.Dep{}
 			for _, r := range serverRefs {
 				deps[r] = &spec.Dep{Condition: "ready"}
 			}
 			maps.Copy(deps, aclDeps)
 			s1 := out.Nodes[dcName+"-server-1"]
-			s1.Files[TenancyManifest] = mustJSON(ten)
 			s1.Processes[Tenancy] = tenancyProcess(deps, apiEnv(token, tls))
 			setupDeps[dcName+"-server-1/"+Tenancy] = &spec.Dep{Condition: "ready"}
 		}
@@ -694,15 +685,22 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 								admin: SidecarAdminPort + sidecars, graceful: DataplaneGracefulPort + sidecars, tls: tls,
 								deps: map[string]*spec.Dep{dcName + "-server-1/" + DataplaneHealth: {Condition: "ready"}}}
 							if acl {
-								d.token = agentToken[part]
+								if d.token, err = ids.service(part, svcCheck.Namespace, svcName); err != nil {
+									return err
+								}
 							}
 							rn.Processes[svcName+SidecarSuffix] = d.process()
 							sidecars++
 						}
 						continue
 					}
+					svcToken := ""
 					if acl {
-						reg["token"] = agentToken[part] // registers and syncs the service
+						// Registers and syncs the service, and its sidecar.
+						if svcToken, err = ids.service(part, svcCheck.Namespace, svcName); err != nil {
+							return err
+						}
+						reg["token"] = svcToken
 					}
 					regs = append(regs, reg)
 					if proc != nil {
@@ -711,7 +709,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if inMesh(svc) {
 						sc := sidecar{svc: svcName, key: key, admin: SidecarAdminPort + sidecars, port: SidecarPort + sidecars,
 							tls: tls, marked: transparentNode, transparent: svc.Connect == "tproxy"}
-						rn.Processes[svcName+SidecarSuffix] = sc.process(tenantEnv(apiEnv(token, tls), part, svcCheck.Namespace))
+						rn.Processes[svcName+SidecarSuffix] = sc.process(tenantEnv(apiEnv(svcToken, tls), part, svcCheck.Namespace))
 						sidecars++
 					}
 				}
@@ -725,7 +723,23 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if gwNS == "" && c.UsesTenancy() {
 						gwNS = spec.DefaultNamespace
 					}
-					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(token, tls), part, gwNS), tls)
+					gwToken := ""
+					if acl {
+						var linked []linkedService
+						for _, e := range gwEntries[dcName] {
+							if e.partition == part && e.entry["Kind"] == "terminating-gateway" && e.entry["Name"] == g.service() {
+								linked = linkedServices(e.entry)
+							}
+						}
+						tokNS := gwNS
+						if tokNS == spec.DefaultNamespace {
+							tokNS = ""
+						}
+						if gwToken, err = ids.gateway(g, part, tokNS, linked); err != nil {
+							return err
+						}
+					}
+					gp := g.envoyProcess(key, ip, gwWANIP, SidecarAdminPort+sidecars, meshFed, tenantEnv(apiEnv(gwToken, tls), part, gwNS), tls)
 					if meshFed && dcName != primary && gwWANIP != "" {
 						// Ready once the primary reaches this datacenter,
 						// which goes through this gateway: ask a primary
@@ -770,11 +784,17 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 						cfg["services"] = regs
 					}
 					if acl {
-						tokens := map[string]any{"agent": agentToken[part]}
+						agentTok, err := ids.node(part, name)
+						if err != nil {
+							return err
+						}
+						tokens := map[string]any{"agent": agentTok}
 						if transparentNode {
 							// The node's DNS goes to this agent, and lookups
 							// under default deny need a token.
-							tokens["dns"] = agentToken[part]
+							if tokens["dns"], err = ids.dns(part); err != nil {
+								return err
+							}
 						}
 						cfg["acl"] = map[string]any{"enabled": true, "default_policy": "deny", "enable_token_persistence": true,
 							"tokens": tokens}
@@ -854,6 +874,10 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			return err
 		}
 		dpEntries = append(dpEntries, extEntries...)
+		ten.Policies, ten.Tokens = ids.policies, ids.tokens
+		if s1 := out.Nodes[dcName+"-server-1"]; s1.Processes[Tenancy] != nil {
+			s1.Files[TenancyManifest] = mustJSON(ten)
+		}
 		if len(dpEntries) > 0 {
 			deps := map[string]*spec.Dep{}
 			for _, r := range serverRefs {

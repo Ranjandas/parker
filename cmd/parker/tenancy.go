@@ -16,13 +16,13 @@ import (
 )
 
 // tenancyCmd runs on a dc's first server once its servers (and ACLs) are
-// ready: it creates the admin partitions and namespaces the lab uses, and
-// with ACLs an agent token in each partition, then waits so the process
-// stays up for status. Consul Enterprise only.
+// ready: it creates the admin partitions and namespaces the lab uses
+// (Consul Enterprise), and with ACLs the identity tokens of its agents,
+// services and gateways, then waits so the process stays up for status.
 func tenancyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    expand.Tenancy + " MANIFEST",
-		Short:  "Create a datacenter's partitions and namespaces (run by parker up)",
+		Short:  "Create a datacenter's partitions, namespaces and tokens (run by parker up)",
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,7 +56,8 @@ func tenancyCmd() *cobra.Command {
 type tenancyAPI interface {
 	CreatePartition(ctx context.Context, name string) error
 	CreateNamespace(partition, name string) error
-	EnsureAgentToken(partition, secret string) error
+	EnsurePolicy(p expand.IdentityPolicy) error
+	EnsureToken(t expand.IdentityToken) error
 }
 
 type consulTenancy struct{ c *api.Client }
@@ -71,8 +72,19 @@ func (t consulTenancy) CreateNamespace(partition, name string) error {
 	return err
 }
 
-func (t consulTenancy) EnsureAgentToken(partition, secret string) error {
-	return ensureAgentToken(t.c.ACL(), secret, aclPartitionAgentRules, partition)
+func (t consulTenancy) EnsurePolicy(p expand.IdentityPolicy) error {
+	return ensurePolicy(t.c.ACL(), p)
+}
+
+func (t consulTenancy) EnsureToken(tok expand.IdentityToken) error {
+	return ensureIdentityToken(t.c.ACL(), tok)
+}
+
+func inPartition(p string) string {
+	if p == "" {
+		return ""
+	}
+	return " in partition " + p
 }
 
 // exists: creating something that's there (a rerun) is fine.
@@ -80,8 +92,8 @@ func exists(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
-// applyTenancy creates partitions, then namespaces, then agent tokens,
-// retrying while the cluster settles.
+// applyTenancy creates partitions, then namespaces, then policies and
+// tokens, retrying while the cluster settles.
 func applyTenancy(ctx context.Context, a tenancyAPI, t expand.TenancySpec, patience time.Duration, log io.Writer) error {
 	type step struct {
 		label string
@@ -98,8 +110,11 @@ func applyTenancy(ctx context.Context, a tenancyAPI, t expand.TenancySpec, patie
 		}
 		steps = append(steps, step{label, func() error { return a.CreateNamespace(n.Partition, n.Name) }})
 	}
-	for _, tok := range t.AgentTokens {
-		steps = append(steps, step{"agent token in partition " + tok.Partition, func() error { return a.EnsureAgentToken(tok.Partition, tok.SecretID) }})
+	for _, p := range t.Policies {
+		steps = append(steps, step{"policy " + p.Name + inPartition(p.Partition), func() error { return a.EnsurePolicy(p) }})
+	}
+	for _, tok := range t.Tokens {
+		steps = append(steps, step{"token " + strings.ToLower(tok.Description) + inPartition(tok.Partition), func() error { return a.EnsureToken(tok) }})
 	}
 	for _, s := range steps {
 		deadline := time.Now().Add(patience)

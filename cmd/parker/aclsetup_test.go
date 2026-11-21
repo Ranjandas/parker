@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/Ranjandas/parker/internal/expand"
 )
 
 type fakeACL struct {
@@ -75,10 +77,41 @@ func TestEnsureAgentTokenNoLeader(t *testing.T) {
 // returns, so every namespace needs node read for a sidecar to see its
 // upstreams' nodes (a terminating gateway's, in tgw-failover-ent).
 func TestAgentRulesNamespaceNodeRead(t *testing.T) {
-	for name, rules := range map[string]string{"default partition": aclAgentRulesEnt, "partition": aclPartitionAgentRules} {
+	for name, rules := range map[string]string{"default partition": aclAgentRulesEnt} {
 		_, ns, ok := strings.Cut(rules, `namespace_prefix "" {`)
 		if !ok || !strings.Contains(ns, `node_prefix "" { policy = "read" }`) || !strings.Contains(ns, `service_prefix "" { policy = "write" }`) {
 			t.Errorf("%s: namespace block lacks node read or service write:\n%s", name, rules)
 		}
+	}
+}
+
+func TestEnsureIdentityToken(t *testing.T) {
+	f := &fakeACL{policies: map[string]*api.ACLPolicy{}, tokens: map[string]*api.ACLToken{}}
+	pol := expand.IdentityPolicy{Name: "parker-tgw", Partition: "part-a", Rules: `service "api" { policy = "write" }`}
+	if err := ensurePolicy(f, pol); err != nil {
+		t.Fatal(err)
+	}
+	f.policies["parker-tgw"].ID = "pol-1"
+	tok := expand.IdentityToken{SecretID: "s-1", Description: "Parker terminating gateway tgw", Partition: "part-a", Namespace: "app",
+		Service: "tgw", Policies: []string{"parker-tgw"}}
+	if err := ensureIdentityToken(f, tok); err != nil {
+		t.Fatal(err)
+	}
+	got := f.tokens["s-1"]
+	if got == nil || got.Partition != "part-a" || got.Namespace != "app" || len(got.ServiceIdentities) != 1 || got.ServiceIdentities[0].ServiceName != "tgw" ||
+		len(got.Policies) != 1 || got.Policies[0].ID != "pol-1" {
+		t.Fatalf("token: %+v", got)
+	}
+	node := expand.IdentityToken{SecretID: "s-2", Node: "web", Datacenter: "dc1"}
+	if err := ensureIdentityToken(f, node); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.tokens["s-2"].NodeIdentities; len(n) != 1 || n[0].NodeName != "web" || n[0].Datacenter != "dc1" {
+		t.Errorf("node identity: %+v", n)
+	}
+	// A rerun creates nothing.
+	creates := f.creates
+	if err := ensurePolicy(f, pol); err != nil || ensureIdentityToken(f, tok) != nil || f.creates != creates {
+		t.Errorf("rerun created %d more", f.creates-creates)
 	}
 }
