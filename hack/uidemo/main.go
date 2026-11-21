@@ -40,7 +40,7 @@ type fake struct {
 }
 
 // labExamples are the examples the demo labs are expanded from.
-var labExamples = map[string]string{"meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml"}
+var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml"}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -83,7 +83,7 @@ func (f *fake) Version(context.Context, *connect.Request[parkerv1.VersionRequest
 
 func (f *fake) ListLabs(context.Context, *connect.Request[parkerv1.ListLabsRequest]) (*connect.Response[parkerv1.ListLabsResponse], error) {
 	return connect.NewResponse(&parkerv1.ListLabsResponse{Labs: []*parkerv1.LabSummary{
-		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}}}), nil
+		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}}}), nil
 }
 
 func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error) {
@@ -97,6 +97,11 @@ func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusReque
 				Namespace: true, Role: role, Dc: "dc1", MembersAlive: 3, MembersTotal: 3, Processes: []*parkerv1.ProcessStatus{proc("consul", int32(3100+i), true, 0)}})
 		}
 		return connect.NewResponse(st), nil
+	case "tgw-failover":
+		return f.allUp(r.Msg.Lab, "")
+	case "tgw-failover-down":
+		// dc1's terminating gateway is stopped: web's calls fail over.
+		return f.allUp(r.Msg.Lab, "dc1-terminating")
 	case "partitions", "gateways":
 		return connect.NewResponse(&parkerv1.StatusResponse{Lab: r.Msg.Lab}), nil
 	}
@@ -144,6 +149,47 @@ func (f *fake) Logs(ctx context.Context, r *connect.Request[parkerv1.LogsRequest
 
 func (f *fake) Describe(_ context.Context, r *connect.Request[parkerv1.DescribeRequest]) (*connect.Response[parkerv1.DescribeResponse], error) {
 	return connect.NewResponse(&parkerv1.DescribeResponse{Node: r.Msg.Node, Yaml: "name: " + r.Msg.Node + "\nnetworks: [dc1]\nprocesses:\n  consul:\n    command: [consul, agent, -config-dir, /etc/consul]\n"}), nil
+}
+
+// allUp reports every node of a lab's example running and healthy, except
+// down, whose processes are stopped.
+func (f *fake) allUp(lab, down string) (*connect.Response[parkerv1.StatusResponse], error) {
+	in, err := spec.Load(filepath.Join(f.examples, labExamples[lab]), nil)
+	if err != nil {
+		return nil, err
+	}
+	low, err := expand.Expand(in)
+	if err != nil {
+		return nil, err
+	}
+	st := &parkerv1.StatusResponse{Lab: lab, Supervised: true}
+	pid := int32(5000)
+	for _, name := range slices.Sorted(maps.Keys(low.Nodes)) {
+		rn := low.Nodes[name]
+		ns := &parkerv1.NodeStatus{Name: name, Namespace: true, Health: map[string]string{}}
+		for _, net := range slices.Sorted(maps.Keys(rn.Networks)) {
+			ns.Ips = append(ns.Ips, rn.Networks[net].IP)
+		}
+		if rn.Labels != nil {
+			ns.Dc, ns.Role = rn.Labels.DC, rn.Labels.Role
+			if ns.Role == "server" {
+				ns.Role = "follower"
+				if strings.HasSuffix(name, "-server-1") {
+					ns.Role = "leader"
+				}
+			}
+		}
+		for _, pn := range slices.Sorted(maps.Keys(rn.Processes)) {
+			pid++
+			p := proc(pn, pid, true, 0)
+			if name == down {
+				p = &parkerv1.ProcessStatus{Name: pn, Stopped: true}
+			}
+			ns.Processes = append(ns.Processes, p)
+		}
+		st.Nodes = append(st.Nodes, ns)
+	}
+	return connect.NewResponse(st), nil
 }
 
 // Graph expands the lab's example for real, so the topology view shows what

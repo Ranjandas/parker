@@ -124,7 +124,13 @@ func TestPartitions(t *testing.T) {
 
 func TestGateways(t *testing.T) {
 	g := build(t, "gateways.yaml")
-	want(t, "routes", edges(g, Route), "dc1-edge>dc1-api api", "dc1-ingress>dc1-api api :8080")
+	// The terminating gateway forwards to the service it links.
+	want(t, "routes", edges(g, Route), "dc1-edge>dc1-api api", "dc1-ingress>dc1-api api :8080", "dc1-terminating>dc1-legacy legacy",
+		// Clients outside the lab call the ingress and API gateways' listeners.
+		"internet>dc1-edge :8081 http", "internet>dc1-ingress :8080 http")
+	if n := node(t, g, OutsideNode); n.Role != OutsideRole || n.DC != "" {
+		t.Errorf("outside node: %+v", n)
+	}
 	want(t, "upstreams", edges(g, Upstream), "dc1-web>dc1-legacy legacy :9092 ~dc1-terminating")
 }
 
@@ -161,4 +167,30 @@ func TestLinks(t *testing.T) {
 	if l := linksOf(t, build(t, "gateways.yaml"), "dc1-ingress"); len(l) != 0 {
 		t.Errorf("gateway links %q", l)
 	}
+}
+
+// An external service is on several dcs' LANs: web reaches it through its
+// own dc's terminating gateway, and the resolver's failover to the peer
+// goes through both mesh gateways and the peer's terminating gateway.
+func TestTerminatingFailover(t *testing.T) {
+	g := build(t, "terminating-failover.yaml")
+	want(t, "upstreams", edges(g, Upstream), "dc1-web>api api :9091 ~dc1-terminating")
+	want(t, "routes", edges(g, Route), "dc1-terminating>api api", "dc2-terminating>api api")
+	want(t, "failovers", edges(g, Failover), "dc1-web>api api failover (peer dc1-dc2) ~dc1-mesh ~dc2-mesh ~dc2-terminating")
+}
+
+func TestTerminatingFailoverPartitions(t *testing.T) {
+	t.Setenv("CONSUL_LICENSE", "test")
+	g := build(t, "terminating-failover-partitions.yaml")
+	want(t, "upstreams", edges(g, Upstream), "dc1-part-a-web>api api :9091 ~dc1-part-a-terminating")
+	want(t, "routes", edges(g, Route), "dc1-part-a-terminating>api api", "dc2-part-b-terminating>api api")
+	want(t, "failovers", edges(g, Failover),
+		"dc1-part-a-web>api api failover (peer dc1-dc2, ns app) ~dc1-part-a-mesh ~dc2-part-b-mesh ~dc2-part-b-terminating")
+}
+
+func TestFailoverDatacentersAndPartitions(t *testing.T) {
+	want(t, "failovers", edges(build(t, "fake-chain.yaml"), Failover), "dc1-web>dc2-api api failover (dc2) ~dc1-mesh ~dc2-mesh")
+	t.Setenv("CONSUL_LICENSE", "test")
+	want(t, "failovers", edges(build(t, "partitions.yaml"), Failover),
+		"dc1-frontend>dc1-team-b-billing billing failover (dc1/team-b, ns payments) ~dc1-mesh ~dc1-team-b-mesh")
 }

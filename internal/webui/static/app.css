@@ -12,7 +12,7 @@
   --warn:#B45309; --warn-soft:rgba(217,119,6,.12);
   --bad:#D92D20; --bad-soft:rgba(217,45,32,.09);
   --idle:#8C94A3; --idle-soft:rgba(140,148,163,.14);
-  --fed:#6D4AE0; --peer:#0E8FA8;
+  --fed:#6D4AE0; --peer:#0E8FA8; --fo:#C0267A;
   --dot:rgba(15,27,45,.13);
   --code:#FBFAF7; --code-key:#24406E; --code-str:#B3460A; --code-num:#16803C; --code-com:#97A0AD;
   --shadow:0 1px 2px rgba(15,27,45,.06),0 4px 14px rgba(15,27,45,.06);
@@ -31,7 +31,7 @@
   --warn:#FFC94A; --warn-soft:rgba(255,201,74,.12);
   --bad:#FF5F52; --bad-soft:rgba(255,95,82,.12);
   --idle:#6E7A8E; --idle-soft:rgba(110,122,142,.16);
-  --fed:#A88BFF; --peer:#3FD0EA;
+  --fed:#A88BFF; --peer:#3FD0EA; --fo:#F472B6;
   --dot:rgba(244,241,234,.07);
   --code:#0B1320; --code-key:#9DB8E8; --code-str:#FFB077; --code-num:#6FE3A7; --code-com:#5E6A7E;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);
@@ -47,7 +47,7 @@
   --warn:#FFC94A; --warn-soft:rgba(255,201,74,.12);
   --bad:#FF5F52; --bad-soft:rgba(255,95,82,.12);
   --idle:#6E7A8E; --idle-soft:rgba(110,122,142,.16);
-  --fed:#A88BFF; --peer:#3FD0EA;
+  --fed:#A88BFF; --peer:#3FD0EA; --fo:#F472B6;
   --dot:rgba(244,241,234,.07);
   --code:#0B1320; --code-key:#9DB8E8; --code-str:#FFB077; --code-num:#6FE3A7; --code-com:#5E6A7E;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);
@@ -305,6 +305,7 @@ dialog label{display:flex;gap:8px;align-items:center;color:var(--ink-2)}
 .elbl{position:absolute;font:500 11px var(--f-mono);background:var(--bg);padding:1px 6px;border-radius:5px;border:1px solid;transform:translate(-50%,-50%);white-space:nowrap;pointer-events:none}
 .elbl.wan{color:var(--fed);border-color:color-mix(in srgb,var(--fed) 35%,transparent)}
 .elbl.peering{color:var(--peer);border-color:color-mix(in srgb,var(--peer) 40%,transparent)}
+.elbl.failover{color:var(--fo);border-color:color-mix(in srgb,var(--fo) 40%,transparent)}
 .elbl.upstream,.elbl.route{color:var(--accent);border-color:var(--accent-line)}
 .elbl.broken{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
 .nd{position:absolute;width:210px;height:88px;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);cursor:pointer;transition:box-shadow .15s,border-color .15s}
@@ -320,6 +321,7 @@ dialog label{display:flex;gap:8px;align-items:center;color:var(--ink-2)}
 .ico.gw{background:color-mix(in srgb,var(--fed) 14%,transparent);color:var(--fed)}
 .ico.ext{background:color-mix(in srgb,var(--ink-2) 12%,transparent);color:var(--ink-2)}
 .ico.svc{background:var(--ok-soft);color:var(--ok)}
+.ico.out{background:color-mix(in srgb,var(--peer) 14%,transparent);color:var(--peer)}
 .nd .nm{font-weight:650;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nd .sub{font:11.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nd .hs{margin-left:auto;width:10px;height:10px;border-radius:50%;flex:none}

@@ -8,6 +8,7 @@ package graph
 import (
 	"encoding/json"
 	"maps"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -42,12 +43,22 @@ type Link struct {
 	Token string
 }
 
+// The node that stands for clients outside the lab (browsers, curl),
+// calling the ingress and API gateways. It isn't a network namespace.
+const (
+	OutsideNode = "internet"
+	OutsideRole = "outside"
+)
+
 // Edge kinds.
 const (
 	Upstream = "upstream" // service -> service
 	Route    = "route"    // ingress or API gateway -> service
 	WAN      = "wan"      // WAN federation
 	Peering  = "peering"  // cluster peering, dialer -> acceptor
+	// Failover: where a service-resolver sends a caller's upstream when
+	// its own instances are down (another dc, partition or peer).
+	Failover = "failover"
 )
 
 // Edge connects two nodes.
@@ -115,8 +126,15 @@ type agentConfig struct {
 }
 
 type dataplaneEntry struct {
-	Node    string  `json:"node"`
-	Service service `json:"service"`
+	Node       string  `json:"node"`
+	Datacenter string  `json:"datacenter"`
+	Partition  string  `json:"partition"`
+	Service    service `json:"service"`
+}
+
+// failoverTarget is one service-resolver failover target.
+type failoverTarget struct {
+	Service, Peer, Datacenter, Partition, Namespace string
 }
 
 // entry is the part of a config entry the graph reads.
@@ -124,7 +142,9 @@ type entry struct {
 	Kind      string
 	Name      string
 	Listeners []struct {
+		Name     string
 		Port     int
+		Protocol string
 		Services []struct{ Name string }
 	}
 	Services []struct{ Name string } // terminating-gateway, tcp-route
@@ -132,12 +152,21 @@ type entry struct {
 	Rules    []struct {
 		Services []struct{ Name string }
 	}
+	// service-resolver
+	Failover map[string]struct {
+		Service     string
+		Datacenters []string
+		Targets     []failoverTarget
+	}
 }
 
 type dcEntry struct {
-	dc string
-	e  entry
+	dc, partition string
+	e             entry
 }
+
+// place is a datacenter and partition ("" for the default one).
+type place struct{ dc, partition string }
 
 type caller struct {
 	node string
@@ -149,9 +178,12 @@ func Build(f *spec.File) *Graph {
 	g := &Graph{}
 	byName := map[string]*Node{}
 	var callers []caller
-	peerings := map[string][2]string{} // name -> dialer dc, acceptor dc
-	gateways := map[string]string{}    // <dc>/<service> -> gateway node
+	peerings := map[string][2]place{} // name -> dialer, acceptor side
+	gateways := map[string]string{}   // <dc>/<partition>/<service> -> gateway node
 	var entries []dcEntry
+	// externals: where each external service's node is registered (it
+	// sits on several dcs' LANs, so it has no DC of its own).
+	externals := map[string][]place{}
 
 	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
 		rn := f.Nodes[name]
@@ -173,18 +205,23 @@ func Build(f *spec.File) *Graph {
 				n.Gateways = append(n.Gateways, gw)
 				if pr := rn.Processes[p]; pr != nil {
 					if i := slices.Index(pr.Run, "-service"); i >= 0 && i+1 < len(pr.Run) {
-						gateways[n.DC+"/"+pr.Run[i+1]] = name
+						gateways[n.DC+"/"+partName(n.Partition)+"/"+pr.Run[i+1]] = name
 					}
 				}
 			}
 			if pn, ok := strings.CutPrefix(p, "peering-"); ok {
+				// The process runs in its side's partition.
+				side := place{n.DC, ""}
+				if pr := rn.Processes[p]; pr != nil {
+					side.partition = pr.Env["CONSUL_PARTITION"]
+				}
 				if name, ok := strings.CutSuffix(pn, "-token"); ok {
 					pe := peerings[name]
-					pe[1] = n.DC
+					pe[1] = side
 					peerings[name] = pe
 				} else {
 					pe := peerings[pn]
-					pe[0] = n.DC
+					pe[0] = side
 					peerings[pn] = pe
 				}
 			}
@@ -214,11 +251,19 @@ func Build(f *spec.File) *Graph {
 				}
 			}
 		}
+		// The manifest says which partition each entry is written into.
+		entryPart := map[string]string{}
+		var refs []expand.EntryRef
+		if json.Unmarshal([]byte(rn.Files[expand.ConfigEntriesManifest]), &refs) == nil {
+			for _, r := range refs {
+				entryPart[path.Base(r.File)] = r.Partition
+			}
+		}
 		for _, fn := range slices.Sorted(maps.Keys(rn.Files)) {
 			if (strings.HasPrefix(fn, "config-entry-") || strings.HasPrefix(fn, "gateway-entry-")) && strings.HasSuffix(fn, ".json") {
 				var e entry
 				if json.Unmarshal([]byte(rn.Files[fn]), &e) == nil {
-					entries = append(entries, dcEntry{n.DC, e})
+					entries = append(entries, dcEntry{n.DC, entryPart[fn], e})
 				}
 			}
 		}
@@ -226,6 +271,9 @@ func Build(f *spec.File) *Graph {
 			var es []dataplaneEntry
 			if json.Unmarshal([]byte(raw), &es) == nil {
 				for _, e := range es {
+					if rn := f.Nodes[e.Node]; rn != nil && rn.Labels != nil && rn.Labels.Role == expand.ExternalRole {
+						externals[e.Node] = append(externals[e.Node], place{e.Datacenter, e.Partition})
+					}
 					if e.Service.Kind == "connect-proxy" && e.Service.Proxy != nil && len(e.Service.Proxy.Upstreams) > 0 {
 						// Dataplane nodes are keyed <dc>-<name>; the manifest
 						// names them by their Consul node name.
@@ -252,54 +300,89 @@ func Build(f *spec.File) *Graph {
 		return nil
 	}
 
-	part := func(p string) string {
-		if p == "" {
-			return "default"
+	// at: the node sits in (or, for an external service, is registered
+	// in) dc's partition.
+	at := func(n *Node, p place) bool {
+		if n.DC == p.dc && partName(n.Partition) == partName(p.partition) {
+			return true
 		}
-		return p
+		for _, x := range externals[n.Name] {
+			if x.dc == p.dc && partName(x.partition) == partName(p.partition) {
+				return true
+			}
+		}
+		return false
 	}
-	meshGW := func(dc, partition string) string {
-		for _, n := range g.Nodes {
-			if n.DC == dc && part(n.Partition) == part(partition) && slices.Contains(n.Gateways, "mesh") {
+	meshGW := func(p place) string {
+		for i := range g.Nodes {
+			if n := &g.Nodes[i]; at(n, p) && slices.Contains(n.Gateways, "mesh") {
 				return n.Name
 			}
 		}
 		return ""
 	}
 	// running lists the nodes in a dc and partition with a service.
-	running := func(dc, partition, svc string) []string {
+	running := func(p place, svc string) []string {
 		var out []string
-		for _, n := range g.Nodes {
-			if n.DC == dc && part(n.Partition) == part(partition) && slices.Contains(n.Services, svc) {
+		for i := range g.Nodes {
+			if n := &g.Nodes[i]; at(n, p) && slices.Contains(n.Services, svc) {
 				out = append(out, n.Name)
 			}
 		}
 		return out
 	}
-	terminated := map[string]string{} // <dc>/<service> -> terminating gateway node
-	route := func(dc, gwService, svc, label string) {
-		gw, ok := gateways[dc+"/"+gwService]
+	key := func(p place, svc string) string { return p.dc + "/" + partName(p.partition) + "/" + svc }
+	terminated := map[string]string{} // <dc>/<partition>/<service> -> terminating gateway node
+	route := func(p place, gwService, svc, label string) {
+		gw, ok := gateways[key(p, gwService)]
 		if !ok {
 			return
 		}
-		for _, to := range running(dc, byName[gw].Partition, svc) {
+		for _, to := range running(p, svc) {
 			g.Edges = append(g.Edges, Edge{Kind: Route, From: gw, To: to, Label: label})
 		}
 	}
+	// Ingress and API gateways take traffic from outside the mesh: one
+	// "internet" node feeds their listeners.
+	var outside []Edge
+	listen := func(here place, gwService string, e entry) {
+		gw, ok := gateways[key(here, gwService)]
+		if !ok {
+			return
+		}
+		for _, l := range e.Listeners {
+			label := ":" + itoa(l.Port)
+			if l.Protocol != "" {
+				label += " " + l.Protocol
+			}
+			outside = append(outside, Edge{Kind: Route, To: gw, Label: label})
+		}
+	}
+	resolvers := map[string]entry{} // <dc>/<partition>/<service> -> service-resolver
 	for _, de := range entries {
 		e := de.e
+		here := place{de.dc, de.partition}
 		switch e.Kind {
+		case "api-gateway":
+			listen(here, e.Name, e)
 		case "ingress-gateway":
+			listen(here, e.Name, e)
 			for _, l := range e.Listeners {
 				for _, s := range l.Services {
-					route(de.dc, e.Name, s.Name, s.Name+" :"+itoa(l.Port))
+					route(here, e.Name, s.Name, s.Name+" :"+itoa(l.Port))
 				}
 			}
 		case "terminating-gateway":
-			if gw, ok := gateways[de.dc+"/"+e.Name]; ok {
+			if gw, ok := gateways[key(here, e.Name)]; ok {
 				for _, s := range e.Services {
-					terminated[de.dc+"/"+s.Name] = gw
+					terminated[key(here, s.Name)] = gw
+					// The gateway forwards to the service outside the mesh.
+					route(here, e.Name, s.Name, s.Name)
 				}
+			}
+		case "service-resolver":
+			if len(e.Failover) > 0 {
+				resolvers[key(here, e.Name)] = e
 			}
 		case "http-route", "tcp-route", "grpc-route":
 			svcs := e.Services
@@ -309,10 +392,49 @@ func Build(f *spec.File) *Graph {
 			for _, p := range e.Parents {
 				if p.Kind == "api-gateway" || p.Kind == "" {
 					for _, s := range svcs {
-						route(de.dc, p.Name, s.Name, s.Name)
+						route(here, p.Name, s.Name, s.Name)
 					}
 				}
 			}
+		}
+	}
+
+	// peerSide is the other side of a peering, seen from p.
+	peerSide := func(name string, p place) (place, bool) {
+		pe, ok := peerings[name]
+		if !ok {
+			return place{}, false
+		}
+		switch {
+		case pe[0].dc == p.dc && partName(pe[0].partition) == partName(p.partition):
+			return pe[1], true
+		case pe[1].dc == p.dc && partName(pe[1].partition) == partName(p.partition):
+			return pe[0], true
+		case pe[0].dc == p.dc:
+			return pe[1], true
+		case pe[1].dc == p.dc:
+			return pe[0], true
+		}
+		return place{}, false
+	}
+	// edges from a caller to svc's instances at p: through the mesh
+	// gateways when p is elsewhere, and p's terminating gateway when one
+	// links the service.
+	edges := func(kind string, from *Node, p place, svc, label string) {
+		for _, to := range running(p, svc) {
+			if to == from.Name {
+				continue
+			}
+			e := Edge{Kind: kind, From: from.Name, To: to, Label: label}
+			if src := (place{from.DC, from.Partition}); src.dc != p.dc || partName(src.partition) != partName(p.partition) {
+				if a, b := meshGW(src), meshGW(p); a != "" && b != "" {
+					e.Via = []string{a, b}
+				}
+			}
+			if gw, ok := terminated[key(p, svc)]; ok && gw != from.Name {
+				e.Via = append(e.Via, gw)
+			}
+			g.Edges = append(g.Edges, e)
 		}
 	}
 
@@ -322,42 +444,82 @@ func Build(f *spec.File) *Graph {
 			continue
 		}
 		for _, u := range c.ups {
-			dc, partition := from.DC, from.Partition
+			p := place{from.DC, from.Partition}
 			if u.DC != "" {
-				dc = u.DC
+				p.dc = u.DC
 			}
 			if u.Partition != "" {
-				partition = u.Partition
+				p.partition = u.Partition
 			}
 			if u.Peer != "" {
-				pe := peerings[u.Peer]
-				switch from.DC {
-				case pe[0]:
-					dc = pe[1]
-				case pe[1]:
-					dc = pe[0]
+				if o, ok := peerSide(u.Peer, place{from.DC, from.Partition}); ok {
+					p = o
 				}
 			}
 			label := u.Name
 			if u.Port > 0 {
 				label += " :" + itoa(u.Port)
 			}
-			for _, to := range g.Nodes {
-				if to.DC != dc || part(to.Partition) != part(partition) || !slices.Contains(to.Services, u.Name) || to.Name == from.Name {
-					continue
-				}
-				e := Edge{Kind: Upstream, From: from.Name, To: to.Name, Label: label}
-				if to.DC != from.DC || part(to.Partition) != part(from.Partition) {
-					a, b := meshGW(from.DC, from.Partition), meshGW(to.DC, to.Partition)
-					if a != "" && b != "" {
-						e.Via = []string{a, b}
-					}
-				}
-				if gw, ok := terminated[to.DC+"/"+u.Name]; ok && gw != from.Name {
-					e.Via = append(e.Via, gw)
-				}
-				g.Edges = append(g.Edges, e)
+			edges(Upstream, from, p, u.Name, label)
+
+			// Failover: the resolver in the upstream's own dc/partition.
+			r, ok := resolvers[key(p, u.Name)]
+			if !ok || u.Peer != "" {
+				continue
 			}
+			for _, subset := range slices.Sorted(maps.Keys(r.Failover)) {
+				fo := r.Failover[subset]
+				targets := fo.Targets
+				for _, dc := range fo.Datacenters {
+					targets = append(targets, failoverTarget{Service: fo.Service, Datacenter: dc})
+				}
+				for _, t := range targets {
+					tp, svc := p, u.Name
+					if t.Service != "" {
+						svc = t.Service
+					} else if fo.Service != "" {
+						svc = fo.Service
+					}
+					where := ""
+					switch {
+					case t.Peer != "":
+						o, ok := peerSide(t.Peer, p)
+						if !ok {
+							continue
+						}
+						tp, where = o, "peer "+t.Peer
+					case t.Datacenter != "" || t.Partition != "":
+						if t.Datacenter != "" {
+							tp.dc = t.Datacenter
+						}
+						if t.Partition != "" {
+							tp.partition = t.Partition
+						}
+						where = tp.dc
+						if t.Partition != "" {
+							where += "/" + t.Partition
+						}
+					default:
+						where = "same dc"
+					}
+					if t.Namespace != "" {
+						where += ", ns " + t.Namespace
+					}
+					edges(Failover, from, tp, svc, svc+" failover ("+where+")")
+				}
+			}
+		}
+	}
+
+	if len(outside) > 0 {
+		name := OutsideNode
+		for byName[name] != nil {
+			name += "-"
+		}
+		g.Nodes = append(g.Nodes, Node{Name: name, Role: OutsideRole})
+		for _, e := range outside {
+			e.From = name
+			g.Edges = append(g.Edges, e)
 		}
 	}
 
@@ -380,13 +542,13 @@ func Build(f *spec.File) *Graph {
 		rep := firstServer
 		if g.Federation == "mesh-gateways" {
 			rep = func(dc string) string {
-				if gw := meshGW(dc, ""); gw != "" {
+				if gw := meshGW(place{dc, ""}); gw != "" {
 					return gw
 				}
 				return firstServer(dc)
 			}
 			for _, dc := range order {
-				if s, gw := firstServer(dc), meshGW(dc, ""); s != "" && gw != "" {
+				if s, gw := firstServer(dc), meshGW(place{dc, ""}); s != "" && gw != "" {
 					g.Edges = append(g.Edges, Edge{Kind: WAN, From: s, To: gw})
 				}
 			}
@@ -400,7 +562,7 @@ func Build(f *spec.File) *Graph {
 	names := slices.Sorted(maps.Keys(peerings))
 	for _, name := range names {
 		pe := peerings[name]
-		if a, b := firstServer(pe[0]), firstServer(pe[1]); a != "" && b != "" {
+		if a, b := firstServer(pe[0].dc), firstServer(pe[1].dc); a != "" && b != "" {
 			g.Edges = append(g.Edges, Edge{Kind: Peering, From: a, To: b, Label: name})
 		}
 	}
@@ -436,4 +598,12 @@ func links(cfg agentConfig) []Link {
 func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+// partName is a partition's name, "default" for "".
+func partName(p string) string {
+	if p == "" {
+		return "default"
+	}
+	return p
 }
