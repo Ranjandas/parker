@@ -32,23 +32,28 @@ func (f *fakeTenancy) CreatePartition(_ context.Context, name string) error {
 func (f *fakeTenancy) CreateNamespace(p, name string) error {
 	return f.do("namespace " + p + "/" + name)
 }
-func (f *fakeTenancy) EnsureAgentToken(p, secret string) error {
-	return f.do("token " + p + " " + secret)
+func (f *fakeTenancy) EnsurePolicy(p expand.IdentityPolicy) error {
+	return f.do("policy " + p.Partition + " " + p.Name)
+}
+func (f *fakeTenancy) EnsureToken(t expand.IdentityToken) error {
+	return f.do("token " + t.Partition + " " + t.SecretID)
 }
 
 func TestApplyTenancy(t *testing.T) {
 	spec := expand.TenancySpec{
-		Partitions:  []string{"team-a"},
-		Namespaces:  []expand.NamespaceRef{{Name: "payments"}, {Partition: "team-a", Name: "payments"}},
-		AgentTokens: []expand.AgentToken{{Partition: "team-a", SecretID: "s1"}},
+		Partitions: []string{"team-a"},
+		Namespaces: []expand.NamespaceRef{{Name: "payments"}, {Partition: "team-a", Name: "payments"}},
+		Policies:   []expand.IdentityPolicy{{Name: "parker-dns", Partition: "team-a"}},
+		Tokens:     []expand.IdentityToken{{Partition: "team-a", SecretID: "s1", Node: "web", Policies: []string{"parker-dns"}}},
 	}
 	// The first try fails while the cluster settles; then everything goes
-	// in order: partitions before the namespaces and tokens in them.
+	// in order: partitions before the namespaces, policies and tokens in
+	// them.
 	f := &fakeTenancy{fail: map[string]int{"partition team-a": 1}, err: "Unexpected response code: 500 (No cluster leader)"}
 	if err := applyTenancy(context.Background(), f, spec, 5*time.Second, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	want := "partition team-a,partition team-a,namespace /payments,namespace team-a/payments,token team-a s1"
+	want := "partition team-a,partition team-a,namespace /payments,namespace team-a/payments,policy team-a parker-dns,token team-a s1"
 	if got := strings.Join(f.calls, ","); got != want {
 		t.Errorf("calls %s", got)
 	}

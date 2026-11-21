@@ -453,8 +453,9 @@ type Inheritable struct {
 	// ServiceDefaults are merged into every service.
 	ServiceDefaults *Service `yaml:"service_defaults,omitempty"`
 	// ACL turns on ACLs (default deny) and gossip encryption. Parker
-	// generates the management and agent tokens and the gossip key; `parker
-	// exec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree.
+	// generates the management token and the gossip key, and gives every
+	// agent, service and gateway its own identity token; `parker exec`
+	// sets CONSUL_HTTP_TOKEN. Federated datacenters must agree.
 	ACL *bool `yaml:"acl,omitempty"`
 	// TLS turns on mutual TLS for RPC and HTTPS-only APIs (port 8501),
 	// with a CA Parker generates per lab. Clients get their certificates

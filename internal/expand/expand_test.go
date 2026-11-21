@@ -556,21 +556,25 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if _, ok := fe["partition"]; ok {
 		t.Errorf("frontend has a partition: %v", fe["partition"])
 	}
-	// team-a's agents carry their own partition's token, not the default one.
+	// Each agent has its own token (a node identity), each service too
+	// (a service identity), and the sidecar talks to Consul with its
+	// service's.
 	tok := cfg["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
 	feTok := fe["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
 	if tok == feTok {
-		t.Error("team-a agents use the default partition's token")
+		t.Error("team-a's billing-1 and frontend share an agent token")
 	}
-	// The service registers in its namespace, its health check and sidecar
-	// look there too.
 	reg := cfg["services"].([]any)[0].(map[string]any)
-	if reg["namespace"] != "payments" || reg["token"] != tok {
+	if reg["namespace"] != "payments" || reg["token"] == tok || reg["token"] == nil {
 		t.Errorf("billing registration: %v", reg)
 	}
 	sc := b1.Processes["billing"+SidecarSuffix]
-	if sc.Env["CONSUL_PARTITION"] != "team-a" || sc.Env["CONSUL_NAMESPACE"] != "payments" {
+	if sc.Env["CONSUL_PARTITION"] != "team-a" || sc.Env["CONSUL_NAMESPACE"] != "payments" || sc.Env["CONSUL_HTTP_TOKEN"] != reg["token"] {
 		t.Errorf("sidecar env: %v", sc.Env)
+	}
+	b2reg := agentConfig(t, low.Nodes["dc1-team-a-billing-2"])["services"].([]any)[0].(map[string]any)
+	if b2reg["token"] != reg["token"] {
+		t.Error("two instances of billing in team-a have different service tokens")
 	}
 	if b1.Processes["billing"] == nil {
 		t.Error("billing's service_defaults run: gave no process")
@@ -587,19 +591,42 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	tokB := agentConfig(t, bb)["acl"].(map[string]any)["tokens"].(map[string]any)["agent"]
 
 	// The tenancy job creates team-a and both payments namespaces, and the
-	// token team-a's agents use, before any client starts.
+	// tokens, before any client starts.
 	s1 := low.Nodes["dc1-server-1"]
 	var ten TenancySpec
 	if err := json.Unmarshal([]byte(s1.Files[TenancyManifest]), &ten); err != nil {
 		t.Fatal(err)
 	}
-	want := TenancySpec{
-		Partitions:  []string{"team-a", "team-b"},
-		Namespaces:  []NamespaceRef{{Partition: "team-a", Name: "payments"}, {Partition: "team-b", Name: "payments"}},
-		AgentTokens: []AgentToken{{Partition: "team-a", SecretID: tok.(string)}, {Partition: "team-b", SecretID: tokB.(string)}},
+	if !slices.Equal(ten.Partitions, []string{"team-a", "team-b"}) ||
+		!reflect.DeepEqual(ten.Namespaces, []NamespaceRef{{Partition: "team-a", Name: "payments"}, {Partition: "team-b", Name: "payments"}}) {
+		t.Errorf("tenancy %+v", ten)
 	}
-	if !reflect.DeepEqual(ten, want) {
-		t.Errorf("tenancy %+v\nwant %+v", ten, want)
+	byID := map[string]IdentityToken{}
+	for _, it := range ten.Tokens {
+		byID[it.SecretID] = it
+	}
+	if it := byID[tok.(string)]; it.Partition != "team-a" || it.Node != "billing-1" || it.Datacenter != "dc1" {
+		t.Errorf("billing-1's agent token: %+v", it)
+	}
+	if it := byID[tokB.(string)]; it.Partition != "team-b" || it.Node != "billing" {
+		t.Errorf("team-b billing's agent token: %+v", it)
+	}
+	if it := byID[reg["token"].(string)]; it.Partition != "team-a" || it.Namespace != "payments" || it.Service != "billing" ||
+		!slices.Equal(it.Policies, []string{"parker-read-everywhere"}) {
+		t.Errorf("billing's service token: %+v", it)
+	}
+	gwTok := low.Nodes["dc1-team-a-mesh"].Processes["mesh-gateway"].Env["CONSUL_HTTP_TOKEN"]
+	if it := byID[gwTok]; it.Partition != "team-a" || it.Service != "mesh-gateway" || !slices.Equal(it.Policies, []string{"parker-mesh-gateway-mesh-gateway"}) {
+		t.Errorf("team-a mesh gateway's token: %+v", it)
+	}
+	var meshRules string
+	for _, p := range ten.Policies {
+		if p.Partition == "team-a" && p.Name == "parker-mesh-gateway-mesh-gateway" {
+			meshRules = p.Rules
+		}
+	}
+	if !strings.Contains(meshRules, `mesh = "write"`) || !strings.Contains(meshRules, `namespace_prefix "" {`) {
+		t.Errorf("team-a mesh gateway rules:\n%s", meshRules)
 	}
 	p := s1.Processes[Tenancy]
 	if p == nil || p.DependsOn["dc1-server-1/"+ACLSetup] == nil {

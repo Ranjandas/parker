@@ -8,10 +8,10 @@ import (
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
-// Tenancy (Consul Enterprise): a one-shot process on a dc's first server
-// creates its admin partitions, then the namespaces its services use, and
-// with ACLs an agent token inside each partition, before any client agent
-// joins.
+// Tenancy: a one-shot process on a dc's first server creates its admin
+// partitions and the namespaces its services use (Consul Enterprise), then
+// with ACLs the policies and identity tokens of its agents, services and
+// gateways (identity.go), before any client agent joins.
 const (
 	Tenancy          = "tenancy"
 	TenancyReadyLine = "parker: partitions and namespaces ready"
@@ -20,9 +20,10 @@ const (
 
 // TenancySpec is what the tenancy process creates.
 type TenancySpec struct {
-	Partitions  []string       `json:"partitions,omitempty"`
-	Namespaces  []NamespaceRef `json:"namespaces,omitempty"`
-	AgentTokens []AgentToken   `json:"agent_tokens,omitempty"`
+	Partitions []string         `json:"partitions,omitempty"`
+	Namespaces []NamespaceRef   `json:"namespaces,omitempty"`
+	Policies   []IdentityPolicy `json:"policies,omitempty"`
+	Tokens     []IdentityToken  `json:"tokens,omitempty"`
 }
 
 // NamespaceRef is a namespace in a partition ("" for the default).
@@ -31,13 +32,9 @@ type NamespaceRef struct {
 	Name      string `json:"name"`
 }
 
-// AgentToken is the client agents' token in a non-default partition.
-type AgentToken struct {
-	Partition string `json:"partition"`
-	SecretID  string `json:"secret_id"`
+func (t TenancySpec) empty() bool {
+	return len(t.Partitions) == 0 && len(t.Namespaces) == 0 && len(t.Policies) == 0 && len(t.Tokens) == 0
 }
-
-func (t TenancySpec) empty() bool { return len(t.Partitions) == 0 && len(t.Namespaces) == 0 }
 
 // partitionName is how Consul's config names a partition: "" for the
 // default one.

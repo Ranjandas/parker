@@ -233,7 +233,7 @@
         },
         "acl": {
           "type": "boolean",
-          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
+          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management token and the gossip key, and gives every\nagent, service and gateway its own identity token; `parker exec`\nsets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
         },
         "tls": {
           "type": "boolean",
@@ -750,7 +750,7 @@
         },
         "acl": {
           "type": "boolean",
-          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management and agent tokens and the gossip key; `parker\nexec` sets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
+          "description": "ACL turns on ACLs (default deny) and gossip encryption. Parker\ngenerates the management token and the gossip key, and gives every\nagent, service and gateway its own identity token; `parker exec`\nsets CONSUL_HTTP_TOKEN. Federated datacenters must agree."
         },
         "tls": {
           "type": "boolean",

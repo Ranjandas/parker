@@ -1,6 +1,7 @@
 package expand
 
 import (
+	"encoding/json"
 	"maps"
 	"reflect"
 	"slices"
@@ -211,8 +212,16 @@ func TestTransparentProxyDNSToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := agentConfig(t, low.Nodes["dc1-web"])["acl"].(map[string]any)["tokens"].(map[string]any)
-	if web["dns"] == nil || web["dns"] != web["agent"] {
-		t.Errorf("transparent node tokens = %v, want dns = agent", web)
+	if web["dns"] == nil || web["dns"] == web["agent"] {
+		t.Errorf("transparent node tokens = %v, want a dns token of its own", web)
+	}
+	var ten TenancySpec
+	if err := json.Unmarshal([]byte(low.Nodes["dc1-server-1"].Files[TenancyManifest]), &ten); err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(ten.Tokens, func(it IdentityToken) bool { return it.SecretID == web["dns"] }); i < 0 ||
+		!slices.Equal(ten.Tokens[i].Policies, []string{"parker-dns"}) {
+		t.Errorf("dns token: %+v", ten.Tokens)
 	}
 	api := agentConfig(t, low.Nodes["dc1-api"])["acl"].(map[string]any)["tokens"].(map[string]any)
 	if _, ok := api["dns"]; ok {
