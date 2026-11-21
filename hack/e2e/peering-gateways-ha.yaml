@@ -1,0 +1,62 @@
+# examples/peering.yaml through mesh gateways, with ACLs, TLS and three
+# servers a side (#122): the acceptor's gateway spreads the dialer's tries
+# over dc2's servers and only the leader takes the stream, so the dialer
+# must retry quickly until one lands there. Default deny, so dc2 allows web
+# from the peer with an intention.
+parker: v1alpha1
+name: peergw
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults:
+    acl: true
+    tls: true
+    service_defaults: { run: fake-service, connect: sidecar }
+  peering:
+    dc1-dc2:
+      acceptor: dc2
+      dialer: dc1
+      via_mesh_gateways: true
+      exports: { dc2: [api] }
+  datacenters:
+    dc1:
+      servers: 3
+      gateways: { mesh: true }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: { port: 9091, peer: dc1-dc2 } }
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+    dc2:
+      servers: 3
+      gateways: { mesh: true }
+      nodes:
+        api:
+          service: { port: 9090 }
+      config_entries:
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Peer: dc1-dc2, Action: allow }]
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the peering is active
+      assert:
+        exec: { on: dc1/server-1, run: "consul peering read -name dc1-dc2", output: ACTIVE }
+        within: 30s
+    - name: dc1 sees api imported from dc2
+      assert:
+        exec:
+          on: dc1/server-1
+          run: 'curl -sf --cacert "$CONSUL_CACERT" -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" "$CONSUL_HTTP_ADDR/v1/health/service/api?peer=dc1-dc2"'
+          output: '"Service":"api"'
+        within: 60s
+    - name: web in dc1 reaches api in dc2 over the peering
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 90s

@@ -429,7 +429,12 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				ready.Consul.WANMembers = ">=" + strconv.Itoa(len(allWAN))
 			}
 			inPeering, peerOnWAN := peered(peers, dcName)
-			if c.FederationMode() == spec.FederationMeshGateways || peerOnWAN {
+			// A dialer peering through mesh gateways tries the peer's
+			// gateway directly too, between tries through its own; it
+			// must reach it, or each try fails and Consul backs off for
+			// up to a minute, while only the tries that land on the
+			// acceptor's leader succeed (#122).
+			if c.FederationMode() == spec.FederationMeshGateways || peerOnWAN || dialsViaGateways(peers, dcName) {
 				// RPC listens everywhere so that dials to a gateway's
 				// wan address leave from (and come back to) the wan
 				// interface; serf stays on the LAN address.

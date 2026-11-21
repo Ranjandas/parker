@@ -373,3 +373,14 @@ echo %[3]q
 		Restart:   "on-failure",
 	}
 }
+
+// dialsViaGateways reports whether a datacenter (any of its partitions)
+// dials a peering through mesh gateways.
+func dialsViaGateways(ps []peering, dc string) bool {
+	for _, p := range ps {
+		if p.via && p.dialer.dc == dc {
+			return true
+		}
+	}
+	return false
+}

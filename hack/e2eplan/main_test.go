@@ -30,7 +30,7 @@ func TestPlan(t *testing.T) {
 		{"unit tests only", []string{"internal/lab/lab_test.go"}, nil},
 		{"tui", []string{"internal/tui/model.go", "cmd/parker/tui.go"}, nil},
 		{"tproxy", []string{"internal/tproxy/tproxy.go"}, []string{"examples/minimal.yaml", "examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
-		{"peering", []string{"internal/expand/peering.go", "internal/expand/peering_test.go"}, []string{"examples/minimal.yaml", "examples/peering.yaml", "hack/e2e/peering-secure.yaml"}},
+		{"peering", []string{"internal/expand/peering.go", "internal/expand/peering_test.go"}, []string{"examples/minimal.yaml", "examples/peering.yaml", "hack/e2e/peering-secure.yaml", "hack/e2e/peering-gateways-ha.yaml"}},
 		{"a lab file", []string{"examples/gateways.yaml"}, []string{"examples/gateways.yaml"}},
 		{"rootless mode script", []string{"hack/rootless-mode-e2e.sh"}, []string{Live}},
 		{"core", []string{"internal/lab/lab.go"}, all},
