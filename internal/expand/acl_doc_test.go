@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// docs/acl.md quotes every policy's rules; keep it in step with the code.
+// docs/guide/acl-tokens.md quotes every policy's rules; keep it in step with the code.
 func TestACLDocQuotesTheRules(t *testing.T) {
-	b, err := os.ReadFile("../../docs/acl.md")
+	b, err := os.ReadFile("../../docs/guide/acl-tokens.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestACLDocQuotesTheRules(t *testing.T) {
 		"api gateway":            apiGatewayRules,
 	} {
 		if !strings.Contains(doc, "```hcl\n"+rules+"```") {
-			t.Errorf("docs/acl.md doesn't quote the %s rules:\n%s", name, rules)
+			t.Errorf("docs/guide/acl-tokens.md doesn't quote the %s rules:\n%s", name, rules)
 		}
 	}
 }

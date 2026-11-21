@@ -5,7 +5,7 @@
   </picture>
 </p>
 <p align="center"><strong>Consul repros at probe speed.</strong></p>
-<p align="center"><a href="https://ranjandas.github.io/parker/">Website</a> · <a href="https://ranjandas.github.io/parker/start.html">Get started</a></p>
+<p align="center"><a href="https://ranjandas.github.io/parker/">Website</a> · <a href="https://ranjandas.github.io/parker/docs/quick-start.html">Get started</a> · <a href="https://ranjandas.github.io/parker/docs/">User guide</a></p>
 
 Parker is named after the Parker Solar Probe, the fastest object humans have
 ever built. Speed is the point: a Consul topology should go from a few lines
@@ -40,6 +40,9 @@ $ sudo parker down examples/minimal.yaml
 [![ci](https://github.com/Ranjandas/parker/actions/workflows/ci.yml/badge.svg)](https://github.com/Ranjandas/parker/actions/workflows/ci.yml)
 
 Status: **prototype**. Schema is `v1alpha1`, see the [schema design doc](docs/schema-design.md) (v0.2).
+
+**Documentation:** the [user guide](https://ranjandas.github.io/parker/docs/)
+covers every feature with examples. Its source is [docs/guide](docs/guide).
 
 ## Install
 
@@ -270,7 +273,7 @@ each process after it:
   back from `/v1/agent/self`. It stays in force across agent restarts,
   until a reset or the next `up`.
 - **Fake services**: through their control socket (see
-  [the fake service](docs/fake-service.md)).
+  [the fake service](docs/guide/fake-service.md)).
 
 consul-dataplane's own log level is fixed at start; only its Envoy's
 changes. By hand, the same thing is `parker logs`:
@@ -575,7 +578,7 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   servers don't ask dataplanes for a client certificate) and logs in with
   its service's identity token under ACLs. Dataplane nodes can't use `connect: tproxy`
   yet (see `examples/dataplane.yaml`)
-- `run: fake-service`: built-in fake service (`parker fake-service`). It answers with its name, node, dc and version, and on each request calls its upstreams (by default the service's `upstreams:`, through its sidecar), nesting their answers under `upstream_calls` with the time each hop took. The `fake:` block sets the message, version, upstreams, latency, error and rate-limit faults, health and ready codes, and `protocol: http|grpc|tcp`; nicholasjackson/fake-service's env vars (`MESSAGE`, `UPSTREAM_URIS`, ...) work too. `parker fake` changes faults while it runs, `parker call` prints a request's path as a tree, and the fake serves its own page with fault controls at `/ui`. See [docs/fake-service.md](docs/fake-service.md) and the failover demo in [`examples/fake-chain.yaml`](examples/fake-chain.yaml).
+- `run: fake-service`: built-in fake service (`parker fake-service`). It answers with its name, node, dc and version, and on each request calls its upstreams (by default the service's `upstreams:`, through its sidecar), nesting their answers under `upstream_calls` with the time each hop took. The `fake:` block sets the message, version, upstreams, latency, error and rate-limit faults, health and ready codes, and `protocol: http|grpc|tcp`; nicholasjackson/fake-service's env vars (`MESSAGE`, `UPSTREAM_URIS`, ...) work too. `parker fake` changes faults while it runs, `parker call` prints a request's path as a tree, and the fake serves its own page with fault controls at `/ui`. See [the fake service](docs/guide/fake-service.md) and the failover demo in [`examples/fake-chain.yaml`](examples/fake-chain.yaml).
 - Several datacenters, each on its own LAN (`10.<n>.0.0/24` by default);
   `primary: true` picks the primary (default: first by name)
 - `consul.federation: { mode: wan }`: servers also join a generated `wan`
@@ -647,8 +650,8 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   `examples/acl.yaml`); `parker exec FILE NODE --env` prints it with the
   address and CA for the `consul` CLI on the host, and `parker describe`
   names each token a node uses. Federated dcs replicate tokens from the
-  primary. [docs/acl.md](docs/acl.md) lists every token and its exact
-  rules; see also [docs/troubleshooting.md](docs/troubleshooting.md).
+  primary. [ACL tokens](docs/guide/acl-tokens.md) lists every token and its exact
+  rules; see also [troubleshooting](docs/guide/troubleshooting.md).
 - `tls: true`: a CA per lab signs the servers' certificates
   (`server.<dc>.consul`, node IPs, their `parker proxy` names) and is the
   Connect root, so clients' `auto_encrypt` certificates chain to it too.

@@ -1,4 +1,7 @@
-# The fake service
+---
+title: The fake service
+description: A built-in demo service that shows every hop of a request, with faults you can inject while it runs.
+---
 
 `run: fake-service` runs Parker's built-in fake service on a node: a small
 server that answers with who it is (name, node, dc, version) and, on each
@@ -27,14 +30,14 @@ nodes:
         errors: { rate: 0.1, code: 503 }
 ```
 
-```
+```console
 $ parker call lab.yaml dc1/web
 web  dc1-web · dc1  200  23ms
 └─ api  dc1-api · dc1 · v2  200  21ms
 ```
 
-See [`examples/fake-chain.yaml`](../examples/fake-chain.yaml) for a two-DC
-failover demo and [`hack/e2e/fake-chain.yaml`](../hack/e2e/fake-chain.yaml)
+See [`examples/fake-chain.yaml`](https://github.com/Ranjandas/parker/blob/main/examples/fake-chain.yaml) for a two-DC
+failover demo and [`hack/e2e/fake-chain.yaml`](https://github.com/Ranjandas/parker/blob/main/hack/e2e/fake-chain.yaml)
 for HTTP, gRPC and TCP hops in one chain.
 
 ## The `fake:` block
@@ -124,8 +127,8 @@ Unless `request_faults: false`:
 - `X-Parker-Fault: api=error-rate:100;db=delay:2s` targets hops by name
   anywhere in the chain. The header is passed down with the request.
 
-```
-parker call lab.yaml dc1/web -H 'X-Parker-Fault: db=error-rate:100'
+```console
+$ parker call lab.yaml dc1/web -H 'X-Parker-Fault: db=error-rate:100'
 ```
 
 ## Changing faults while it runs
@@ -136,13 +139,13 @@ change only touches the fields it names.
 
 The CLI:
 
-```
-parker fake lab.yaml dc1/api                         # show the faults in force
-parker fake lab.yaml dc1/api --health 503            # Consul check fails, process stays up
-parker fake lab.yaml dc1/api --error-rate 0.3 --error-code 503
-parker fake lab.yaml dc1/api --latency p50=200ms,p99=2s --variance 10
-parker fake lab.yaml dc1/api --rate-limit 50 --rate-limit-code 429
-parker fake lab.yaml dc1/api --reset                 # back to the lab's settings
+```console
+$ parker fake lab.yaml dc1/api                         # show the faults in force
+$ parker fake lab.yaml dc1/api --health 503            # Consul check fails, process stays up
+$ parker fake lab.yaml dc1/api --error-rate 0.3 --error-code 503
+$ parker fake lab.yaml dc1/api --latency p50=200ms,p99=2s --variance 10
+$ parker fake lab.yaml dc1/api --rate-limit 50 --rate-limit-code 429
+$ parker fake lab.yaml dc1/api --reset                 # back to the lab's settings
 ```
 
 A scenario step:

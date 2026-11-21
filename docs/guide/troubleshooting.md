@@ -1,4 +1,7 @@
-# Troubleshooting a lab
+---
+title: Troubleshooting
+description: Reach Consul with the right token, find which token each part of a lab uses, read logs, and debug the mesh.
+---
 
 When something in a lab doesn't work, start here: how to reach Consul
 with the right token, which token each part of the lab uses, and where
@@ -48,7 +51,7 @@ docs set them up:
 | Servers | the `parker-agent` token |
 | Setup jobs (acl-setup, tenancy, config entries, peering, dataplane-health), `parker exec` | management |
 
-[ACL tokens](acl.md) lists every token's policies and their exact rules.
+[ACL tokens](acl-tokens.md) lists every token's policies and their exact rules.
 
 With namespaces (Consul Enterprise), services and gateways also get
 `parker-read-everywhere`: service and node read in every namespace of

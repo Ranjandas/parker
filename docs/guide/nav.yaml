@@ -1,0 +1,26 @@
+# The user guide's pages, in reading order. Each page is <slug>.md in this
+# directory; hack/sitegen renders them into the website's docs/ section.
+sections:
+  - title: Getting started
+    pages: [index, install, quick-start, concepts]
+  - title: Writing labs
+    pages:
+      - lab-files
+      - datacenters
+      - nodes-and-services
+      - fake-service
+      - service-mesh
+      - gateways
+      - config-entries
+      - multiple-datacenters
+      - acl-and-tls
+      - dataplanes
+      - enterprise
+      - reuse
+      - low-level
+  - title: Running labs
+    pages: [lifecycle, getting-in, log-levels, tui, web-ui, lab-builder, rootless, remote]
+  - title: Testing and repros
+    pages: [selectors, faults, scenarios, upgrades]
+  - title: Reference
+    pages: [cli, lab-file-reference, acl-tokens, environment, troubleshooting]

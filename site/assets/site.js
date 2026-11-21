@@ -84,7 +84,7 @@
 
   // ---- guide toc highlight ----
   const tocLinks = [...document.querySelectorAll('.toc a')];
-  if (tocLinks.length && 'IntersectionObserver' in window) {
+  if (tocLinks.length && !document.body.classList.contains('docs') && 'IntersectionObserver' in window) {
     const map = new Map(tocLinks.map((a) => [a.getAttribute('href').slice(1), a]));
     const seen = new Set();
     const tio = new IntersectionObserver((es) => {
