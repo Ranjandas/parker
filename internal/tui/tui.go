@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -951,7 +953,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !ok || m.o.Shell == nil {
 				return m, nil
 			}
-			return m, tea.ExecProcess(m.o.Shell(m.lab, r.node), func(err error) tea.Msg { return shellDone{err} })
+			return m, tea.Exec(&nodeShell{Cmd: m.o.Shell(m.lab, r.node), node: r.node}, func(err error) tea.Msg { return shellDone{err} })
 		case "l":
 			r, ok := m.selected()
 			if !ok {
@@ -1858,4 +1860,42 @@ func colorLog(l string) string {
 		ts = mutedStyle.Render(ts)
 	}
 	return ts + rest
+}
+
+// nodeShell runs a node's shell on a clean screen, so the last node's
+// output isn't left above the new prompt, and clears it again on exit.
+type nodeShell struct {
+	*exec.Cmd
+	node string
+}
+
+// clearScreen homes the cursor and clears the screen and its scrollback.
+const clearScreen = "\x1b[H\x1b[2J\x1b[3J"
+
+func (c *nodeShell) Run() error {
+	out := c.Stdout
+	if out == nil {
+		out = os.Stdout
+	}
+	fmt.Fprintf(out, "%s\x1b[2mparker: shell in %s; exit or ^D returns to the TUI\x1b[0m\r\n", clearScreen, c.node)
+	defer fmt.Fprint(out, clearScreen)
+	return c.Cmd.Run()
+}
+
+func (c *nodeShell) SetStdin(r io.Reader) {
+	if c.Stdin == nil {
+		c.Stdin = r
+	}
+}
+
+func (c *nodeShell) SetStdout(w io.Writer) {
+	if c.Stdout == nil {
+		c.Stdout = w
+	}
+}
+
+func (c *nodeShell) SetStderr(w io.Writer) {
+	if c.Stderr == nil {
+		c.Stderr = w
+	}
 }
