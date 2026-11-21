@@ -158,6 +158,8 @@ type entry struct {
 	Rules    []struct {
 		Services []struct{ Name string }
 	}
+	// mesh: the peering control plane goes through mesh gateways.
+	Peering struct{ PeerThroughMeshGateways bool }
 	// service-resolver
 	Failover map[string]struct {
 		Service     string
@@ -609,11 +611,26 @@ func Build(f *spec.File) *Graph {
 			}
 		}
 	}
+	// A dc whose default partition's mesh entry sets PeerThroughMeshGateways
+	// sends its peerings' control plane through its default-partition mesh
+	// gateway (Consul allows it nowhere else).
+	viaGW := map[string]bool{}
+	for _, de := range entries {
+		if de.e.Kind == "mesh" && de.e.Peering.PeerThroughMeshGateways && partName(de.partition) == spec.DefaultPartition {
+			viaGW[de.dc] = true
+		}
+	}
 	names := slices.Sorted(maps.Keys(peerings))
 	for _, name := range names {
 		pe := peerings[name]
 		if a, b := firstServer(pe[0].dc), firstServer(pe[1].dc); a != "" && b != "" {
-			g.Edges = append(g.Edges, Edge{Kind: Peering, From: a, To: b, Label: name})
+			e := Edge{Kind: Peering, From: a, To: b, Label: name}
+			for _, side := range pe {
+				if gw := meshGW(place{side.dc, ""}); viaGW[side.dc] && gw != "" {
+					e.Via = append(e.Via, gw)
+				}
+			}
+			g.Edges = append(g.Edges, e)
 		}
 	}
 	sort.SliceStable(g.Edges, func(i, j int) bool { return g.Edges[i].Kind < g.Edges[j].Kind })
