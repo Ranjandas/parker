@@ -182,7 +182,8 @@ to 200. `path`, `header` and `service` work like the CLI's options.
 
 ### The fake's page (`/ui`)
 
-Open it from the web UI (`parker ui`): pick the node, then **Open page**.
+Open it from the web UI (`parker ui`): pick the node, then the fake under
+**Open**.
 The page shows:
 
 - **Request**: Send request, and a loop that sends one every 0.5 to 5
@@ -199,11 +200,50 @@ so nothing in the mesh can change another service's faults.
 
 ### The web UI
 
-On the topology, a node with a fake service gets a **Fake service** section
-with **Send request**, which draws the waterfall and highlights the nodes
-the request went through. The node page adds the health, error and
-latency controls. A **⚡ faults** badge marks nodes whose fakes have faults
-injected.
+On a node page (**Nodes & logs**), each fake service gets two cards.
+
+**Fake service** shows what the service calls, and lets you send a
+request through it:
+
+- **Test the path** appears when the service has upstreams. It lists
+  them, and **Send request through web** sends a request to web, which
+  calls its upstreams. **Last call** draws the answer as a waterfall, one
+  row per hop with its status and time.
+- **+ Add a fault to this request** breaks services further down the
+  chain for that request only, through the
+  [`X-Parker-Fault` header](#faults-on-one-request). Pick a service, then
+  **Fail** (10%, 50% or 100% of the time) and **Delay** (200ms, 1s or
+  3s), and add more rows for more services. The picker lists every fake
+  the request can reach, so from web you can break db behind api
+  (`db (via api)`). A line under the button sums up what will be sent,
+  such as `2 faults: api fails 100% · db +1s`, and the hops you broke are
+  marked *this request* in **Last call**. Their own fault settings don't
+  change.
+- A service with no upstreams has nothing to send a request through. It
+  says so, and **Called by** links to the nodes that call it, where you
+  can send one and watch its faults.
+
+**Fault injection: web** changes how web answers the requests it gets,
+for every caller, until you change it back:
+
+| Control | Does |
+|---|---|
+| Health check | `passing` or `critical`: what web's health check answers, so Consul takes it out of the pool. |
+| Fail requests | 0%, 10%, 50% or 100% of requests to web fail with its error code. |
+| Slow responses | Adds 200ms, 1s or 3s before web answers. |
+| Reset faults | Back to the lab file's `fake:` settings. |
+
+These never touch web's upstreams: to make api fail for web, set api's
+faults on api's node, or add a fault to one request as above.
+
+On the topology, a node with a fake service gets the same **Fake
+service** section, without the per-request faults. Sending a request
+there also highlights the nodes it went through. A **⚡ faults** badge
+marks nodes whose fakes have faults injected.
+
+Limits: the picker reads the lab's topology, so it lists a fake that sets
+`request_faults: false` too, and that fake ignores the fault. A TCP fake
+has no requests to send, so it only gets the fault card.
 
 ## Space facts
 

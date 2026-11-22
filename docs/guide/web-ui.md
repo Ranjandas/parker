@@ -38,7 +38,13 @@ cookie. It only works while that `parker ui` runs.
   for its details.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
-  level control.
+  level control. The log viewer fills the window and stays in view while
+  you scroll the cards beside it. The header shows the node's IPs,
+  datacenter, role and *LAN members*: how many Consul agents in the
+  datacenter's LAN pool this node's agent sees alive.
+- **Fake services**: on a node with a [fake service](fake-service.md#the-web-ui),
+  send a request through it, break services down the chain for one
+  request, and change its own faults.
 
 ## Acting on the lab
 
