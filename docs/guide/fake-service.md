@@ -183,16 +183,38 @@ to 200. `path`, `header` and `service` work like the CLI's options.
 ### The fake's page (`/ui`)
 
 Open it from the web UI (`parker ui`): pick the node, then the fake under
-**Open**.
-The page shows:
+**Open**. The page shows, top to bottom:
 
-- **Request**: Send request, and a loop that sends one every 0.5 to 5
-  seconds. A strip of recent answers is coloured by who answered, with the
-  traffic split under it.
-- **Chain**: the last answer as a waterfall.
-- **Faults**: a health toggle, sliders for error rate and latency, the
-  error code, the rate limit, and Reset. Changes apply live.
-- **Space fact**: the fact from the last answer.
+- **Stats** for the requests this page has sent: how many, the success
+  rate and latency (p50 and p99) over the last 40, and **Answered by**,
+  the split between the places that answered, such as
+  `api dc2 64% · api dc3 36%`.
+- **Send request**, and **Loop**, which sends one every 0.5 to 5 seconds.
+  A strip of the last 40 answers is coloured by who answered, with
+  failures in red.
+- **Break an upstream for requests from this page**: tick a service
+  further down the chain, then set how often it fails (percent) and how
+  long it waits (ms). The page sends these as the
+  [`X-Parker-Fault` header](#faults-on-one-request) on its own requests
+  only, so other callers of that service get normal answers.
+  **Copy as parker call** copies the same request as a
+  [`parker call`](getting-in.md#calling-services) command.
+- **The last answer**: one line on what happened (`api failed, broken
+  from this page, so web answered 500`), then a row per hop with its node
+  and dc, its IP address, the address it was called from, and its time.
+  A hop that failed says why: *Fault injection on api*, *Broken for
+  requests from this page*, *an upstream failed*, or the error, such as
+  `connection refused`. The request id is at the bottom: every hop logs
+  it as `id=<id>`, so you can find the request in each service's logs.
+- **Space fact**: the fact from the deepest hop that sent one, with that
+  hop's service, node, address and the request id.
+- **Fault injection: web**: the health check, the error rate and code,
+  latency (p50 and p99), the rate limit, and Reset. Changes apply live,
+  and the line by Reset lists the faults in force. These change how web
+  answers every caller; they never touch its upstreams.
+
+In a service mesh, a hop is called through its sidecar, so its "from"
+address is the sidecar's (`127.0.0.1:<port>`), not the caller's.
 
 The fault panel writes through the daemon to the control socket. Opened
 on the service port directly, the page works but the panel is read only,

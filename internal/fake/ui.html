@@ -5,223 +5,503 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fake service</title>
 <style>
+/* Colours and type follow the Parker web UI (internal/webui/static/app.css). */
 :root {
-  --bg: #f6f7f9; --card: #fff; --fg: #1c2330; --muted: #667085; --line: #e3e6eb;
-  --accent: #e2561b; --ok: #12805c; --bad: #c4321f; --warn: #b26b00;
-  --c0: #2f6fdb; --c1: #e2561b; --c2: #12805c; --c3: #8a46d1; --c4: #b26b00; --c5: #0f8d9c;
+  --bg: #F4F2ED; --panel: #FFFFFF; --panel-2: #FAF9F6; --sunken: #EEEBE4; --hover: #F3F0EA;
+  --line: #E3DED3; --line-2: #D3CCBE;
+  --ink: #0F1B2D; --ink-2: #36435A; --muted: #687286; --faint: #9AA1AE;
+  --sun-1: #FFC94A; --sun-2: #FF7A1A; --sun-3: #FF4D2E;
+  --accent: #D9580B;
+  --ok: #16803C; --ok-soft: rgba(22,128,60,.10);
+  --warn: #B45309; --bad: #D92D20; --bad-soft: rgba(217,45,32,.08);
+  --c0: #3F6E96; --c1: #A3B3C4; --c2: #2F8F8A; --c3: #8C7A5B;
+  --shadow: 0 1px 2px rgba(15,27,45,.05), 0 3px 10px rgba(15,27,45,.04);
+  --sun-glow: .16;
+  --f-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #11151c; --card: #1a2029; --fg: #e8ecf2; --muted: #98a2b3; --line: #2b3340;
-    --accent: #ff7a3d; --ok: #3ccf91; --bad: #ff6b57; --warn: #f0b429;
-    --c0: #6aa1ff; --c1: #ff7a3d; --c2: #3ccf91; --c3: #b98cff; --c4: #f0b429; --c5: #4fd1dd;
+    --bg: #09101B; --panel: #0F1826; --panel-2: #0C1421; --sunken: #0A121E; --hover: #142035;
+    --line: #1C2739; --line-2: #28364D;
+    --ink: #F4F1EA; --ink-2: #C7CCD6; --muted: #8B95A7; --faint: #5E6A7E;
+    --accent: #FF8A3D;
+    --ok: #3DD68C; --ok-soft: rgba(61,214,140,.10);
+    --warn: #FFC94A; --bad: #FF5F52; --bad-soft: rgba(255,95,82,.10);
+    --c0: #6FA3D2; --c1: #3A4C64; --c2: #4FC1B9; --c3: #B59E74;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.2);
+    --sun-glow: .42;
     color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
-header h1 { font-size: 18px; margin: 0; }
-.where { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-.badge { border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
-.badge.ok { color: var(--ok); } .badge.bad { color: var(--bad); }
-main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 16px; padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
-@media (max-width: 820px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
-.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-button:disabled { opacity: .5; cursor: default; }
-input[type=text], input[type=number], select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
-input[type=text] { flex: 1; min-width: 120px; font-family: ui-monospace, Menlo, monospace; }
-.strip { display: flex; gap: 3px; margin: 12px 0 6px; min-height: 22px; flex-wrap: wrap; }
-.strip span { width: 14px; height: 22px; border-radius: 3px; }
-.strip span.fail { background: repeating-linear-gradient(45deg, var(--bad), var(--bad) 3px, transparent 3px, transparent 6px) !important; border: 1px solid var(--bad); }
-.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.split { font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-top: 6px; }
-.hop { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
-.hop:last-child { border-bottom: 0; }
-.hop .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hop .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
-.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700; padding: 0 6px; border-radius: 4px; margin-left: 6px; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 13.5px/1.45 var(--f-ui); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+code, .mono { font-family: var(--f-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.mark { display: flex; align-items: center; gap: 8px; padding-right: 12px; border-right: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 550; }
+header h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+.where { font: 12px var(--f-mono); color: var(--muted); }
+.grow { flex: 1; }
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 550; color: var(--ok); }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.status.bad { color: var(--bad); }
+
+.btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-2); background: var(--panel); border-radius: 8px; padding: 6px 12px; font-weight: 550; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.sm { padding: 4px 9px; font-size: 12.5px; border-radius: 7px; }
+.btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+select.sel { border: 1px solid var(--line-2); background: var(--panel); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; }
+
+main { padding: 20px 24px 32px; max-width: 1280px; margin: 0 auto; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 0; }
+.card h2 { margin: 0; font-size: 13.5px; font-weight: 650; }
+.hd { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.bd { padding: 14px 16px; }
+.muted { color: var(--muted); }
+
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.stat { padding: 13px 16px; display: flex; flex-direction: column; gap: 5px; }
+.stat .k { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font-size: 24px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.stat .v small { font-size: 14px; color: var(--muted); font-weight: 500; }
+.stat .v.bad { color: var(--bad); }
+.stat .s { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.sbar { height: 5px; border-radius: 3px; background: var(--sunken); display: flex; overflow: hidden; margin-top: 6px; }
+.sbar span { height: 100%; }
+
+/* request */
+.reqrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.path { flex: 1; min-width: 160px; display: flex; align-items: center; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
+.path span { padding-left: 10px; font: 12.5px var(--f-mono); color: var(--faint); }
+.path input { border: 0; background: transparent; outline: none; padding: 6px 10px 6px 6px; font: 12.5px var(--f-mono); width: 100%; min-width: 0; }
+.brk { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.brk summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.brk summary::-webkit-details-marker { display: none; }
+.brk summary .chev { color: var(--faint); transition: transform .15s; width: 10px; }
+.brk[open] summary .chev { transform: rotate(90deg); }
+.brk summary .s { margin-left: auto; font-size: 12.5px; color: var(--muted); text-align: right; }
+.brk summary .s.on { color: var(--bad); font-weight: 550; }
+.brk .in { padding: 10px 0 2px 18px; display: flex; flex-direction: column; gap: 8px; }
+.brk .in p { margin: 0; font-size: 12.5px; color: var(--muted); }
+.hoprow { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+.hoprow label { display: inline-flex; gap: 6px; align-items: center; }
+.hoprow b { color: var(--ink); font-weight: 600; min-width: 40px; }
+.hoprow input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+.hoprow input[type=number] { width: 64px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); padding: 2px 6px; font: 12px var(--f-mono); }
+.hdr { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.hdr code { color: var(--ink-2); overflow-wrap: anywhere; }
+.recent { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+.strip { display: flex; gap: 2px; flex: 1; height: 16px; }
+.strip span { flex: 1; max-width: 10px; border-radius: 2px; }
+.strip span.fail { background: var(--bad) !important; }
+
+/* the last answer */
+.answer { overflow: hidden; }
+.ahead { display: flex; align-items: baseline; gap: 10px; padding: 14px 20px 12px; flex-wrap: wrap; }
+.code { font: 650 14px var(--f-mono); }
 .code.ok { color: var(--ok); } .code.bad { color: var(--bad); }
-.bar { height: 8px; background: var(--line); border-radius: 4px; position: relative; overflow: hidden; }
-.bar b { position: absolute; top: 0; bottom: 0; background: var(--c0); border-radius: 4px; }
-.bar + small { display: block; text-align: right; font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
-.empty { color: var(--muted); }
-label.field { display: block; margin: 10px 0; }
-label.field > span:first-child { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
-label.field output { font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
-input[type=range] { width: 100%; accent-color: var(--accent); }
-.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.toggle button { border: 0; border-radius: 0; }
-.toggle button.on.pass { background: var(--ok); color: #fff; }
-.toggle button.on.crit { background: var(--bad); color: #fff; }
-.note { font-size: 12px; color: var(--warn); margin: 6px 0 0; }
-.summary { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin-top: 8px; }
-.fact { font-size: 15px; }
-.fact small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
-.err { color: var(--bad); font-size: 13px; }
+.ahead .what { font-weight: 550; overflow-wrap: anywhere; }
+.ahead .t { margin-left: auto; font: 12px var(--f-mono); color: var(--muted); }
+.empty { padding: 20px; color: var(--muted); }
+.hop { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) 90px 60px; gap: 14px; align-items: center; padding: 9px 20px; border-top: 1px solid var(--line); }
+.hop.head { padding-top: 8px; padding-bottom: 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel-2); }
+.hop .who b { font-weight: 600; }
+.hop .ind { color: var(--faint); font-family: var(--f-mono); }
+.hop .m { font: 11.5px var(--f-mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hop .addr { font: 12px var(--f-mono); color: var(--ink-2); line-height: 1.6; min-width: 0; }
+.hop .addr div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hop .addr span { color: var(--muted); }
+.track { position: relative; height: 6px; border-radius: 3px; background: var(--sunken); }
+.track b { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--c0); }
+.track b.bad { background: var(--bad); }
+.hop .dur { text-align: right; font: 12px var(--f-mono); color: var(--muted); }
+.why { display: block; margin-top: 2px; font-size: 12px; color: var(--bad); }
+.why.up { color: var(--muted); }
+.afoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 20px; background: var(--panel-2); border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+.afoot code { color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+/* space fact */
+.factcard { position: relative; overflow: hidden; }
+.factcard::before { content: ""; position: absolute; right: -70px; top: -90px; width: 240px; height: 240px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle at 35% 35%, var(--sun-1), var(--sun-2) 55%, rgba(255,77,46,0) 72%); opacity: var(--sun-glow); }
+.fact { position: relative; padding: 18px 22px 20px; }
+.k6 { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.fact blockquote { margin: 6px 0 0; font-size: 20px; line-height: 1.45; letter-spacing: -.01em; max-width: 60ch; }
+.fact .src { display: block; margin-top: 8px; color: var(--muted); font: 12px var(--f-mono); }
+.fmeta { display: flex; gap: 6px 18px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font: 12px var(--f-mono); color: var(--ink-2); max-width: 70%; }
+.fmeta span { color: var(--muted); }
+
+/* fault injection */
+.note { margin: 0 0 4px; font-size: 12.5px; color: var(--muted); }
+.fld { padding: 11px 0; border-bottom: 1px solid var(--line); }
+.fld:last-child { border-bottom: 0; }
+.fld .lb { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.fld .lb b { font-weight: 600; font-size: 13px; }
+.fld.row .lb { margin: 0; }
+.val { font: 12.5px var(--f-mono); color: var(--muted); }
+.val.on { color: var(--bad); font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 7px; padding: 2px; gap: 2px; background: var(--panel-2); }
+.seg button { border: 0; background: transparent; border-radius: 5px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.seg button.on.pass { background: var(--ok-soft); color: var(--ok); font-weight: 550; }
+.seg button.on.crit { background: var(--bad-soft); color: var(--bad); font-weight: 550; }
+input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+.inline { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.num { display: flex; align-items: center; border: 1px solid var(--line-2); border-radius: 7px; background: var(--panel-2); width: 120px; }
+.num input { border: 0; background: transparent; outline: none; padding: 4px 8px; width: 100%; font: 12.5px var(--f-mono); }
+.num span { padding: 0 8px; color: var(--faint); font-size: 12px; }
+.fifoot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+.fifoot .on { color: var(--bad); font-weight: 550; }
+.ro { margin: 0 0 8px; font-size: 12.5px; color: var(--warn); }
+.err { margin: 8px 0 0; font-size: 12.5px; color: var(--bad); }
+
+@media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  main { padding: 16px; } header { padding: 12px 16px; } .mark { display: none; }
+  .hop { grid-template-columns: minmax(0, 1fr) 60px; } .hop .addr { grid-column: 1 / -1; order: 3; } .hop .track, .hop.head { display: none; }
+  .fact blockquote { font-size: 17px; } .fmeta { max-width: none; }
+}
 </style>
 </head>
 <body>
 <header>
+  <span class="mark">
+    <svg width="18" height="18" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="sun" cx="35%" cy="35%" r="75%"><stop offset="0" stop-color="#FFC94A"/><stop offset=".7" stop-color="#FF7A1A"/><stop offset="1" stop-color="#FF4D2E"/></radialGradient></defs><circle cx="44" cy="23" r="18" fill="url(#sun)"/><rect x="22" y="5" width="12" height="54" rx="6" fill="currentColor"/><rect x="2" y="11" width="16" height="7" rx="3.5" fill="currentColor"/><rect x="8" y="25" width="10" height="7" rx="3.5" fill="currentColor" opacity=".6"/></svg>
+    Fake service
+  </span>
   <h1 id="title">Fake service</h1>
   <span class="where" id="where"></span>
-  <span class="badge ok" id="state" hidden></span>
+  <span class="grow"></span>
+  <span class="status" id="state" hidden><i></i><span></span></span>
 </header>
 <main>
-  <section>
-    <div class="card">
-      <h2>Request</h2>
-      <div class="row">
-        <button class="primary" id="send">Send request</button>
-        <input type="text" id="path" value="/" aria-label="Path">
-        <button id="loop" aria-pressed="false">Loop</button>
-        <select id="every" aria-label="Interval">
-          <option value="500">every 0.5s</option>
-          <option value="1000" selected>every 1s</option>
-          <option value="2000">every 2s</option>
-          <option value="5000">every 5s</option>
-        </select>
-      </div>
-      <div class="strip" id="strip" aria-label="Recent requests"></div>
-      <div class="legend" id="legend"></div>
-      <div class="split" id="split"></div>
+  <div class="stats">
+    <div class="card stat"><div class="k">Requests</div><div class="v" id="st-sent">0 <small>sent</small></div><div class="s" id="st-loop">from this page</div></div>
+    <div class="card stat"><div class="k">Success</div><div class="v" id="st-ok">–</div><div class="s" id="st-oks">last 40 requests</div></div>
+    <div class="card stat"><div class="k">Latency</div><div class="v" id="st-p50">–</div><div class="s" id="st-p99"></div></div>
+    <div class="card stat"><div class="k">Answered by</div><div class="sbar" id="st-bar"></div><div class="s" id="split">–</div></div>
+  </div>
+  <div class="grid">
+    <div class="col">
+      <section class="card" aria-label="Send requests">
+        <div class="bd">
+          <div class="reqrow">
+            <button class="btn primary" id="send">Send request</button>
+            <label class="path"><span>GET</span><input type="text" id="path" value="/" aria-label="Path"></label>
+            <button class="btn" id="loop" aria-pressed="false">Loop</button>
+            <select class="sel" id="every" aria-label="Interval">
+              <option value="500">every 0.5s</option>
+              <option value="1000" selected>every 1s</option>
+              <option value="2000">every 2s</option>
+              <option value="5000">every 5s</option>
+            </select>
+          </div>
+          <details class="brk" id="brk">
+            <summary><span class="chev">›</span>Break an upstream for requests from this page<span class="s" id="brk-s">off</span></summary>
+            <div class="in">
+              <p>Fails or slows a hop further down the chain, but only for requests this page sends. Other callers of that service are unaffected.</p>
+              <div id="brk-rows"><p>Send a request first: the hops it goes through are listed here.</p></div>
+              <div class="hdr" id="brk-hdr" hidden>sends <code id="brk-h"></code><button class="btn ghost sm" id="brk-copy">Copy as parker call</button></div>
+            </div>
+          </details>
+          <div class="recent"><span>Last 40</span><div class="strip" id="strip" aria-label="Recent requests"></div></div>
+        </div>
+      </section>
+
+      <section class="card answer" aria-label="Last answer">
+        <div class="ahead" id="ahead" hidden><span class="code" id="code"></span><span class="what" id="what"></span><span class="t" id="when"></span></div>
+        <div id="chain" class="empty">Send a request to see the hops it goes through.</div>
+        <div class="afoot" id="afoot" hidden>Request <code id="rid"></code> · each hop logs it as <code id="rid-log"></code></div>
+      </section>
+
+      <section class="card factcard" aria-label="Space fact">
+        <div class="fact">
+          <div class="k6">Space fact</div>
+          <blockquote id="fact">A new one comes with each answer.</blockquote>
+          <span class="src" id="fact-src"></span>
+          <div class="fmeta" id="fact-meta" hidden></div>
+        </div>
+      </section>
     </div>
-    <div class="card">
-      <h2>Chain</h2>
-      <div id="chain" class="empty">Send a request to see the hops it goes through.</div>
+
+    <div class="col">
+      <section class="card" id="controls" aria-label="Fault injection">
+        <div class="hd"><h2 id="fi-title">Fault injection</h2></div>
+        <div class="bd" style="padding-top:10px;padding-bottom:4px">
+          <p class="ro" id="ro" hidden>Read only here. Open this page from the Parker UI, or use <code>parker fake</code>, to change faults.</p>
+          <p class="note" id="fi-note">Changes how this service answers every caller. Its upstreams aren't affected.</p>
+          <div class="fld row"><div class="lb"><b>Health check</b><span class="seg"><button id="pass" class="pass">passing</button><button id="crit" class="crit">critical</button></span></div></div>
+          <div class="fld"><div class="lb"><b>Errors</b><span class="val" id="erate-o">0%</span></div>
+            <input type="range" id="erate" min="0" max="100" step="5" value="0" aria-label="Error rate">
+            <div class="inline">answer with <select class="sel" id="ecode" aria-label="Error code" style="padding:2px 6px"><option>500</option><option>502</option><option>503</option><option>504</option><option>429</option></select></div></div>
+          <div class="fld"><div class="lb"><b>Latency</b><span class="val" id="lat-o">off</span></div>
+            <div class="two">
+              <div><div class="inline" style="margin:0 0 4px;justify-content:space-between"><span>p50</span><span class="mono" id="p50-o">0ms</span></div><input type="range" id="p50" min="0" max="2000" step="10" value="0" aria-label="Latency p50"></div>
+              <div><div class="inline" style="margin:0 0 4px;justify-content:space-between"><span>p99</span><span class="mono" id="p99-o">0ms</span></div><input type="range" id="p99" min="0" max="5000" step="50" value="0" aria-label="Latency p99"></div>
+            </div></div>
+          <div class="fld row"><div class="lb"><b>Rate limit</b><label class="num"><input type="number" id="rps" min="0" step="1" value="0" aria-label="Rate limit"><span>req/s</span></label></div></div>
+          <p class="err" id="cerr" hidden></p>
+        </div>
+        <div class="fifoot"><span id="summary"></span><span class="grow"></span><button class="btn sm" id="reset">Reset</button></div>
+      </section>
     </div>
-  </section>
-  <aside>
-    <div class="card" id="controls">
-      <h2>Faults</h2>
-      <label class="field"><span>Health check</span>
-        <span class="toggle"><button id="pass" class="pass">passing</button><button id="crit" class="crit">critical</button></span>
-      </label>
-      <label class="field"><span>Error rate <output id="erate-o">0%</output></span>
-        <input type="range" id="erate" min="0" max="100" step="5" value="0"></label>
-      <label class="field"><span>Error code</span>
-        <select id="ecode"><option>500</option><option>502</option><option>503</option><option>504</option><option>429</option></select></label>
-      <label class="field"><span>Latency p50 <output id="p50-o">0ms</output></span>
-        <input type="range" id="p50" min="0" max="2000" step="10" value="0"></label>
-      <label class="field"><span>Latency p99 <output id="p99-o">0ms</output></span>
-        <input type="range" id="p99" min="0" max="5000" step="50" value="0"></label>
-      <label class="field"><span>Rate limit (requests/s, 0 is off)</span>
-        <input type="number" id="rps" min="0" step="1" value="0"></label>
-      <div class="row"><button id="reset">Reset</button></div>
-      <div class="summary" id="summary"></div>
-      <p class="note" id="ro" hidden>Read only here: open this page from the Parker UI (or use <code>parker fake</code>) to change faults.</p>
-      <p class="err" id="cerr" hidden></p>
-    </div>
-    <div class="card">
-      <h2>Space fact</h2>
-      <div class="fact" id="fact"><span class="empty">A new one comes with each answer.</span></div>
-    </div>
-  </aside>
+  </div>
 </main>
 <script>
 "use strict";
+// ---------- pure helpers (no DOM; fake/ui_test.go runs them with node) ----------
+const FakeUI = (() => {
+  // Go durations ("1.5ms", "2m3.1s") to milliseconds.
+  function ms(d) {
+    if (!d) return 0;
+    const units = { ns: 1e-6, us: 1e-3, "µs": 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
+    let t = 0;
+    for (const m of String(d).matchAll(/([\d.]+)(ns|us|µs|ms|s|m|h)/g)) t += parseFloat(m[1]) * units[m[2]];
+    return t;
+  }
+  const fmtMs = (v) => v >= 1000 ? (v / 1000).toFixed(2) + "s" : v >= 10 ? Math.round(v) + "ms" : v.toFixed(1) + "ms";
+  // hops flattens an answer into [{r, depth}], the answer first.
+  function hops(r, depth = 0, out = []) {
+    out.push({ r, depth });
+    for (const k of Object.keys(r.upstream_calls || {}).sort()) hops(r.upstream_calls[k], depth + 1, out);
+    return out;
+  }
+  const failed = (r) => r.code < 0 || r.code >= 400;
+  const label = (h) => [h.dc, h.version].filter(Boolean).join(" ") || h.node || "";
+  // below names the services further down the chain, nearest first, each once.
+  function below(r) {
+    const out = [];
+    for (const { r: h, depth } of hops(r)) if (depth && h.name && h.name !== r.name && !out.includes(h.name)) out.push(h.name);
+    return out;
+  }
+  // header builds X-Parker-Fault from rows of {svc, on, fail (%), delay (ms)}.
+  const active = (rows) => (rows || []).filter((x) => x.on && x.svc && (x.fail > 0 || x.delay > 0));
+  function header(rows) {
+    return active(rows).map((x) => x.svc + "=" + [x.fail > 0 ? "error-rate:" + x.fail : "", x.delay > 0 ? "delay:" + x.delay + "ms" : ""].filter(Boolean).join(",")).join(";");
+  }
+  function brokeSummary(rows) {
+    return active(rows).map((x) => x.svc + ": " + [x.fail > 0 ? "fail " + x.fail + "%" : "", x.delay > 0 ? "+" + x.delay + "ms" : ""].filter(Boolean).join(", ")).join(" · ");
+  }
+  // why says why a hop failed or was slowed: a fault this page asked for,
+  // the service's own fault injection, a failing upstream, or the error.
+  function why(h, broken) {
+    if (h.injected && (broken || []).includes(h.name)) return { kind: "req", text: "Broken for requests from this page" };
+    if (h.injected === "rate_limit") return { kind: "own", text: "Fault injection on " + h.name + ": rate limit" };
+    if (h.injected === "error") return { kind: "own", text: "Fault injection on " + h.name + ": error " + h.code };
+    if (h.injected === "delay") return { kind: "own", text: "Fault injection on " + h.name + ": delay" };
+    if (h.cycle) return { kind: "up", text: "already on this path, so it didn't call its upstreams again" };
+    if (!failed(h)) return null;
+    if (Object.values(h.upstream_calls || {}).some(failed)) return { kind: "up", text: "an upstream failed" };
+    return { kind: "real", text: h.error || "failed" };
+  }
+  // headline is one line for the answer: who answered, or what failed.
+  function headline(r, broken) {
+    if (!failed(r)) return r.name + " answered in " + fmtMs(ms(r.duration));
+    const hs = hops(r).map((x) => x.r);
+    const root = [...hs].reverse().find((h) => failed(h) && !Object.values(h.upstream_calls || {}).some(failed)) || r;
+    if (root === r) return r.name + " failed" + (r.injected ? " on purpose" : "") + " in " + fmtMs(ms(r.duration));
+    const w = why(root, broken);
+    return root.name + " failed" + (w && w.kind === "req" ? ", broken from this page" : w && w.kind === "own" ? " on purpose" : "") + ", so " + r.name + " answered " + r.code;
+  }
+  // factHop is the hop whose fact to show: the deepest one with a fact.
+  function factHop(r) {
+    let best = null;
+    for (const x of hops(r)) if (x.r.fact && (!best || x.depth > best.depth)) best = x;
+    return best;
+  }
+  function pct(sorted, p) {
+    if (!sorted.length) return 0;
+    return sorted[Math.min(sorted.length - 1, Math.ceil(p / 100 * sorted.length) - 1)];
+  }
+  // stats sums up recent records of {fail, ms, labels: {svc: label}}.
+  function stats(recs) {
+    const n = recs.length;
+    const d = recs.filter((x) => !x.error).map((x) => x.ms).sort((a, b) => a - b);
+    const by = new Map();
+    for (const x of recs) for (const [svc, l] of Object.entries(x.labels || {})) {
+      if (!by.has(svc)) by.set(svc, new Map());
+      by.get(svc).set(l, (by.get(svc).get(l) || 0) + 1);
+    }
+    // The split shown is the first service answered from more than one
+    // place, else the nearest upstream.
+    const svcs = [...by.keys()];
+    const pick = svcs.find((s) => by.get(s).size > 1) || svcs[0];
+    let split = [];
+    if (pick) {
+      const m = by.get(pick), total = [...m.values()].reduce((a, b) => a + b, 0);
+      split = [...m].sort((a, b) => b[1] - a[1]).map(([l, c]) => ({ svc: pick, label: l, pct: Math.round(c * 100 / total) }));
+    }
+    return { n, ok: n ? Math.round(recs.filter((x) => !x.fail).length * 100 / n) : 0, p50: pct(d, 50), p99: pct(d, 99), split };
+  }
+  // labelsOf maps each service past the first hop to where it answered.
+  function labelsOf(r) {
+    const out = {};
+    for (const { r: h, depth } of hops(r)) if (depth && h.name && !(h.name in out)) out[h.name] = label(h);
+    return out;
+  }
+  // labFromHost reads the lab from the Parker UI's app origin
+  // (<node>-<port>--<lab>.parker.localhost).
+  function labFromHost(host) {
+    const m = /--([a-z0-9-]+)\.parker\.localhost$/i.exec(String(host).split(":")[0]);
+    return m ? m[1] : "LAB";
+  }
+  // faultSummary names only the faults in force, from the control API's faults.
+  function faultSummary(f) {
+    const out = [];
+    if (f.health_code >= 400) out.push("health " + f.health_code);
+    if (f.error_rate > 0) out.push("errors " + Math.round(f.error_rate * 100) + "% (" + (f.error_code || 500) + ")");
+    const p50 = Math.round((f.p50 || 0) / 1e6), p99 = Math.round((f.p99 || 0) / 1e6);
+    if (p50 || p99) out.push("latency " + (p50 === p99 || !p99 ? p50 + "ms" : p50 + "–" + p99 + "ms"));
+    if (f.rate_limit > 0) out.push("rate limit " + f.rate_limit + "/s");
+    return out.join(" · ");
+  }
+  return { faultSummary, ms, fmtMs, hops, failed, label, below, header, brokeSummary, why, headline, factHop, stats, labelsOf, labFromHost };
+})();
+if (typeof module === "object" && module.exports) module.exports = FakeUI;
+// ---------- end of pure helpers ----------
+
+if (typeof document === "object") (() => {
+const { faultSummary, ms, fmtMs, hops, failed, label, below, header, brokeSummary, why, headline, factHop, stats, labelsOf, labFromHost } = FakeUI;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const CTL = "/.parker/fake/";
+let self = null; // the first answer: who this service is
+let own = null;  // this service's faults, from the control API
 
-// Go durations ("1.5ms", "2m3.1s") to milliseconds.
-function ms(d) {
-  if (!d) return 0;
-  const units = { ns: 1e-6, us: 1e-3, "µs": 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
-  let t = 0;
-  for (const m of String(d).matchAll(/([\d.]+)(ns|us|µs|ms|s|m|h)/g)) t += parseFloat(m[1]) * units[m[2]];
-  return t;
-}
-const fmtMs = (v) => v >= 1000 ? (v / 1000).toFixed(2) + "s" : v >= 10 ? Math.round(v) + "ms" : v.toFixed(1) + "ms";
-
-function hops(r, depth = 0, out = []) {
-  out.push({ r, depth });
-  for (const k of Object.keys(r.upstream_calls || {}).sort()) hops(r.upstream_calls[k], depth + 1, out);
-  return out;
-}
-const failed = (r) => r.code < 0 || r.code >= 400;
-const label = (h) => [h.dc, h.version].filter(Boolean).join(" ") || h.node || "";
-
-// The strip colours each answer by who answered past the first hop.
-const colors = ["--c0", "--c1", "--c2", "--c3", "--c4", "--c5"];
-const sigColor = new Map();
+// ---------- recent requests and stats ----------
+const colors = ["--c0", "--c1", "--c2", "--c3"];
+const labelColor = new Map();
+const colorFor = (l) => { if (!labelColor.has(l)) labelColor.set(l, colors[labelColor.size % colors.length]); return `var(${labelColor.get(l)})`; };
 const recent = [];
-const counts = new Map(); // service -> label -> n
+let sent = 0;
 
-function sig(r) {
-  const hs = hops(r).slice(1).map(({ r }) => (r.name || r.uri) + "@" + label(r));
-  return hs.length ? hs.join(" → ") : (r.name + "@" + label(r));
-}
-function colorFor(s) {
-  if (!sigColor.has(s)) sigColor.set(s, colors[sigColor.size % colors.length]);
-  return `var(${sigColor.get(s)})`;
-}
-
-function record(r) {
-  const s = sig(r);
-  recent.push({ s, fail: failed(r), title: `${r.code} · ${r.duration} · ${s}` });
+function record(r, error) {
+  sent++;
+  const rec = error ? { fail: true, error: true, ms: 0, title: String(error) }
+    : { fail: failed(r), ms: ms(r.duration), labels: labelsOf(r), title: `${r.code} · ${r.duration}` };
+  if (!error) { const ls = Object.entries(rec.labels); rec.key = ls.length ? ls[0][0] + "@" + ls[0][1] : r.name + "@" + label(r); }
+  recent.push(rec);
   if (recent.length > 40) recent.shift();
-  for (const { r: h } of hops(r)) {
-    if (!h.name) continue;
-    if (!counts.has(h.name)) counts.set(h.name, new Map());
-    const m = counts.get(h.name);
-    m.set(label(h), (m.get(label(h)) || 0) + 1);
-  }
-  $("strip").innerHTML = recent.map((x) => `<span class="${x.fail ? "fail" : ""}" style="background:${colorFor(x.s)}" title="${esc(x.title)}"></span>`).join("");
-  $("legend").innerHTML = [...new Set(recent.map((x) => x.s))].map((s) => `<span><i style="background:${colorFor(s)}"></i>${esc(s)}</span>`).join("");
-  const lines = [];
-  for (const [svc, m] of [...counts].sort()) {
-    if (m.size < 2) continue;
-    const total = [...m.values()].reduce((a, b) => a + b, 0);
-    lines.push(esc(svc) + ": " + [...m].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${esc(l)} ${Math.round(n * 100 / total)}%`).join(" · "));
-  }
-  $("split").innerHTML = lines.join("<br>");
+  $("strip").innerHTML = recent.map((x) => `<span class="${x.fail ? "fail" : ""}" style="background:${x.key ? colorFor(x.key) : "var(--c1)"}" title="${esc(x.title)}"></span>`).join("");
+  const s = stats(recent);
+  $("st-sent").innerHTML = `${sent} <small>sent</small>`;
+  $("st-ok").innerHTML = `${s.ok}<small>%</small>`;
+  $("st-ok").className = "v" + (s.ok < 100 ? " bad" : "");
+  $("st-oks").textContent = `last ${s.n} request${s.n === 1 ? "" : "s"}`;
+  $("st-p50").innerHTML = `${esc(fmtMs(s.p50))}<small> p50</small>`;
+  $("st-p99").textContent = "p99 " + fmtMs(s.p99);
+  $("st-bar").innerHTML = s.split.map((x) => `<span style="width:${x.pct}%;background:${colorFor(x.svc + "@" + x.label)}"></span>`).join("");
+  $("split").textContent = s.split.length ? s.split.map((x) => `${x.svc} ${x.label} ${x.pct}%`).join(" · ") : "no upstreams";
 }
 
-function drawChain(r) {
+// ---------- the last answer ----------
+function drawAnswer(r, id, broken) {
   const all = hops(r);
   const t0 = Date.parse(r.start_time) || 0;
   const span = Math.max(ms(r.duration), 0.001);
+  $("ahead").hidden = false;
+  $("code").className = "code " + (failed(r) ? "bad" : "ok"); $("code").textContent = r.code < 0 ? "failed" : r.code;
+  $("what").textContent = headline(r, broken);
+  $("when").textContent = new Date().toLocaleTimeString([], { hour12: false });
   $("chain").className = "";
-  $("chain").innerHTML = all.map(({ r: h, depth }) => {
-    const start = Math.max(0, (Date.parse(h.start_time) || t0) - t0);
-    const left = Math.min(100, start / span * 100);
-    const width = Math.max(1.5, Math.min(100 - left, ms(h.duration) / span * 100));
-    const meta = [h.node, h.dc, h.version, h.type !== "HTTP" ? h.type : ""].filter(Boolean).join(" · ");
-    const extra = h.injected ? ` · injected ${h.injected}` : h.cycle ? " · cycle" : h.error ? " · " + h.error : "";
-    return `<div class="hop" style="padding-left:${depth * 18}px">
-      <div><div class="name">${depth ? "└ " : ""}${esc(h.name || h.uri)}<span class="code ${failed(h) ? "bad" : "ok"}">${h.code < 0 ? "failed" : h.code}</span></div>
-      <div class="meta">${esc(meta + extra)}</div></div>
-      <div><div class="bar"><b style="left:${left}%;width:${width}%;background:${failed(h) ? "var(--bad)" : "var(--c0)"}"></b></div><small>${h.duration ? fmtMs(ms(h.duration)) : ""}</small></div></div>`;
-  }).join("");
-  if (r.fact) $("fact").innerHTML = `${esc(r.fact)}<small>from ${esc(r.name)}${r.version ? " " + esc(r.version) : ""}</small>`;
-}
-
-async function send() {
-  const path = $("path").value.trim() || "/";
-  try {
-    const res = await fetch(path.startsWith("/") ? path : "/" + path, { cache: "no-store" });
-    const r = await res.json();
-    if (!r.name) throw new Error("not a fake service's answer");
-    record(r); drawChain(r);
-  } catch (e) {
-    recent.push({ s: "error", fail: true, title: String(e) });
-    $("chain").className = "err"; $("chain").textContent = String(e);
+  $("chain").innerHTML = `<div class="hop head"><span>Hop</span><span>Address · called from</span><span></span><span style="text-align:right">Time</span></div>` +
+    all.map(({ r: h, depth }) => {
+      const start = Math.max(0, (Date.parse(h.start_time) || t0) - t0);
+      const left = Math.min(100, start / span * 100);
+      const width = Math.max(1.5, Math.min(100 - left, ms(h.duration) / span * 100));
+      const meta = [h.node, h.dc, h.version, h.type && h.type !== "HTTP" ? h.type : ""].filter(Boolean).join(" · ");
+      let w = why(h, broken);
+      // The service's own latency isn't marked in the answer: say so on its row.
+      if (!w && !depth && own && (own.p50 || own.p99)) w = { kind: "own", text: "Fault injection on " + h.name + ": latency" };
+      const ips = (h.ip_addresses || []).join(", ");
+      return `<div class="hop">
+        <div class="who" style="padding-left:${depth * 16}px"><span class="ind">${depth ? "└ " : ""}</span><b>${esc(h.name || h.uri)}</b> <span class="code ${failed(h) ? "bad" : "ok"}" style="font-size:12px">${h.code < 0 ? "failed" : h.code}</span>
+          <div class="m">${esc(meta)}</div>${w ? `<span class="why ${w.kind === "up" ? "up" : ""}">${esc(w.text)}</span>` : ""}</div>
+        <div class="addr"><div>${esc(ips || h.uri || "")}</div>${h.from ? `<div><span>from</span> ${esc(h.from)}</div>` : ""}</div>
+        <div class="track"><b class="${failed(h) && !(w && w.kind === "up") ? "bad" : ""}" style="left:${left}%;width:${width}%"></b></div>
+        <div class="dur">${h.duration ? fmtMs(ms(h.duration)) : ""}</div></div>`;
+    }).join("");
+  $("afoot").hidden = !id;
+  $("rid").textContent = id || ""; $("rid-log").textContent = "id=" + (id || "");
+  const fh = factHop(r);
+  if (fh) {
+    const h = fh.r;
+    $("fact").textContent = h.fact;
+    $("fact-src").textContent = "from " + h.name + (h.dc ? " in " + h.dc : "") + (fh.depth && !Object.keys(h.upstream_calls || {}).length ? ", at the end of the chain" : "");
+    $("fact-meta").hidden = false;
+    $("fact-meta").innerHTML = [["service", h.name + (h.version ? " " + h.version : "")], ["node", h.node], ["address", (h.ip_addresses || []).join(", ")], ["request", id]]
+      .filter(([, v]) => v).map(([k, v]) => `<div><span>${k}</span> ${esc(v)}</div>`).join("");
   }
 }
 
+// ---------- break an upstream ----------
+const rows = new Map(); // svc -> {svc, on, fail, delay}
+function drawBreak(r) {
+  const names = below(r);
+  // An answer that stopped early (an injected error, say) lists no hops:
+  // keep the ones already shown.
+  if (!names.length) { if (!rows.size) $("brk-rows").innerHTML = `<p>${esc(r.name)} called no upstreams on the last request.</p>`; return; }
+  for (const n of names) if (!rows.has(n)) rows.set(n, { svc: n, on: false, fail: 100, delay: 0 });
+  const have = [...$("brk-rows").querySelectorAll("[data-svc]")].map((e) => e.dataset.svc).join();
+  if (have === names.join()) return;
+  $("brk-rows").innerHTML = names.map((n) => { const x = rows.get(n); return `<div class="hoprow" data-svc="${esc(n)}">
+    <label><input type="checkbox" data-k="on" ${x.on ? "checked" : ""}><b>${esc(n)}</b></label>
+    <label>fail <input type="number" data-k="fail" min="0" max="100" step="5" value="${x.fail}">%</label>
+    <label>delay <input type="number" data-k="delay" min="0" step="100" value="${x.delay}">ms</label></div>`; }).join("");
+}
+function brokenNow() { return [...rows.values()]; }
+function showBreak() {
+  const h = header(brokenNow());
+  $("brk-s").textContent = h ? brokeSummary(brokenNow()) : "off";
+  $("brk-s").className = "s" + (h ? " on" : "");
+  $("brk-hdr").hidden = !h; $("brk-h").textContent = "X-Parker-Fault: " + h;
+}
+$("brk-rows").addEventListener("input", (e) => {
+  const row = e.target.closest("[data-svc]"); if (!row) return;
+  const x = rows.get(row.dataset.svc), k = e.target.dataset.k;
+  x[k] = k === "on" ? e.target.checked : Math.max(0, +e.target.value || 0);
+  if (k !== "on" && x[k] > 0) { x.on = true; row.querySelector("[data-k=on]").checked = true; }
+  showBreak();
+});
+$("brk-copy").onclick = () => {
+  const p = $("path").value.trim() || "/";
+  const cmd = `parker call ${labFromHost(location.host)} ${self ? self.node : "NODE"}${p !== "/" ? " " + p : ""} -H '${$("brk-h").textContent}'`;
+  navigator.clipboard && navigator.clipboard.writeText(cmd).then(() => { $("brk-copy").textContent = "Copied"; setTimeout(() => $("brk-copy").textContent = "Copy as parker call", 1500); });
+};
+
+// ---------- send ----------
+async function send() {
+  const path = $("path").value.trim() || "/";
+  const h = header(brokenNow());
+  const broken = brokenNow().filter((x) => x.on && (x.fail > 0 || x.delay > 0)).map((x) => x.svc);
+  try {
+    const res = await fetch(path.startsWith("/") ? path : "/" + path, { cache: "no-store", headers: h ? { "X-Parker-Fault": h } : {} });
+    const r = await res.json();
+    if (!r.name) throw new Error("not a fake service's answer");
+    record(r); drawAnswer(r, res.headers.get("X-Request-Id"), broken); drawBreak(r);
+  } catch (e) {
+    record(null, e);
+    $("ahead").hidden = true; $("afoot").hidden = true;
+    $("chain").className = "empty"; $("chain").textContent = String(e);
+  }
+}
 let timer = null;
 function setLoop(on) {
   clearInterval(timer); timer = null;
   $("loop").setAttribute("aria-pressed", String(on));
-  $("loop").classList.toggle("primary", on);
-  $("loop").textContent = on ? "Stop" : "Loop";
+  $("loop").classList.toggle("on", on);
+  $("loop").textContent = on ? "Stop loop" : "Loop";
+  $("st-loop").textContent = on ? "looping " + $("every").selectedOptions[0].textContent : "from this page";
   if (on) { send(); timer = setInterval(send, +$("every").value); }
 }
 $("send").onclick = send;
@@ -229,22 +509,27 @@ $("loop").onclick = () => setLoop(!timer);
 $("every").onchange = () => { if (timer) setLoop(true); };
 $("path").onkeydown = (e) => { if (e.key === "Enter") send(); };
 
-// ---------- faults ----------
+// ---------- fault injection ----------
 let editable = false;
 function showFaults(j) {
   const f = j.faults;
   const crit = f.health_code >= 400;
   $("pass").classList.toggle("on", !crit); $("crit").classList.toggle("on", crit);
-  $("erate").value = Math.round((f.error_rate || 0) * 100); $("erate-o").value = $("erate").value + "%";
+  const er = Math.round((f.error_rate || 0) * 100);
+  $("erate").value = er; $("erate-o").textContent = er + "%"; $("erate-o").className = "val" + (er ? " on" : "");
   $("ecode").value = String(f.error_code || 500);
-  $("p50").value = Math.round((f.p50 || 0) / 1e6); $("p50-o").value = $("p50").value + "ms";
-  $("p99").value = Math.round((f.p99 || 0) / 1e6); $("p99-o").value = $("p99").value + "ms";
+  const p50 = Math.round((f.p50 || 0) / 1e6), p99 = Math.round((f.p99 || 0) / 1e6);
+  $("p50").value = p50; $("p50-o").textContent = p50 + "ms";
+  $("p99").value = p99; $("p99-o").textContent = p99 + "ms";
+  $("lat-o").textContent = p50 || p99 ? (p50 === p99 || !p99 ? `${p50}ms` : `${p50}–${p99}ms`) : "off"; $("lat-o").className = "val" + (p50 || p99 ? " on" : "");
   $("rps").value = f.rate_limit || 0;
-  $("summary").textContent = j.summary;
+  own = f;
+  const sum = faultSummary(f);
+  $("summary").innerHTML = sum ? `<span class="on">${esc(sum)}</span>` : "no faults";
   const st = $("state");
   st.hidden = false;
-  st.className = "badge " + (j.injected ? "bad" : "ok");
-  st.textContent = j.injected ? "faults injected" : "healthy";
+  st.className = "status" + (j.injected ? " bad" : "");
+  st.lastElementChild.textContent = crit ? "health critical" : j.injected ? "faults on" : "healthy";
 }
 function setEditable(on) {
   editable = on;
@@ -263,19 +548,22 @@ async function control(path, body) {
   showFaults(j);
   return j;
 }
-let pending = null;
+// Changes are sent a moment after the last one, merged, so moving two
+// sliders quickly sends both.
+let pending = null, pendingBody = {};
 function change(body, now) {
   if (!editable) return;
   clearTimeout(pending);
-  pending = setTimeout(() => control("faults", body), now ? 0 : 250);
+  for (const [k, v] of Object.entries(body)) pendingBody[k] = Object.assign(pendingBody[k] || {}, v);
+  pending = setTimeout(() => { const b = pendingBody; pendingBody = {}; control("faults", b); }, now ? 0 : 250);
 }
 $("pass").onclick = () => change({ health: { code: 200 } }, true);
 $("crit").onclick = () => change({ health: { code: 503 } }, true);
-$("erate").oninput = () => { $("erate-o").value = $("erate").value + "%"; change({ errors: { rate: $("erate").value / 100, code: +$("ecode").value } }); };
+$("erate").oninput = () => { $("erate-o").textContent = $("erate").value + "%"; change({ errors: { rate: $("erate").value / 100, code: +$("ecode").value } }); };
 $("ecode").onchange = () => change({ errors: { code: +$("ecode").value } }, true);
 const lat = () => ({ latency: { p50: $("p50").value + "ms", p90: $("p50").value + "ms", p99: Math.max(+$("p99").value, +$("p50").value) + "ms" } });
-$("p50").oninput = () => { $("p50-o").value = $("p50").value + "ms"; change(lat()); };
-$("p99").oninput = () => { $("p99-o").value = $("p99").value + "ms"; change(lat()); };
+$("p50").oninput = () => { $("p50-o").textContent = $("p50").value + "ms"; change(lat()); };
+$("p99").oninput = () => { $("p99-o").textContent = $("p99").value + "ms"; change(lat()); };
 $("rps").onchange = () => change({ rate_limit: { rps: Math.max(0, +$("rps").value || 0) } }, true);
 $("reset").onclick = () => editable && control("reset", {});
 
@@ -283,14 +571,19 @@ $("reset").onclick = () => editable && control("reset", {});
 (async () => {
   setEditable(false);
   try {
-    const r = await (await fetch("/", { cache: "no-store" })).json();
+    const res = await fetch("/", { cache: "no-store" });
+    const r = await res.json();
+    self = r;
     document.title = r.name + " · fake service";
     $("title").textContent = r.name;
-    $("where").textContent = [r.node, r.dc, r.version].filter(Boolean).join(" · ");
-    record(r); drawChain(r);
+    $("where").textContent = [r.node, r.dc, r.version, (r.ip_addresses || [])[0]].filter(Boolean).join(" · ");
+    $("fi-title").textContent = "Fault injection: " + r.name;
+    $("fi-note").textContent = `Changes how ${r.name} answers every caller. Its upstreams aren't affected.`;
+    record(r); drawAnswer(r, res.headers.get("X-Request-Id"), []); drawBreak(r);
   } catch (e) { /* the service may be failing on purpose */ }
   await control("faults").catch(() => setEditable(false));
   setInterval(() => editable && control("faults").catch(() => {}), 5000);
+})();
 })();
 </script>
 </body>
