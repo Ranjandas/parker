@@ -174,7 +174,7 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 }
 
 // checkFake validates a service's fake: block. own is the service as the
-// node declares it: a fake: block inherited from service_defaults is fine
+// node declares it: a fake: block inherited from service_template is fine
 // on a service that runs a command (it is ignored there).
 func checkFake(where string, svc, own *spec.Service) []error {
 	f := svc.Fake
@@ -236,7 +236,7 @@ func fakeProtocolEntries(c *spec.Consul) map[string][]gatewayEntry {
 			}
 			var partSD *spec.Service
 			if placed.Part != nil {
-				partSD = placed.Part.ServiceDefaults
+				partSD = placed.Part.ServiceTemplate
 			}
 			services := node.Services
 			if node.Service != nil {
@@ -244,7 +244,7 @@ func fakeProtocolEntries(c *spec.Consul) map[string][]gatewayEntry {
 			}
 			part := partitionName(placed.Partition)
 			for _, svcName := range slices.Sorted(maps.Keys(services)) {
-				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
+				svc := mergeService(defaults.ServiceTemplate, dc.ServiceTemplate, partSD, services[svcName])
 				if !isFake(svc) || !inMesh(svc) || fakeProtocol(svc) != "grpc" || named[part+"/"+svcName] {
 					continue
 				}

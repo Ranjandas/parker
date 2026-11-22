@@ -120,16 +120,17 @@ service:
     weights: { passing: 10, warning: 1 }
 ```
 
-## Service defaults
+## Service template
 
-`service_defaults:` on a datacenter (or under `consul.defaults`) is merged
+`service_template:` on a datacenter (or under `consul.defaults`) is merged
 into every service, field by field. It keeps labs with many services
-short:
+short. It is a Parker shortcut, unrelated to Consul's `service-defaults`
+config entry (set that under [`config_entries`](config-entries.md)):
 
 ```yaml
 dc1:
   servers: 1
-  service_defaults: { run: fake-service, connect: sidecar }
+  service_template: { run: fake-service, connect: sidecar }
   nodes:
     web: { service: { port: 8080, upstreams: { api: 9091 } } }
     api: { service: { port: 9090 } }

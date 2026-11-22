@@ -227,9 +227,9 @@
           "$ref": "#/$defs/AgentSettings",
           "description": "Client settings apply to client agents only."
         },
-        "service_defaults": {
+        "service_template": {
           "$ref": "#/$defs/Service",
-          "description": "ServiceDefaults are merged into every service."
+          "description": "Service template: settings merged into every service, field by\nfield; a service's own settings win. It is a Parker shortcut and unrelated to\nConsul's service-defaults config entry."
         },
         "acl": {
           "type": "boolean",
@@ -430,7 +430,7 @@
       "properties": {
         "service": {
           "$ref": "#/$defs/Service",
-          "description": "Service is what runs: port, run (fake-service or a command), fake,\nenv, check and namespace. It takes consul.defaults.service_defaults\nbut stays out of the mesh: connect and upstreams don't apply."
+          "description": "Service is what runs: port, run (fake-service or a command), fake,\nenv, check and namespace. It takes consul.defaults.service_template\nbut stays out of the mesh: connect and upstreams don't apply."
         },
         "in": {
           "items": {
@@ -744,9 +744,9 @@
           "$ref": "#/$defs/AgentSettings",
           "description": "Client settings apply to client agents only."
         },
-        "service_defaults": {
+        "service_template": {
           "$ref": "#/$defs/Service",
-          "description": "ServiceDefaults are merged into every service."
+          "description": "Service template: settings merged into every service, field by\nfield; a service's own settings win. It is a Parker shortcut and unrelated to\nConsul's service-defaults config entry."
         },
         "acl": {
           "type": "boolean",
@@ -948,9 +948,9 @@
           "$ref": "#/$defs/AgentSettings",
           "description": "Client settings apply to this partition's client agents."
         },
-        "service_defaults": {
+        "service_template": {
           "$ref": "#/$defs/Service",
-          "description": "ServiceDefaults are merged into this partition's services."
+          "description": "Service template: settings merged into this partition's services,\nfield by field; a service's own settings win. It is a Parker shortcut and\nunrelated to Consul's service-defaults config entry."
         },
         "nodes": {
           "additionalProperties": {

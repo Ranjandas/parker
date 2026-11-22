@@ -73,7 +73,7 @@ versions: { consul: 1.22.7, envoy: 1.35.12 }
 consul:
   defaults:
     tls: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   federation: { mode: mesh-gateways }
   datacenters:
     dc1:
@@ -110,7 +110,7 @@ parker: v1alpha1
 versions: { consul: 1.22.7, envoy: 1.35.12 }
 consul:
   defaults:
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   peering:
     dc1-dc2:
       acceptor: dc2

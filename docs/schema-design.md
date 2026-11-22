@@ -81,7 +81,7 @@ Only `parker`, `versions.consul` and one datacenter are required.
 
 ### 3.2 `consul.defaults`
 
-Same shape as the inheritable parts of a datacenter (see 3.3): `agents`, `server`, `client`, `service_defaults`, `acl`, `tls`, `gossip_encryption`. Use it for "every agent everywhere logs at TRACE" or "every service uses tproxy".
+Same shape as the inheritable parts of a datacenter (see 3.3): `agents`, `server`, `client`, `service_template`, `acl`, `tls`, `gossip_encryption`. Use it for "every agent everywhere logs at TRACE" or "every service uses tproxy".
 
 ### 3.3 `consul.datacenters.<dc>`
 
@@ -100,7 +100,7 @@ datacenters:
     agents:   { config: {}, log_level: DEBUG }   # all agents in this dc
     server:   { config: {} }                      # servers only
     client:   { config: {} }                      # client agents only
-    service_defaults: {}       # inherited by every service in this dc (see 3.6)
+    service_template: {}       # inherited by every service in this dc (see 3.6)
 
     # Either nodes directly (default partition) ...
     nodes: {}
@@ -129,7 +129,7 @@ servers:
 partitions:
   team-a:
     client: { config: {} }       # client agents in this partition
-    service_defaults: {}
+    service_template: {}
     nodes: {}
     gateways: {}                 # mesh gateways are per partition in Enterprise
     config_entries: []           # written into this partition
@@ -185,7 +185,8 @@ services:
 - At most one `tproxy` service per node, because the redirect rules are per network namespace. Validation enforces this.
 
 **Inheritance for services** (later wins, deep merge):
-`consul.defaults.service_defaults` → `dc.service_defaults` → `partition.service_defaults` → the service itself.
+`consul.defaults.service_template` → `dc.service_template` → `partition.service_template` → the service itself.
+`service_template` is a Parker shortcut, unrelated to Consul's `service-defaults` config entry.
 
 **Inheritance for agent config:**
 `consul.defaults.agents` → `dc.agents` → `dc.server` or `dc.client` → `partition.client` → `node.config` / server override → overlays → `--set`.
@@ -500,7 +501,7 @@ consul:
     acl: true
     tls: true
     agents: { config: { connect: { enabled: true } } }
-    service_defaults: { run: fake-service, connect: tproxy }   # every service inherits
+    service_template: { run: fake-service, connect: tproxy }   # every service inherits
 
   peering:
     dc1-dc2:
@@ -545,7 +546,7 @@ scenario:
         within: 30s
 ```
 
-Note how `service_defaults` at the top removes the `run:`/`connect:` repetition from every service.
+Note how `service_template` at the top removes the `run:`/`connect:` repetition from every service.
 
 ### 7.5 Enterprise: partitions
 
@@ -562,7 +563,7 @@ consul:
           nodes:
             frontend: { service: { port: 8080 } }
         team-a:
-          service_defaults: { connect: tproxy, namespace: payments }
+          service_template: { connect: tproxy, namespace: payments }
           gateways: { mesh: true }
           nodes:
             billing: { count: 2, service: { port: 9000 } }
@@ -590,7 +591,7 @@ Still open:
 
 Nesting wins on locality: you read a dc top to bottom and see everything in it, and defaults set at a level flow down so you don't repeat ACL/TLS/tproxy settings per service. It mirrors how Consul scopes things, which is how Consul people already think. The costs, and how the schema handles each:
 
-**9.1 One logical service in several places is repeated.** `api` running in dc1 and dc2 (failover, peering) is two declarations in two subtrees. In the flat shape it was one entry with two placements. Mitigation: `service_defaults` for shared fields, and `templates:` + `from:` for whole node shapes. If this keeps hurting in practice, a later read-only `parker services` view could list a service across the tree.
+**9.1 One logical service in several places is repeated.** `api` running in dc1 and dc2 (failover, peering) is two declarations in two subtrees. In the flat shape it was one entry with two placements. Mitigation: `service_template` for shared fields, and `templates:` + `from:` for whole node shapes. If this keeps hurting in practice, a later read-only `parker services` view could list a service across the tree.
 
 **9.2 Deep indentation.** Worst case is 8 levels to reach a service field (`consul → datacenters → dc → partitions → p → nodes → n → services → s`). Mitigations: `nodes:` directly under a dc for the default partition (most OSS repros), singular `service:` for one-service nodes, and flow style (`{ port: 9090 }`) for short leaves. Examples 7.1 to 7.4 never go deeper than 6.
 

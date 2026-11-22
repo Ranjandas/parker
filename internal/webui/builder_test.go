@@ -181,7 +181,7 @@ name: rt
 versions: { consul: 1.22.7, envoy: 1.35.12 }
 consul:
   defaults:
-    service_defaults: { run: fake-service, connect: sidecar } # the mesh
+    service_template: { run: fake-service, connect: sidecar } # the mesh
   datacenters:
     dc1:
       servers: 1

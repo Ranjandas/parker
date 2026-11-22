@@ -61,7 +61,7 @@ consul:
                 connect: sidecar
                 upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
         team-a:
-          service_defaults: { run: fake-service, connect: sidecar, namespace: payments }
+          service_template: { run: fake-service, connect: sidecar, namespace: payments }
           gateways: { mesh: true }
           nodes:
             billing: { count: 2, service: { port: 9000 } }
@@ -79,7 +79,7 @@ Each partition takes:
 | `nodes` | The partition's nodes, as under a datacenter. |
 | `gateways` | Its gateways. Mesh gateways are per partition. |
 | `client` | [Agent configuration](datacenters.md#agent-configuration) for its client agents. |
-| `service_defaults` | Merged into its services. |
+| `service_template` | Merged into its services. |
 | `config_entries` | [Config entries](config-entries.md) written into the partition, after the datacenter's. |
 
 Parker creates the partitions as soon as the servers have a leader,
@@ -98,7 +98,7 @@ every copy. See [selectors](selectors.md).
 
 `namespace:` on a service registers it, its sidecar and its checks in
 that namespace. Parker creates the namespace. Set it on one service, or
-for many in `service_defaults`:
+for many in `service_template`:
 
 ```yaml
 nodes:

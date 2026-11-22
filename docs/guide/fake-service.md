@@ -42,7 +42,7 @@ for HTTP, gRPC and TCP hops in one chain.
 
 ## The `fake:` block
 
-`fake:` sits on a service (or in `service_defaults`, merged field by field)
+`fake:` sits on a service (or in `service_template`, merged field by field)
 and needs `run: fake-service`. Every key has a fake-service env var
 equivalent where one exists; set env vars under the service's `env:` if
 you prefer them. The `fake:` block wins over env vars.

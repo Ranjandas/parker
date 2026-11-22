@@ -76,7 +76,7 @@ it. Its listeners need an HTTP protocol on the services they route to:
 ```yaml
 dc1:
   servers: 1
-  service_defaults: { run: fake-service }
+  service_template: { run: fake-service }
   gateways:
     ingress:
       entry:
@@ -123,7 +123,7 @@ the mesh. List those under `Services`:
 ```yaml
 dc1:
   servers: 1
-  service_defaults: { run: fake-service }
+  service_template: { run: fake-service }
   gateways:
     terminating:
       entry:
@@ -152,7 +152,7 @@ through a terminating gateway. Declare it under `consul.external`:
 ```yaml
 consul:
   defaults:
-    service_defaults: { run: fake-service }
+    service_template: { run: fake-service }
   external:
     api:
       service: { port: 9000 }
@@ -171,7 +171,7 @@ consul:
 
 | Key | Meaning |
 |---|---|
-| `service` | What runs: `port`, `run`, `fake`, `env`, `check`, `namespace`. It takes `service_defaults` from `consul.defaults`, but never joins the mesh. |
+| `service` | What runs: `port`, `run`, `fake`, `env`, `check`, `namespace`. It takes `service_template` from `consul.defaults`, but never joins the mesh. |
 | `in` | Where it's registered: datacenters (`dc1`) or admin partitions (`dc1/team-a`). |
 
 The service runs once, on a node named after it that joins the LAN of

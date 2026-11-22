@@ -79,7 +79,7 @@ override, as above. `parker describe LAB NODE` shows a node's final
 ## Defaults for every datacenter
 
 `consul.defaults` holds settings every datacenter gets unless it sets its
-own: `agents`, `server`, `client`, `service_defaults`, `acl` and `tls`.
+own: `agents`, `server`, `client`, `service_template`, `acl` and `tls`.
 
 ```yaml
 consul:
@@ -87,14 +87,14 @@ consul:
     acl: true
     tls: true
     agents: { log_level: info }
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   datacenters:
     dc1: { servers: 3 }
     dc2: { servers: 1, acl: false }      # dc2 overrides one setting
 ```
 
-`service_defaults` is merged into every service, which keeps files with
-many services short. See [services](nodes-and-services.md#service-defaults).
+`service_template` is merged into every service, which keeps files with
+many services short. See [services](nodes-and-services.md#service-template).
 
 ## Other datacenter settings
 
@@ -104,7 +104,7 @@ many services short. See [services](nodes-and-services.md#service-defaults).
 | `primary` | the first datacenter by name | Marks the primary datacenter, for federation and ACL replication. |
 | `ui` | `true` | Serves the Consul web UI on the servers. |
 | `acl`, `tls` | off | Turn on ACLs and TLS. See [ACLs and TLS](acl-and-tls.md). |
-| `service_defaults` | | Settings merged into every service in this datacenter. |
+| `service_template` | | Settings merged into every service in this datacenter. |
 | `nodes` | | Client nodes and services. See [nodes and services](nodes-and-services.md). |
 | `gateways` | | Mesh, ingress, terminating and API gateways. See [gateways](gateways.md). |
 | `partitions` | | Admin partitions (Enterprise). See [Enterprise](enterprise.md#admin-partitions). |

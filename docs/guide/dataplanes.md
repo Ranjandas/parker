@@ -16,7 +16,7 @@ consul:
   datacenters:
     dc1:
       servers: 3
-      service_defaults: { run: fake-service, connect: sidecar }
+      service_template: { run: fake-service, connect: sidecar }
       nodes:
         web:                                  # an agent node
           service: { port: 8080, upstreams: { api: 9091 } }

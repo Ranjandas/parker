@@ -8,7 +8,7 @@ consul:
   defaults:
     tls: true
     acl: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   federation: { mode: mesh-gateways }
   datacenters:
     dc1:

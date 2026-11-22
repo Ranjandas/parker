@@ -520,7 +520,7 @@ output, the saved topology, `describe` or logs. See
 
 A datacenter can split its nodes and gateways into `partitions:` (the
 default one is `default`; without other partitions, nodes stay straight
-under the dc). Each partition takes `client`, `service_defaults`, `nodes`,
+under the dc). Each partition takes `client`, `service_template`, `nodes`,
 `gateways` and `config_entries`, and a service picks its namespace with
 `namespace:`:
 
@@ -536,12 +536,12 @@ dc1:
             connect: sidecar
             upstreams: { billing: { port: 9091, partition: team-a, namespace: payments } }
     team-a:
-      service_defaults: { connect: sidecar, namespace: payments }
+      service_template: { connect: sidecar, namespace: payments }
       gateways: { mesh: true }
       nodes:
         billing: { count: 2, service: { port: 9000 } }
     team-b:          # the same billing again, to fail over to
-      service_defaults: { connect: sidecar, namespace: payments }
+      service_template: { connect: sidecar, namespace: payments }
       gateways: { mesh: true }
       nodes:
         billing: { service: { port: 9000 } }
@@ -564,7 +564,8 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
 ## Supported so far
 
 - `consul.defaults` / dc-level `agents`, `server`, `client` (`config`
-  passthrough deep-merged, `log_level`), `service_defaults`
+  passthrough deep-merged, `log_level`), `service_template` (merged into
+  every service; unrelated to Consul's `service-defaults` config entry)
 - `servers: N` or `{count, overrides: {server-N: {version, config}}}`
 - `nodes:` with `count`, `agent: client|dataplane|none`, `config`, `meta`,
   `service:` / `services:` (`port`, `run`, `env`, `check: http|tcp|none`,
@@ -605,7 +606,7 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   subnet), with no agent. Each place under `in:` (a datacenter or
   `dc/partition`) registers it in its catalog on an external node (node
   meta `external-node: "true"`), and the dc's `dataplane-health` process
-  probes it, as consul-esm would. It takes `consul.defaults.service_defaults`
+  probes it, as consul-esm would. It takes `consul.defaults.service_template`
   but never `connect` or upstreams; reach it from the mesh through a
   terminating gateway (see `examples/terminating-failover.yaml`, which
   fails over between two datacenters' terminating gateways over a peering)
@@ -661,7 +662,7 @@ team-a's billing and fails over to team-b's when team-a's is stopped.
   (and ACLs) are ready, inline in Consul's own casing or
   `file: entries/x.hcl` (HCL or JSON); a failure names the entry and its
   YAML line (see `examples/config-entries.yaml`)
-- `connect: sidecar` on a service (or `service_defaults`): Parker turns
+- `connect: sidecar` on a service (or `service_template`): Parker turns
   Connect on, registers a sidecar and runs `consul connect envoy` for it
   (needs `versions.envoy`). `upstreams: { api: 9091 }` binds an upstream
   on `127.0.0.1:9091`; the long form takes `{port, dc, peer, partition,
