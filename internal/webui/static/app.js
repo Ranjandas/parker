@@ -622,63 +622,16 @@ function waterfall(r, targets = {}) {
 }
 
 // ---------- the fake panel ----------
-// The graph says who calls whom: upstream and failover edges go from the
-// calling node to the called one, labelled with the service's name first.
-const edgeSvc = (e) => String(e.label || "").split(" ")[0];
-const callEdge = (e) => e.kind === "upstream" || e.kind === "failover";
+// The logic lives in fakepanel.js (node-tested); these bind it to the lab.
+const FP = window.FakePanel;
 function labGraph() { return S.graph && S.graph.lab === S.route.lab ? S.graph : null; }
-// callable: a fake on that node answers HTTP or gRPC, so a request can start there.
-const callable = (node, svc) => fakesOn(node).some((f) => f.protocol !== "tcp" && (!svc || f.service === svc));
-
-// upstreamsOf names the services a node's service calls directly.
-function upstreamsOf(node) {
-  const g = labGraph();
-  return [...new Set((g ? g.edges || [] : []).filter((e) => e.kind === "upstream" && e.from === node).map(edgeSvc))].sort();
-}
-
-// callersOf are the nodes with a fake that calls svc on node.
-function callersOf(node, svc) {
-  const g = labGraph();
-  return [...new Set((g ? g.edges || [] : []).filter((e) => callEdge(e) && e.to === node && edgeSvc(e) === svc && callable(e.from)).map((e) => e.from))].sort();
-}
-
-// fakeChain lists the fakes a request to node can reach, nearest first:
-// [{name, via}], via being the service that calls it ("" for a direct
-// upstream). Per-request faults target a service by name, so each name
-// is listed once.
-function fakeChain(node, self) {
-  const g = labGraph();
-  if (!g) return [];
-  const out = new Map(), seen = new Set([node]);
-  let frontier = [{ node, svc: "" }];
-  while (frontier.length) {
-    const next = [];
-    for (const f of frontier) {
-      for (const e of g.edges || []) {
-        if (!callEdge(e) || e.from !== f.node) continue;
-        const svc = edgeSvc(e);
-        if (svc !== self && !out.has(svc) && fakesOn(e.to).some((x) => x.service === svc)) out.set(svc, f.svc);
-        if (!seen.has(e.to)) { seen.add(e.to); next.push({ node: e.to, svc }); }
-      }
-    }
-    frontier = next;
-  }
-  return [...out].map(([name, via]) => ({ name, via }));
-}
-
-// Faults on one request (X-Parker-Fault), per fake: {open, rows: [{svc, fail, delay}]},
-// fail in percent and delay in ms.
+const labFakes = () => (S.fakes && S.fakes.lab === S.route.lab ? S.fakes.list : []);
+const upstreamsOf = (node) => FP.upstreamsOf(labGraph(), node);
+const callersOf = (node, svc) => FP.callersOf(labGraph(), labFakes(), node, svc);
+const fakeChain = (node, self) => FP.fakeChain(labGraph(), labFakes(), node, self);
+const { msLabel, rqActive, rqHeader, rqDesc, rqSummary } = FP;
+// Faults on one request (X-Parker-Fault), per fake: {open, rows: [{svc, fail, delay}]}.
 const rqOf = (node, svc) => (S.rq[node + "/" + svc] ||= { open: false, rows: [] });
-const msLabel = (n) => (n ? (n >= 1000 ? n / 1000 + "s" : n + "ms") : "off");
-const rqActive = (rows) => rows.filter((r) => r.svc && (r.fail || r.delay));
-function rqHeader(rows) {
-  return rqActive(rows).map((r) => r.svc + "=" + [r.fail ? "error-rate:" + r.fail : "", r.delay ? "delay:" + r.delay + "ms" : ""].filter(Boolean).join(",")).join(";");
-}
-const rqDesc = (r) => [r.fail ? "fails " + r.fail + "%" : "", r.delay ? "+" + msLabel(r.delay) : ""].filter(Boolean).join(", ");
-function rqSummary(rows) {
-  const a = rqActive(rows);
-  return a.length ? `${a.length} fault${a.length > 1 ? "s" : ""}: ${a.map((r) => r.svc + " " + rqDesc(r)).join(" · ")}` : "";
-}
 
 // rqBox is the "faults on this request only" editor.
 function rqBox(nodeName, f, chain) {

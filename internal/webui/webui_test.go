@@ -209,7 +209,7 @@ func compatMinor(v string) string {
 func TestBuilderScriptsServed(t *testing.T) {
 	h, _ := newTest(t)
 	idx := do(h, "GET", "/", "", nil).Body.String()
-	for _, f := range []string{"topolayout.js", "buildmodel.js", "builder.js"} {
+	for _, f := range []string{"topolayout.js", "fakepanel.js", "buildmodel.js", "builder.js"} {
 		if !strings.Contains(idx, `src="`+f+`"`) {
 			t.Errorf("index.html doesn't load %s", f)
 		}
