@@ -139,7 +139,8 @@ $ parker fetch FILE
 ```
 
 Downloads every binary the lab pins, including upgrade targets, into
-the cache.
+the cache on this machine, for its own OS and CPU. You rarely need it:
+`up` fetches what a lab needs on the machine that runs it.
 
 ## Getting in
 

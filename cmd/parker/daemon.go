@@ -237,6 +237,15 @@ type upOptions struct {
 	quiet bool
 }
 
+// fetchHere reports whether `up` should download binaries on this machine
+// before handing the lab to the daemon: only when the daemon can share this
+// machine's cache, so a local socket on Linux. A daemon reached over https,
+// or from macOS through a tunnelled socket, runs on another machine (maybe
+// another OS or CPU) and fetches for its own platform.
+func fetchHere(t daemon.Target, goos string) bool {
+	return goos == "linux" && !t.IsRemote()
+}
+
 // bringUp starts the lab, through the daemon unless noDaemon.
 func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 	out := o.out
@@ -261,7 +270,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 	}
 	// Fetch here: a rootless daemon has no network of its own, and the
 	// cache is shared. Scenario upgrade targets too, for the same reason.
-	if !target().IsRemote() {
+	if fetchHere(target(), runtime.GOOS) {
 		for _, pv := range upBinaries(low) {
 			if _, err := fetch.Binary(pv[0], pv[1], out); err != nil {
 				return err

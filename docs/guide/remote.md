@@ -47,6 +47,11 @@ Lab files are read and expanded on the laptop, so relative paths in them
 work as usual. An [Enterprise](enterprise.md) license is read on the
 laptop too, and sent over TLS.
 
+Consul, Envoy and the other binaries are downloaded on the daemon's
+machine, for its OS and CPU, never the laptop's. That holds for `up`,
+`run` and the [lab builder](lab-builder.md)'s Run, whether you reach the
+daemon over `https://` or a tunnelled socket.
+
 ## Reaching the lab from the laptop
 
 ```console
