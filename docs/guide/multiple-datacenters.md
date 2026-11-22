@@ -96,7 +96,9 @@ consul:
 
 Secondaries start once the primary's gateway is ready, and `parker up`
 waits until the primary reaches every secondary. Only the mesh gateways
-join the `wan` network.
+join the `wan` network and expose the servers to other datacenters.
+Ingress, terminating and API gateways can sit alongside them in any
+datacenter; they stay on the LAN.
 
 ## Cluster peering
 

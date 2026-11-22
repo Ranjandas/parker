@@ -49,7 +49,7 @@ var (
 		{"internal/daemon/appproxy.go", fakeLabs},
 		{"internal/tproxy/", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
 		{"cmd/parker/sidecar.go", []string{"examples/tproxy.yaml", "hack/e2e/tproxy-secure.yaml"}},
-		{"internal/expand/gateway.go", []string{"examples/gateways.yaml", "examples/terminating-failover.yaml", "examples/mesh-federation.yaml", "hack/e2e/mesh-federation-acl.yaml"}},
+		{"internal/expand/gateway.go", []string{"examples/gateways.yaml", "examples/terminating-failover.yaml", "examples/mesh-federation.yaml", "hack/e2e/mesh-federation-acl.yaml", "hack/e2e/mesh-federation-gateways.yaml"}},
 		{"internal/expand/peering.go", []string{"examples/peering.yaml", "hack/e2e/peering-secure.yaml", "hack/e2e/peering-gateways-ha.yaml"}},
 		{"internal/expand/external.go", []string{"examples/terminating-failover.yaml"}},
 		{"internal/expand/dataplane.go", []string{"examples/dataplane.yaml", "hack/e2e/dataplane-secure.yaml"}},
