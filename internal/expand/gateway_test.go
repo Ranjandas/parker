@@ -74,6 +74,29 @@ func TestMeshGatewayFederation(t *testing.T) {
 	}
 }
 
+// Only mesh gateways take -expose-servers; Envoy for an API gateway
+// refuses to start with it.
+func TestMeshFederationOtherGateways(t *testing.T) {
+	low, err := Expand(load(t, "../../hack/e2e/mesh-federation-gateways.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := strings.Join(low.Nodes["dc1-mesh"].Processes["mesh-gateway"].Run, " "); !strings.Contains(run, "-expose-servers") {
+		t.Errorf("mesh gateway: %s", run)
+	}
+	edge := low.Nodes["dc1-edge"]
+	if edge == nil {
+		t.Fatal("no dc1-edge")
+	}
+	run := strings.Join(edge.Processes["api-gateway"].Run, " ")
+	if !strings.Contains(run, "-gateway=api") || strings.Contains(run, "-expose-servers") || strings.Contains(run, "-wan-address") {
+		t.Errorf("api gateway: %s", run)
+	}
+	if _, ok := edge.Networks[WANNetwork]; ok {
+		t.Error("the api gateway joins the wan")
+	}
+}
+
 func TestMeshGatewayWithoutFederation(t *testing.T) {
 	f := load(t, "../../examples/mesh.yaml")
 	f.Consul.Datacenters["dc1"].Gateways = map[string]*spec.Gateway{"edge": {Kind: "mesh", Count: 2}}

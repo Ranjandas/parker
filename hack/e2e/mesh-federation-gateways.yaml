@@ -1,0 +1,57 @@
+# Mesh-gateway federation with an API gateway beside the mesh gateway in
+# the primary: only the mesh gateways expose the servers (Envoy refuses
+# -expose-servers on any other kind). The API gateway routes / to web,
+# and web calls api in dc2 through both mesh gateways.
+parker: v1alpha1
+name: meshfedgw
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  defaults:
+    tls: true
+    service_template: { run: fake-service, connect: sidecar }
+  federation: { mode: mesh-gateways }
+  datacenters:
+    dc1:
+      servers: 1
+      gateways:
+        mesh: true
+        edge:
+          kind: api
+          entry: { Listeners: [{ Name: http, Port: 8081, Protocol: http }] }
+      nodes:
+        web:
+          service:
+            port: 8090
+            upstreams: { api: { port: 9091, dc: dc2 } }
+      config_entries:
+        - Kind: proxy-defaults
+          Name: global
+          MeshGateway: { Mode: local }
+        - Kind: service-defaults
+          Name: web
+          Protocol: http
+        - Kind: http-route
+          Name: edge-to-web
+          Parents: [{ Kind: api-gateway, Name: edge, SectionName: http }]
+          Rules: [{ Services: [{ Name: web }] }]
+    dc2:
+      servers: 1
+      gateways: { mesh: true }
+      nodes:
+        api:
+          service: { port: 8080 }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - assert: { consul: { service_healthy: web-sidecar-proxy, dc: dc1 }, within: 60s }
+    - name: the API gateway routes to web
+      assert:
+        exec: { on: dc1/edge, run: "curl -sf -m 2 http://$PARKER_IP:8081/", output: web }
+        within: 60s
+    - assert: { consul: { service_healthy: api-sidecar-proxy, dc: dc2 }, within: 60s }
+    - name: web in dc1 reaches api in dc2 through both gateways
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 90s

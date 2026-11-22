@@ -144,7 +144,8 @@ func gatewayNodes(c *spec.Consul, dcNames []string, primary string) (map[string]
 
 // envoyProcess runs the gateway's Envoy on node key, registered at lan
 // (and wan). A mesh gateway binds 8443 on every address and, for
-// mesh-gateway federation, exposes the servers.
+// mesh-gateway federation, exposes the servers. Only mesh gateways take
+// -expose-servers: Envoy for other kinds refuses to start with it.
 func (g gatewayNode) envoyProcess(key, lan, wan string, admin int, exposeServers bool, env map[string]string, tls bool) *spec.Process {
 	env["CONSUL_GRPC_ADDR"] = fmt.Sprintf("127.0.0.1:%d", GRPCPort)
 	if tls {
@@ -161,7 +162,7 @@ func (g gatewayNode) envoyProcess(key, lan, wan string, admin int, exposeServers
 	if wan != "" {
 		run = append(run, "-wan-address", wan+":"+port)
 	}
-	if exposeServers {
+	if exposeServers && g.kind == "mesh" {
 		run = append(run, "-expose-servers")
 	}
 	run = append(run, "-admin-bind", fmt.Sprintf("127.0.0.1:%d", admin), "--", "--log-level", "info")
