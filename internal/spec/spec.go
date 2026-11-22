@@ -310,7 +310,7 @@ type Consul struct {
 // External is a service outside Consul, registered in the catalog.
 type External struct {
 	// Service is what runs: port, run (fake-service or a command), fake,
-	// env, check and namespace. It takes consul.defaults.service_defaults
+	// env, check and namespace. It takes consul.defaults.service_template
 	// but stays out of the mesh: connect and upstreams don't apply.
 	Service *Service `yaml:"service"`
 	// In lists where it is registered: a datacenter (dc1) or an admin
@@ -450,8 +450,10 @@ type Inheritable struct {
 	Server *AgentSettings `yaml:"server,omitempty"`
 	// Client settings apply to client agents only.
 	Client *AgentSettings `yaml:"client,omitempty"`
-	// ServiceDefaults are merged into every service.
-	ServiceDefaults *Service `yaml:"service_defaults,omitempty"`
+	// Service template: settings merged into every service, field by
+	// field; a service's own settings win. It is a Parker shortcut and unrelated to
+	// Consul's service-defaults config entry.
+	ServiceTemplate *Service `yaml:"service_template,omitempty"`
 	// ACL turns on ACLs (default deny) and gossip encryption. Parker
 	// generates the management token and the gossip key, and gives every
 	// agent, service and gateway its own identity token; `parker exec`
@@ -510,8 +512,10 @@ type Datacenter struct {
 type Partition struct {
 	// Client settings apply to this partition's client agents.
 	Client *AgentSettings `yaml:"client,omitempty"`
-	// ServiceDefaults are merged into this partition's services.
-	ServiceDefaults *Service `yaml:"service_defaults,omitempty"`
+	// Service template: settings merged into this partition's services,
+	// field by field; a service's own settings win. It is a Parker shortcut and
+	// unrelated to Consul's service-defaults config entry.
+	ServiceTemplate *Service `yaml:"service_template,omitempty"`
 	// Nodes in this partition, keyed by name. Node names are unique
 	// across a datacenter's partitions.
 	Nodes map[string]*Node `yaml:"nodes,omitempty"`
@@ -611,7 +615,7 @@ func (c *Consul) UsesTenancy() bool {
 // Namespaces lists the namespaces a datacenter's services use, as
 // "partition/namespace" ("" partition for the default), sorted. A
 // service's namespace comes from the service, else the partition's, dc's
-// or lab's service_defaults.
+// or lab's service_template.
 func (c *Consul) Namespaces(dc *Datacenter) []string {
 	seen := map[string]bool{}
 	for _, pn := range dc.AllNodes() {
@@ -654,7 +658,7 @@ type PlacedExternal struct {
 	Name      string
 	External  *External
 	Partition string // "" for the default partition
-	Namespace string // from the service or consul.defaults.service_defaults
+	Namespace string // from the service or consul.defaults.service_template
 }
 
 // ExternalsIn lists the external services dc registers, by name then
@@ -677,8 +681,8 @@ func (c *Consul) ExternalsIn(dc *Datacenter) []PlacedExternal {
 			continue
 		}
 		ns := ""
-		if c.Defaults != nil && c.Defaults.ServiceDefaults != nil {
-			ns = c.Defaults.ServiceDefaults.Namespace
+		if c.Defaults != nil && c.Defaults.ServiceTemplate != nil {
+			ns = c.Defaults.ServiceTemplate.Namespace
 		}
 		if x.Service != nil && x.Service.Namespace != "" {
 			ns = x.Service.Namespace
@@ -706,13 +710,13 @@ func ServiceNamespace(c *Consul, dc *Datacenter, part *Partition, s *Service) st
 	ns := ""
 	var layers []*Service
 	if c != nil && c.Defaults != nil {
-		layers = append(layers, c.Defaults.ServiceDefaults)
+		layers = append(layers, c.Defaults.ServiceTemplate)
 	}
 	if dc != nil {
-		layers = append(layers, dc.ServiceDefaults)
+		layers = append(layers, dc.ServiceTemplate)
 	}
 	if part != nil {
-		layers = append(layers, part.ServiceDefaults)
+		layers = append(layers, part.ServiceTemplate)
 	}
 	for _, l := range append(layers, s) {
 		if l != nil && l.Namespace != "" {

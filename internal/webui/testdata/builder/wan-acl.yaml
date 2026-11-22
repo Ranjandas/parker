@@ -6,7 +6,7 @@ versions: { consul: 2.1.0, envoy: 1.39.1, consul-dataplane: 2.1.0 }
 consul:
   defaults:
     acl: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   federation: { mode: wan }
   datacenters:
     dc1:

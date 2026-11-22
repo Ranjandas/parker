@@ -92,7 +92,7 @@
   <span class="k">datacenters</span>:
     <span class="k">dc1</span>:
       <span class="k">servers</span>: <span class="n">3</span>
-      <span class="k">service_defaults</span>: { <span class="k">run</span>: <span class="s">fake-service</span>, <span class="k">connect</span>: <span class="s">sidecar</span> }
+      <span class="k">service_template</span>: { <span class="k">run</span>: <span class="s">fake-service</span>, <span class="k">connect</span>: <span class="s">sidecar</span> }
       <span class="k">nodes</span>:
         <span class="k">web</span>:
           <span class="k">service</span>: { <span class="k">port</span>: <span class="n">8080</span>, <span class="k">upstreams</span>: { <span class="k">api</span>: <span class="n">9091</span> } }

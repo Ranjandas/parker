@@ -3,7 +3,7 @@
 // builder's fixtures with it; see webui/builder_test.go).
 //
 // The YAML is idiomatic, like the examples: settings every service shares
-// go in consul.defaults.service_defaults, an upstream says dc: or peer: or
+// go in consul.defaults.service_template, an upstream says dc: or peer: or
 // partition: from where its two ends sit, and the config entries that
 // make those calls work (proxy-defaults with local mesh gateways, exports,
 // intentions under ACLs, gateway routes) are written for you.
@@ -23,7 +23,7 @@
 
   // ---------- the model ----------
   // lab: {name, consul, envoy, dataplane, mesh, tls, acl, fed, dcs, peerings}
-  //   mesh: services get sidecars (service_defaults connect: sidecar)
+  //   mesh: services get sidecars (service_template connect: sidecar)
   //   fed: "" | "wan" | "mesh-gateways"
   // dc: {id, name, servers, ui, parts: [{id, name}], nodes, gws, ces}
   //   ces: part id ("" the default) -> the user's own config entries, as
@@ -35,8 +35,8 @@
   //   svc: null (a bare client) or {port, connect, ups: [{to, port}]},
   //        held: ports of upstreams the canvas doesn't show
   //        ns: its own namespace ("" for the default, or inherited)
-  //        inhNs: the namespace a file's service_defaults gives it
-  //     connect: "" (from service_defaults) | "none" | "sidecar" | "tproxy"
+  //        inhNs: the namespace a file's service_template gives it
+  //     connect: "" (from service_template) | "none" | "sidecar" | "tproxy"
   //     to: the called node's id
   // gw: {id, name, kind, part, to: [node ids], ns}
   //   ns: the namespace a terminating, ingress or API gateway registers in
@@ -92,7 +92,7 @@
   const normNs = (x) => (x && x !== "default" ? String(x) : "");
   const nsOf = (n) => (n && n.svc ? normNs(n.svc.ns || n.svc.inhNs) : "");
   const gwNs = (g) => (g && g.kind !== "mesh" ? normNs(g.ns) : "");
-  // fillInh gives every service the namespace its scope's service_defaults
+  // fillInh gives every service the namespace its scope's service_template
   // set in an opened file (d.inh: part id -> namespace), new ones too.
   function fillInh(m) {
     for (const d of m.dcs) for (const n of d.nodes) if (n.svc) {
@@ -611,7 +611,7 @@
     if (m.tls) defs.tls = true;
     if (m.acl) defs.acl = true;
     const exts = m.exts || [];
-    if (nodes.some((n) => n.svc) || exts.length) defs.service_defaults = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
+    if (nodes.some((n) => n.svc) || exts.length) defs.service_template = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
     if (Object.keys(defs).length) consul.defaults = defs;
     if (m.fed && m.dcs.length > 1) consul.federation = { mode: m.fed };
     if (exts.length) {
@@ -1062,7 +1062,7 @@
     if (isMap(t.scenarios) && Object.keys(t.scenarios).length) m.named = true;
     if (!c) { m.raw = !!(t.nodes || t.networks); m.mesh = false; return m; }
     const defs = isMap(c.defaults) ? c.defaults : {};
-    const sdOf = (x) => (x && isMap(x.service_defaults) ? x.service_defaults : {});
+    const sdOf = (x) => (x && isMap(x.service_template) ? x.service_template : {});
     m.tls = !!defs.tls; m.acl = !!defs.acl;
     m.mesh = !!sdOf(defs).connect && sdOf(defs).connect !== "none";
     if (typeof sdOf(defs).namespace === "string" && normNs(sdOf(defs).namespace)) m.defNs = sdOf(defs).namespace;

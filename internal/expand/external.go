@@ -23,7 +23,7 @@ var externalNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 // external is one service under consul.external.
 type external struct {
 	name string
-	svc  *spec.Service       // merged with consul.defaults.service_defaults
+	svc  *spec.Service       // merged with consul.defaults.service_template
 	byDC map[string][]string // dc -> partitions it registers in ("" default)
 	ips  map[string]string   // dc -> address on the dc's LAN
 }
@@ -36,8 +36,8 @@ func externalServices(c *spec.Consul) (externals, error) {
 		return nil, nil
 	}
 	var defaultSD *spec.Service
-	if c.Defaults != nil && c.Defaults.ServiceDefaults != nil {
-		d := *c.Defaults.ServiceDefaults
+	if c.Defaults != nil && c.Defaults.ServiceTemplate != nil {
+		d := *c.Defaults.ServiceTemplate
 		// The mesh settings of the defaults don't apply outside it.
 		d.Connect, d.Upstreams = "", nil
 		defaultSD = &d

@@ -10,7 +10,7 @@ consul:
   datacenters:
     dc1:
       servers: 1
-      service_defaults: { run: fake-service }
+      service_template: { run: fake-service }
       nodes:
         web:
           service:

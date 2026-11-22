@@ -5,7 +5,7 @@ name: clients
 versions: { consul: 2.1.0 }
 consul:
   defaults:
-    service_defaults: { run: fake-service }
+    service_template: { run: fake-service }
   datacenters:
     dc1:
       servers: 3

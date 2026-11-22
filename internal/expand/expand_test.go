@@ -577,7 +577,7 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 		t.Error("two instances of billing in team-a have different service tokens")
 	}
 	if b1.Processes["billing"] == nil {
-		t.Error("billing's service_defaults run: gave no process")
+		t.Error("billing's service_template run: gave no process")
 	}
 	// Each partition has its own mesh gateway, all named mesh.
 	gw := low.Nodes["dc1-team-a-mesh"]

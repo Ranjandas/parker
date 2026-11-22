@@ -161,7 +161,7 @@ Plain YAML anchors work too, and are handy inside one file:
 ```yaml
 partitions:
   team-a:
-    service_defaults: &billing { run: fake-service, connect: sidecar, namespace: payments }
+    service_template: &billing { run: fake-service, connect: sidecar, namespace: payments }
   team-b:
-    service_defaults: *billing
+    service_template: *billing
 ```

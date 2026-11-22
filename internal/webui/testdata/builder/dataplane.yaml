@@ -5,7 +5,7 @@ name: dataplane
 versions: { consul: 2.1.0, envoy: 1.39.1, consul-dataplane: 2.1.0 }
 consul:
   defaults:
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   datacenters:
     dc1:
       servers: 3

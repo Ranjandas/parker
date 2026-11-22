@@ -35,7 +35,7 @@ consul:
   datacenters:
     dc1:
       servers: 1
-      service_defaults: { run: fake-service, connect: sidecar, fake: { version: v1, workers: 2 } }
+      service_template: { run: fake-service, connect: sidecar, fake: { version: v1, workers: 2 } }
       nodes:
         web:
           service: { port: 8080, upstreams: { api: 9091, cache: 9092 }, env: { MESSAGE: hi } }
@@ -61,7 +61,7 @@ func TestFakeServiceProcess(t *testing.T) {
 	if strings.Join(f.Upstreams, " ") != "http://127.0.0.1:9091/ http://127.0.0.1:9092/" || f.Version != "v1" || f.Workers != 2 {
 		t.Errorf("web fake = %+v", f)
 	}
-	// The node's own fake: block wins over service_defaults, field by field.
+	// The node's own fake: block wins over service_template, field by field.
 	f = fakeEnv(t, low.Nodes["dc1-api"].Processes["api"])
 	if strings.Join(f.Upstreams, " ") != "http://db.service.consul:7000/" || f.Version != "v2" || f.Workers != 2 {
 		t.Errorf("api fake = %+v", f)

@@ -428,7 +428,7 @@ function bInspector() {
       fld("Consul", vlist("consul", m.consul, ((BL.versions && BL.versions.releases) || []).map((r) => r.consul)), "", "bf-consul",
         [Build.ent(m) ? "Partitions and namespaces need Consul Enterprise; the YAML pins the +ent build." : "", "Pick a release or type any version (or path:/my/build)."].filter(Boolean).join(" ")) +
       fld("Envoy", vlist("envoy", m.envoy, envoyChoices(m)), "", "bf-envoy", Build.envoyNote(m, BL.versions)) +
-      fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_defaults connect: sidecar).") +
+      fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_template connect: sidecar).") +
       fld("TLS", seg("tls", yes, m.tls), sdoc("Inheritable", "tls")) +
       fld("ACLs", seg("acl", yes, m.acl), sdoc("Inheritable", "acl"), "", m.acl ? "The builder writes the intentions each call needs." : "") +
       (m.dcs.length > 1 ? fld("Federation", `<select data-f="fed" id="bf-fed">${fedOpts.map(([v, l]) => `<option value="${v}" ${m.fed === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Federation", "mode"), "bf-fed") : "");
@@ -465,7 +465,7 @@ function bInspector() {
         return `<div class="up ${r.kind === "none" ? "bad" : ""}">${BI.up}<span>${esc(t.node.name)}${how ? ` <i>${esc(how)}</i>` : ""}</span><input data-f="upport" data-i="${i}" value="${u.port}" aria-label="Local port for ${esc(t.node.name)}" inputmode="numeric"><button class="x" data-f="rmup" data-i="${i}" title="Remove">✕</button></div>`;
       }).join("");
       body += fld("Port", `<input id="bf-port" data-f="port" value="${n.svc.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-port") +
-        fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
+        fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_template)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
         fld("Connect", `<select data-f="connect" id="bf-connect">${conn.map(([v, l]) => `<option value="${v}" ${n.svc.connect === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Service", "connect"), "bf-connect") +
         `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Service", "upstreams"))}">Upstreams</label><div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button><div class="hint doc">dc:, peer: or partition: follow from where the two services sit.</div></div></div>` +
         bFailFld(n.id, f.dc.id, n.part);
@@ -486,7 +486,7 @@ function bInspector() {
     const regs = x.in.map((r, i) => `<div class="up">${BI.dc}<span>${esc(Build.sideName(m, r.dc, r.part))}</span><button class="x" data-f="rmreg" data-i="${i}" title="Remove">✕</button></div>`).join("");
     body = fld("Name", txt("name", x.name), "", "bf-name") +
       fld("Port", `<input id="bf-xport" data-f="xport" value="${x.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-xport") +
-      fld("Namespace", txt("xns", x.ns || "", m.defNs ? `${m.defNs} (from service_defaults)` : "default"), sdoc("Service", "namespace"), "bf-xns", "Consul Enterprise.") +
+      fld("Namespace", txt("xns", x.ns || "", m.defNs ? `${m.defNs} (from service_template)` : "default"), sdoc("Service", "namespace"), "bf-xns", "Consul Enterprise.") +
       `<div class="fld" style="align-items:start"><label title="${esc(sdoc("External", "in"))}">Registered in</label><div class="ups">${regs || '<span class="hint">Nowhere yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Register in a datacenter</button><div class="hint doc">Linking a terminating gateway to it registers it in the gateway's datacenter and partition.</div></div></div>` +
       x.in.map((r) => bFailFld(x.id, r.dc, r.part, `From ${esc(Build.sideName(m, r.dc, r.part))}`)).join("") +
       `<div class="hint">One node outside Consul, with no agent, on the LAN of every datacenter that registers it. Each registers it on an external node that Parker health-checks from server-1, as consul-esm would. The mesh reaches it through a terminating gateway.</div>` +

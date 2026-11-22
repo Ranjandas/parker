@@ -619,7 +619,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			var partSD *spec.Service
 			var partClient *spec.AgentSettings
 			if placed.Part != nil {
-				partSD, partClient = placed.Part.ServiceDefaults, placed.Part.Client
+				partSD, partClient = placed.Part.ServiceTemplate, placed.Part.Client
 			}
 			count := max(node.Count, 1)
 			for k := range count {
@@ -658,12 +658,12 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				isDP := node.Agent == "dataplane"
 				transparentNode := false
 				for _, s := range services {
-					if mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, s).Connect == "tproxy" {
+					if mergeService(defaults.ServiceTemplate, dc.ServiceTemplate, partSD, s).Connect == "tproxy" {
 						transparentNode = true
 					}
 				}
 				for _, svcName := range slices.Sorted(maps.Keys(services)) {
-					svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
+					svc := mergeService(defaults.ServiceTemplate, dc.ServiceTemplate, partSD, services[svcName])
 					svcCheck := check
 					svcCheck.Partition = part
 					if svc.Namespace != spec.DefaultNamespace {
@@ -1295,7 +1295,7 @@ func meshServices(c *spec.Consul) (bool, error) {
 			}
 			var partSD *spec.Service
 			if placed.Part != nil {
-				partSD = placed.Part.ServiceDefaults
+				partSD = placed.Part.ServiceTemplate
 			}
 			services := node.Services
 			if node.Service != nil {
@@ -1303,7 +1303,7 @@ func meshServices(c *spec.Consul) (bool, error) {
 			}
 			transparent := ""
 			for _, svcName := range slices.Sorted(maps.Keys(services)) {
-				svc := mergeService(defaults.ServiceDefaults, dc.ServiceDefaults, partSD, services[svcName])
+				svc := mergeService(defaults.ServiceTemplate, dc.ServiceTemplate, partSD, services[svcName])
 				where := fmt.Sprintf("consul.datacenters.%s.nodes.%s: service %s", dcName, nodeName, svcName)
 				errs = append(errs, checkFake(where, svc, services[svcName])...)
 				switch svc.Connect {

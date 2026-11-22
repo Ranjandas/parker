@@ -40,6 +40,12 @@ consul:
       nodes:
         web: {servers: 3}
 `, []string{"consul.datacenters.dc1.nodes.web.servers: unknown key (servers belongs under consul.datacenters.<dc>)"}},
+		{"old service_defaults name", `
+parker: v1alpha1
+consul:
+  defaults:
+    service_defaults: {connect: sidecar}
+`, []string{"consul.defaults.service_defaults: unknown key"}},
 		{"top-level typo", "parker: v1alpha1\nverions: {}\n", []string{`line 2: verions: unknown key (did you mean "versions"?)`}},
 		{"no idea", "parker: v1alpha1\nzzzzzz: 1\n", []string{"line 2: zzzzzz: unknown key"}},
 		{"low level", `

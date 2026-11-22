@@ -29,7 +29,7 @@ name: x # the name
 versions: { consul: 1.22.7, envoy: 1.35.12 }
 consul:
   defaults:
-    service_defaults: &sd { run: fake-service, connect: sidecar }
+    service_template: &sd { run: fake-service, connect: sidecar }
   datacenters:
     dc1:
       servers: 1 # one is enough
@@ -47,7 +47,7 @@ consul:
           Name: global
         - { Kind: service-defaults, Name: api, Protocol: http }
     dc2:
-      service_defaults: *sd
+      service_template: *sd
       servers: 3
 `
 	cases := []struct {
@@ -101,14 +101,14 @@ consul:
 	}
 
 	// An anchored value keeps its anchor.
-	if got, err := Patch(src, []Op{op("set", []any{"consul", "defaults", "tls"}, true)}); err != nil || !strings.Contains(got, "service_defaults: &sd {") {
+	if got, err := Patch(src, []Op{op("set", []any{"consul", "defaults", "tls"}, true)}); err != nil || !strings.Contains(got, "service_template: &sd {") {
 		t.Errorf("anchor: %v\n%s", err, got)
 	}
 	// A value shared through an anchor, or reached through an alias: refused.
-	if _, err := Patch(src, []Op{op("set", []any{"consul", "defaults", "service_defaults", "connect"}, "none")}); err == nil {
+	if _, err := Patch(src, []Op{op("set", []any{"consul", "defaults", "service_template", "connect"}, "none")}); err == nil {
 		t.Error("edit of a shared anchor went through")
 	}
-	if _, err := Patch(src, []Op{op("set", []any{"consul", "datacenters", "dc2", "service_defaults", "run"}, "x")}); err == nil {
+	if _, err := Patch(src, []Op{op("set", []any{"consul", "datacenters", "dc2", "service_template", "run"}, "x")}); err == nil {
 		t.Error("edit through an alias went through")
 	}
 }

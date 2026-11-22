@@ -10,7 +10,7 @@ consul:
   defaults:
     acl: true
     tls: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   peering:
     dc1-dc2:
       acceptor: dc2

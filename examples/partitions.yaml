@@ -30,7 +30,7 @@ consul:
           config_entries:
             - &local-gateways { Kind: proxy-defaults, Name: global, MeshGateway: { Mode: local } }
         team-a:
-          service_defaults: &billing-defaults { run: fake-service, connect: sidecar, namespace: payments }
+          service_template: &billing-defaults { run: fake-service, connect: sidecar, namespace: payments }
           gateways: { mesh: true }
           nodes:
             billing: { count: 2, service: { port: 9000 } }
@@ -56,7 +56,7 @@ consul:
               Failover:
                 "*": { Targets: [{ Partition: team-b, Namespace: payments }] }
         team-b:
-          service_defaults: *billing-defaults
+          service_template: *billing-defaults
           gateways: { mesh: true }
           nodes:
             billing: { service: { port: 9000 } }

@@ -6,7 +6,7 @@ versions: { consul: 2.1.0+ent, envoy: 1.39.1 }
 consul:
   defaults:
     acl: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   peering:
     dc1-part-a-dc2-part-b:
       acceptor: dc2/part-b

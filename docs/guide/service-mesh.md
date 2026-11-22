@@ -14,7 +14,7 @@ consul:
   datacenters:
     dc1:
       servers: 3
-      service_defaults: { run: fake-service, connect: sidecar }
+      service_template: { run: fake-service, connect: sidecar }
       nodes:
         web:
           service:
@@ -89,7 +89,7 @@ by their Consul name, with no upstreams declared:
 ```yaml
 dc1:
   servers: 3
-  service_defaults: { run: fake-service }
+  service_template: { run: fake-service }
   nodes:
     web:
       service: { port: 8080, connect: tproxy }

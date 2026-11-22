@@ -19,7 +19,7 @@ versions: { consul: 1.22.7+ent, envoy: 1.35.12 }
 consul:
   defaults:
     acl: true
-    service_defaults: { run: fake-service, connect: sidecar }
+    service_template: { run: fake-service, connect: sidecar }
   peering:
     billing:
       acceptor: dc2/team-b
@@ -49,7 +49,7 @@ consul:
         default:
           gateways: { mesh: true }
         team-b:
-          service_defaults: { namespace: payments }
+          service_template: { namespace: payments }
           gateways: { mesh: true }
           nodes:
             billing: { service: { port: 9000 } }

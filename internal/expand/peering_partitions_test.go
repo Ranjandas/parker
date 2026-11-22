@@ -138,7 +138,7 @@ func TestPeeringExportsInferNamespace(t *testing.T) {
 	}
 	svc := entriesIn(t, low.Nodes["dc2-server-1"])["team-b/exported-services"]["Services"].([]any)[0].(map[string]any)
 	if svc["Namespace"] != "payments" {
-		t.Errorf("billing's namespace comes from team-b's service_defaults: %v", svc)
+		t.Errorf("billing's namespace comes from team-b's service_template: %v", svc)
 	}
 }
 
