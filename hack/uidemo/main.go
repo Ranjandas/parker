@@ -27,7 +27,9 @@ import (
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
 	"github.com/Ranjandas/parker/internal/daemon"
 	"github.com/Ranjandas/parker/internal/expand"
+	parkerfake "github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/graph"
+	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/webui"
 )
@@ -37,10 +39,11 @@ type fake struct {
 	mu       sync.Mutex
 	broken   bool
 	examples string
+	faults   map[string]parkerfake.Faults // node/service -> faults set with the Fake call
 }
 
 // labExamples are the examples the demo labs are expanded from.
-var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml", "tgw-failover-ent": "terminating-failover-partitions.yaml", "peering-partitions": "peering-partitions.yaml"}
+var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml", "tgw-failover-ent": "terminating-failover-partitions.yaml", "peering-partitions": "peering-partitions.yaml", "fake-chain": "fake-chain.yaml"}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -83,7 +86,7 @@ func (f *fake) Version(context.Context, *connect.Request[parkerv1.VersionRequest
 
 func (f *fake) ListLabs(context.Context, *connect.Request[parkerv1.ListLabsRequest]) (*connect.Response[parkerv1.ListLabsResponse], error) {
 	return connect.NewResponse(&parkerv1.ListLabsResponse{Labs: []*parkerv1.LabSummary{
-		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}, {Name: "tgw-failover-ent", Namespaces: 14, Supervised: true}, {Name: "peering-partitions", Namespaces: 8, Supervised: true}}}), nil
+		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}, {Name: "tgw-failover-ent", Namespaces: 14, Supervised: true}, {Name: "peering-partitions", Namespaces: 8, Supervised: true}, {Name: "fake-chain", Namespaces: 9, Supervised: true}}}), nil
 }
 
 func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error) {
@@ -97,7 +100,7 @@ func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusReque
 				Namespace: true, Role: role, Dc: "dc1", MembersAlive: 3, MembersTotal: 3, Processes: []*parkerv1.ProcessStatus{proc("consul", int32(3100+i), true, 0)}})
 		}
 		return connect.NewResponse(st), nil
-	case "tgw-failover", "tgw-failover-ent", "peering-partitions":
+	case "tgw-failover", "tgw-failover-ent", "peering-partitions", "fake-chain":
 		return f.allUp(r.Msg.Lab, "")
 	case "tgw-failover-down":
 		// dc1's terminating gateway is stopped: web's calls fail over.
@@ -298,7 +301,7 @@ func main() {
 	examples := flag.String("examples", "examples", "the repository's examples directory")
 	flag.Parse()
 	api := http.NewServeMux()
-	api.Handle(parkerv1connect.NewParkerServiceHandler(&fake{broken: true, examples: *examples}))
+	api.Handle(parkerv1connect.NewParkerServiceHandler(&fake{broken: true, examples: *examples, faults: map[string]parkerfake.Faults{}}))
 	api.HandleFunc(daemon.AppPrefix, fakeApp)
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -307,4 +310,142 @@ func main() {
 	fmt.Printf("open http://%s/#token=%s\n", ln.Addr(), *token)
 	srv := &http.Server{Handler: webui.New(webui.Options{API: api, Token: *token, Where: "demo (fake daemon)", Version: "demo", Up: fakeUp}), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
+}
+
+// Fake lists the lab's fake services with the faults set on them, changes
+// them, and answers a call by walking the graph's upstream edges like the
+// real fakes would: stored faults fail every request (an error rate of
+// 50% fails it too, so screenshots are steady) and X-Parker-Fault breaks
+// named hops.
+func (f *fake) Fake(_ context.Context, r *connect.Request[parkerv1.FakeRequest]) (*connect.Response[parkerv1.FakeResponse], error) {
+	m := r.Msg
+	ex, ok := labExamples[m.Lab]
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no lab %q", m.Lab))
+	}
+	in, err := spec.Load(filepath.Join(f.examples, ex), nil)
+	if err != nil {
+		return nil, err
+	}
+	low, err := expand.Expand(in)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	nodes := slices.Sorted(maps.Keys(low.Nodes))
+	if m.Selector != "" {
+		nodes = []string{m.Selector}
+	}
+	out := &parkerv1.FakeResponse{}
+	if m.Action == "call" {
+		g := graph.Build(low)
+		req := map[string]string{}
+		for _, hop := range strings.Split(m.Headers[parkerfake.HeaderFault], ";") {
+			if name, list, ok := strings.Cut(hop, "="); ok {
+				req[name] = list
+			}
+		}
+		var hop func(node, svc string, start time.Time, depth int) map[string]any
+		hop = func(node, svc string, start time.Time, depth int) map[string]any {
+			d := 2 * time.Millisecond
+			code, injected := 200, ""
+			fl, ok := f.faults[node+"/"+svc]
+			if !ok {
+				fl = parkerfake.DefaultFaults()
+			}
+			d += fl.P50
+			if fl.ErrorRate >= 0.5 {
+				code, injected = fl.ErrorCode, "error"
+			}
+			for _, kv := range strings.Split(req[svc], ",") {
+				k, v, _ := strings.Cut(kv, ":")
+				switch k {
+				case "error-rate":
+					if v != "0" {
+						code, injected = 503, "error"
+					}
+				case "delay":
+					dd, _ := time.ParseDuration(v)
+					d += dd
+				}
+			}
+			resp := map[string]any{"name": svc, "node": node, "dc": strings.SplitN(node, "-", 2)[0], "uri": "/", "type": "HTTP", "start_time": start.Format(time.RFC3339Nano)}
+			if injected != "" {
+				resp["injected"], resp["error"] = injected, "error injected"
+			} else if depth < 8 {
+				calls := map[string]any{}
+				var end time.Time
+				for _, e := range g.Edges {
+					if e.Kind != graph.Upstream || e.From != node {
+						continue
+					}
+					up := strings.Fields(e.Label)[0]
+					c := hop(e.To, up, start.Add(time.Millisecond), depth+1)
+					calls[up] = c
+					if c["code"].(int) >= 400 {
+						code, resp["error"] = 500, "upstream "+up+" failed"
+					}
+					if t := c["end"].(time.Time); t.After(end) {
+						end = t
+					}
+				}
+				if len(calls) > 0 {
+					resp["upstream_calls"] = calls
+					if dd := end.Sub(start) + time.Millisecond; dd > d {
+						d = dd
+					}
+				}
+			}
+			resp["code"], resp["duration"], resp["end"] = code, d.String(), start.Add(d)
+			return resp
+		}
+		svc := m.Service
+		if svc == "" {
+			if fis := lab.FakeInfos(low, nodes[0]); len(fis) > 0 {
+				svc = fis[0].Service
+			}
+		}
+		res := hop(nodes[0], svc, time.Now(), 0)
+		res["fact"] = "At its closest approach, Parker Solar Probe moves at about 430,000 mph (692,000 km/h)."
+		var clean func(map[string]any)
+		clean = func(x map[string]any) {
+			delete(x, "end")
+			if c, ok := x["upstream_calls"].(map[string]any); ok {
+				for _, v := range c {
+					clean(v.(map[string]any))
+				}
+			}
+		}
+		clean(res)
+		b, _ := json.Marshal(res)
+		out.CallStatus, out.CallBody = int32(res["code"].(int)), string(b)
+		return connect.NewResponse(out), nil
+	}
+	for _, n := range nodes {
+		for _, fi := range lab.FakeInfos(low, n) {
+			if m.Service != "" && fi.Service != m.Service {
+				continue
+			}
+			key := n + "/" + fi.Service
+			fl, ok := f.faults[key]
+			if !ok || m.Action == "reset" {
+				fl = parkerfake.DefaultFaults()
+			}
+			if m.Action == "set" {
+				var ch spec.Fake
+				if err := json.Unmarshal([]byte(m.ChangeJson), &ch); err != nil {
+					return nil, connect.NewError(connect.CodeInvalidArgument, err)
+				}
+				if err := fl.Apply(&ch); err != nil {
+					return nil, connect.NewError(connect.CodeInvalidArgument, err)
+				}
+			}
+			f.faults[key] = fl
+			fj, _ := json.Marshal(fl)
+			out.Services = append(out.Services, &parkerv1.FakeService{Node: n, Service: fi.Service, Port: int32(fi.Port), Protocol: fi.Protocol,
+				FaultsJson: string(fj), Summary: fl.Summary(), Faulted: fl.Injected()})
+		}
+	}
+	return connect.NewResponse(out), nil
 }

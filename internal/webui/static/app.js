@@ -92,7 +92,8 @@ const S = {
   run: { busy: false, out: [] },
   busy: "",
   fakes: null,       // {lab, list: [FakeService]} from the Fake call
-  fakeCall: null,    // {node, svc, r, status, err, hits: Set of node names, t}
+  fakeCall: null,    // {node, svc, r, status, err, hits: Set of node names, targets, t}
+  rq: {},            // node/svc -> faults to send on the next request (see rqOf)
 };
 
 // ---------- derived state ----------
@@ -410,7 +411,7 @@ function renderNode() {
       <div class="big" style="${ns === "bad" ? "background:var(--bad-soft);color:var(--bad)" : kind === "server" ? "background:var(--accent-soft);color:var(--accent)" : ""}">${ICON[kind]}</div>
       <div style="flex:1;min-width:240px">
         <h1>${esc(n.name)} ${stateChip(ns)}</h1>
-        <p>${(n.ips || []).map((ip) => `<span class="tag">${esc(ip)}</span>`).join("")}<span class="tag">${esc(dcOf(n))}${n.partition ? " · " + esc(n.partition) + " partition" : ""}</span>${n.role ? `<span class="tag">${esc(n.role)}</span>` : ""}${n.membersTotal ? `<span class="tag">members ${n.membersAlive}/${n.membersTotal}</span>` : ""}</p>
+        <p>${(n.ips || []).map((ip) => `<span class="tag">${esc(ip)}</span>`).join("")}<span class="tag">${esc(dcOf(n))}${n.partition ? " · " + esc(n.partition) + " partition" : ""}</span>${n.role ? `<span class="tag">${esc(n.role)}</span>` : ""}${n.membersTotal ? `<span class="tag" title="Consul agents in this datacenter's LAN pool that this node's agent sees alive">LAN members ${n.membersAlive}/${n.membersTotal}</span>` : ""}</p>
       </div>
       <div class="actions">
         <button class="btn sm" data-act="shell" data-sel="${esc(n.name)}">${ICON.term}Shell</button>
@@ -434,7 +435,8 @@ function renderNode() {
           <div class="hd"><h3>Consul health</h3><div class="grow"></div>${health.some(([, h]) => h === "critical") ? `<span class="chip bad">${health.filter(([, h]) => h === "critical").length} critical</span>` : health.length ? '<span class="chip ok">passing</span>' : ""}</div>
           <div class="checks" style="padding:14px 16px">${health.length ? health.sort().map(([svc, h]) => `<div><span class="st ${esc(h)}"><i></i></span><span class="mono">${esc(svc)}</span><span class="st ${esc(h)}" style="font-size:12px">${esc(h)}</span></div>`).join("") : `<span class="muted">${n.role ? "No services registered on this node." : "No reachable Consul agent on this node."}</span>`}</div>
         </div>
-        ${fakeSection(n.name, true, (h) => `<div class="card"><div class="hd"><h3>Fake service</h3><div class="grow"></div><span class="muted" style="font-size:12px">faults change live</span></div><div style="padding:12px 16px">${h}</div></div>`)}
+        ${fakeSection(n.name, true, (h) => `<div class="card"><div class="hd"><h3>Fake service</h3></div><div style="padding:12px 16px">${h}</div></div>`)}
+        ${faultCards(n.name)}
         ${openSection(n.name, (h) => `<div class="card"><div class="hd"><h3>Open</h3><div class="grow"></div><span class="muted" style="font-size:12px">through the daemon</span></div><div style="padding:12px">${h}</div></div>`)}
         <div class="card">
           <div class="hd"><h3>Describe</h3><div class="grow"></div><button class="btn sm ghost" data-act="describe">${S.describe && S.describe.node === n.name ? "Refresh" : "Load"}</button></div>
@@ -454,6 +456,8 @@ function renderNode() {
         <div class="logfoot"><span class="live" ${S.logs.ctrl ? "" : 'style="color:var(--muted)"'}><i></i>${S.logs.ctrl ? "Streaming" : "Stopped"}</span><span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((ps.find((p) => p.name === S.logs.proc) || {}).logPath || "")}</span><span style="margin-left:auto" id="logcount"></span></div>
       </div>
     </div></div>`;
+  const top = $(".top");
+  if (top) document.documentElement.style.setProperty("--top-h", top.offsetHeight + "px");
   ensureLogs(st.lab, n.name, S.logs.proc);
   paintLogs(keep ? logScroll : null);
   const sl = $("#setlevel");
@@ -605,55 +609,196 @@ function fakeHops(r, depth = 0, out = []) {
 
 // waterfall draws one answer's hops, each bar placed by its start and
 // sized by its duration within the whole request.
-function waterfall(r) {
+function waterfall(r, targets = {}) {
   const t0 = Date.parse(r.start_time) || 0, span = Math.max(goMs(r.duration), 0.001);
   return `<div class="wf">${fakeHops(r).map(({ r: h, depth }) => {
     const bad = h.code < 0 || h.code >= 400;
     const left = Math.min(100, Math.max(0, (Date.parse(h.start_time) || t0) - t0) / span * 100);
     const width = Math.max(1.5, Math.min(100 - left, goMs(h.duration) / span * 100));
-    const meta = [h.node, h.dc, h.version, h.type && h.type !== "HTTP" ? h.type : "", h.injected ? "injected " + h.injected : "", h.cycle ? "cycle" : "", !h.injected && h.error ? h.error : ""].filter(Boolean).join(" · ");
+    const meta = [h.node, h.dc, h.version, h.type && h.type !== "HTTP" ? h.type : "", targets[h.name] ? "this request: " + targets[h.name] : h.injected ? "injected " + h.injected : "", h.cycle ? "cycle" : "", !h.injected && h.error ? h.error : ""].filter(Boolean).join(" · ");
     return `<div class="wfr" style="padding-left:${depth * 14}px"><div class="wfn"><b>${esc(h.name || h.uri)}</b><span class="chip ${bad ? "bad" : "ok"}">${h.code < 0 ? "failed" : h.code}</span><small>${esc(meta)}</small></div>
       <div class="wfb"><i style="left:${left}%;width:${width}%;${bad ? "background:var(--bad)" : ""}"></i></div><span class="mono">${h.duration ? esc(fmtDur(goMs(h.duration))) : ""}</span></div>`;
   }).join("")}</div>${r.fact ? `<p class="fact">✦ ${esc(r.fact)}</p>` : ""}`;
 }
 
-// fakeSection shows a node's fakes: their faults, Send request and the
-// page link; full adds the fault controls (the node page).
+// ---------- the fake panel ----------
+// The graph says who calls whom: upstream and failover edges go from the
+// calling node to the called one, labelled with the service's name first.
+const edgeSvc = (e) => String(e.label || "").split(" ")[0];
+const callEdge = (e) => e.kind === "upstream" || e.kind === "failover";
+function labGraph() { return S.graph && S.graph.lab === S.route.lab ? S.graph : null; }
+// callable: a fake on that node answers HTTP or gRPC, so a request can start there.
+const callable = (node, svc) => fakesOn(node).some((f) => f.protocol !== "tcp" && (!svc || f.service === svc));
+
+// upstreamsOf names the services a node's service calls directly.
+function upstreamsOf(node) {
+  const g = labGraph();
+  return [...new Set((g ? g.edges || [] : []).filter((e) => e.kind === "upstream" && e.from === node).map(edgeSvc))].sort();
+}
+
+// callersOf are the nodes with a fake that calls svc on node.
+function callersOf(node, svc) {
+  const g = labGraph();
+  return [...new Set((g ? g.edges || [] : []).filter((e) => callEdge(e) && e.to === node && edgeSvc(e) === svc && callable(e.from)).map((e) => e.from))].sort();
+}
+
+// fakeChain lists the fakes a request to node can reach, nearest first:
+// [{name, via}], via being the service that calls it ("" for a direct
+// upstream). Per-request faults target a service by name, so each name
+// is listed once.
+function fakeChain(node, self) {
+  const g = labGraph();
+  if (!g) return [];
+  const out = new Map(), seen = new Set([node]);
+  let frontier = [{ node, svc: "" }];
+  while (frontier.length) {
+    const next = [];
+    for (const f of frontier) {
+      for (const e of g.edges || []) {
+        if (!callEdge(e) || e.from !== f.node) continue;
+        const svc = edgeSvc(e);
+        if (svc !== self && !out.has(svc) && fakesOn(e.to).some((x) => x.service === svc)) out.set(svc, f.svc);
+        if (!seen.has(e.to)) { seen.add(e.to); next.push({ node: e.to, svc }); }
+      }
+    }
+    frontier = next;
+  }
+  return [...out].map(([name, via]) => ({ name, via }));
+}
+
+// Faults on one request (X-Parker-Fault), per fake: {open, rows: [{svc, fail, delay}]},
+// fail in percent and delay in ms.
+const rqOf = (node, svc) => (S.rq[node + "/" + svc] ||= { open: false, rows: [] });
+const msLabel = (n) => (n ? (n >= 1000 ? n / 1000 + "s" : n + "ms") : "off");
+const rqActive = (rows) => rows.filter((r) => r.svc && (r.fail || r.delay));
+function rqHeader(rows) {
+  return rqActive(rows).map((r) => r.svc + "=" + [r.fail ? "error-rate:" + r.fail : "", r.delay ? "delay:" + r.delay + "ms" : ""].filter(Boolean).join(",")).join(";");
+}
+const rqDesc = (r) => [r.fail ? "fails " + r.fail + "%" : "", r.delay ? "+" + msLabel(r.delay) : ""].filter(Boolean).join(", ");
+function rqSummary(rows) {
+  const a = rqActive(rows);
+  return a.length ? `${a.length} fault${a.length > 1 ? "s" : ""}: ${a.map((r) => r.svc + " " + rqDesc(r)).join(" · ")}` : "";
+}
+
+// rqBox is the "faults on this request only" editor.
+function rqBox(nodeName, f, chain) {
+  const rq = rqOf(nodeName, f.service), d = `data-sel="${esc(nodeName)}" data-svc="${esc(f.service)}"`;
+  const sum = rqSummary(rq.rows);
+  if (!rq.open) {
+    return `<div class="rqline"><button class="btn sm" data-act="fakecall" ${d}>Send request through ${esc(f.service)}</button><button class="linkb" data-act="rqopen" ${d}>${sum ? "Edit faults" : "+ Add a fault to this request"}</button></div>${sum ? `<div class="rqsum">${esc(sum)}</div>` : ""}`;
+  }
+  const seg = (i, k, opts, cur) => `<div class="seg">${opts.map((v) => `<button data-act="rqset" ${d} data-i="${i}" data-k="${k}" data-v="${v}" class="${cur === v ? "on" : ""}">${k === "fail" ? (v ? v + "%" : "off") : msLabel(v)}</button>`).join("")}</div>`;
+  const rows = rq.rows.map((r, i) => `<div class="rqr">
+      <select class="rqpick" ${d} data-i="${i}" aria-label="Service to break">${chain.map((c) => `<option value="${esc(c.name)}" ${c.name === r.svc ? "selected" : ""}>${esc(c.name)}${c.via ? " (via " + esc(c.via) + ")" : ""}</option>`).join("")}</select>
+      <button class="rqx" data-act="rqdel" ${d} data-i="${i}" aria-label="Remove this fault" title="Remove">×</button>
+      <div class="rqf"><span>Fail</span>${seg(i, "fail", [0, 10, 50, 100], r.fail)}</div>
+      <div class="rqf"><span>Delay</span>${seg(i, "delay", [0, 200, 1000, 3000], r.delay)}</div></div>`).join("");
+  return `<div class="rq">
+      <div class="rqh"><b>Faults on this request only</b><button class="btn sm ghost" data-act="rqopen" ${d}>Hide</button></div>
+      ${rows}
+      ${rq.rows.length < chain.length ? `<button class="linkb" style="margin-top:8px" data-act="rqadd" ${d}>+ Add a fault</button>` : ""}
+    </div>
+    <div class="rqline"><button class="btn sm" data-act="fakecall" ${d}>Send request through ${esc(f.service)}</button></div>${sum ? `<div class="rqsum">${esc(sum)}</div>` : ""}`;
+}
+
+// lastCall shows the answer to the last request sent from this fake.
+function lastCall(fc) {
+  if (fc.err) return `<div class="lastcall"><div class="lh"><b>Last call</b><span class="chip bad">failed</span><span class="grow"></span><span class="muted">${esc(new Date(fc.t).toLocaleTimeString())}</span></div><p class="err">${esc(fc.err)}</p></div>`;
+  const bad = fc.r.code < 0 || fc.r.code >= 400;
+  const marked = fakeHops(fc.r).some(({ r }) => fc.targets[r.name]);
+  return `<div class="lastcall"><div class="lh"><b>Last call</b><span class="chip ${bad ? "bad" : "ok"}">${fc.r.code < 0 ? "failed" : fc.r.code}</span><span class="grow"></span><span class="muted">${esc(new Date(fc.t).toLocaleTimeString())}</span></div>
+    ${waterfall(fc.r, fc.targets)}${marked ? '<p class="note">Hops marked <i>this request</i> were broken by the faults sent with it. Their own fault settings didn\'t change.</p>' : ""}</div>`;
+}
+
+// fakeSection shows a node's fakes: what each calls, a request through it
+// and its answer. full (the node page) adds faults on one request; the
+// topology panel shows the rest.
 function fakeSection(nodeName, full, wrap) {
   const fs = fakesOn(nodeName);
   if (!fs.length) return "";
   const body = fs.map((f) => {
-    let faults = {};
-    try { faults = JSON.parse(f.faultsJson || "{}"); } catch (e) { /* down */ }
     const d = `data-sel="${esc(nodeName)}" data-svc="${esc(f.service)}"`;
-    const seg = (label, opts, cur) => `<div class="frow"><span>${label}</span><div class="seg">${opts.map(([t, ch, on]) => `<button data-act="fakeset" ${d} data-change="${esc(JSON.stringify(ch))}" class="${on ? "on" : ""}">${t}</button>`).join("")}</div></div>`;
-    const rate = Math.round((faults.error_rate || 0) * 100), p50 = Math.round((faults.p50 || 0) / 1e6);
-    const controls = full && f.faultsJson ? `
-      ${seg("Health", [["passing", { health: { code: 200 } }, (faults.health_code || 200) < 400], ["critical", { health: { code: 503 } }, faults.health_code >= 400]])}
-      ${seg("Errors", [0, 10, 50, 100].map((n) => [n + "%", { errors: { rate: n / 100 } }, rate === n]))}
-      ${seg("Latency", [0, 200, 1000, 3000].map((n) => [n ? (n >= 1000 ? n / 1000 + "s" : n + "ms") : "off", { latency: { p50: n + "ms", p90: n + "ms", p99: n + "ms" } }, p50 === n]))}
-      <div class="frow"><span></span><button class="btn sm ghost" data-act="fakereset" ${d}>Reset faults</button></div>` : "";
+    const ups = upstreamsOf(nodeName);
     const fc = S.fakeCall && S.fakeCall.node === nodeName && S.fakeCall.svc === f.service ? S.fakeCall : null;
+    let path = "";
+    if (f.protocol === "tcp") {
+      path = "";
+    } else if (ups.length) {
+      const chain = fakeChain(nodeName, f.service);
+      path = `<p class="sub">Sends a request to ${esc(f.service)}, and ${esc(f.service)} calls its upstreams.</p>
+        <div class="upl">${esc(f.service)} calls ${ups.map((u) => `<span class="chip">${esc(u)}</span>`).join("")}</div>
+        ${full && chain.length ? rqBox(nodeName, f, chain) : `<div class="rqline"><button class="btn sm" data-act="fakecall" ${d}>Send request through ${esc(f.service)}</button></div>`}
+        ${fc ? lastCall(fc) : ""}`;
+    } else {
+      const callers = callersOf(nodeName, f.service);
+      path = `<p class="sub">${esc(f.service)} doesn't call other services. To see its faults, send a request from a service that calls it.</p>
+        ${callers.length ? `<div class="upl">Called by ${callers.map((c) => `<a class="btn sm" href="#/lab/${encodeURIComponent(S.route.lab)}/node/${encodeURIComponent(c)}">${esc(c)} ›</a>`).join("")}</div>` : '<p class="sub">Nothing in the lab calls it.</p>'}`;
+    }
     return `<div class="fake">
       <div class="fhd"><b>${esc(f.service)}</b><span class="chip">${esc(f.protocol)}${f.port ? " :" + f.port : ""}</span>${f.faulted ? '<span class="chip bad">faults</span>' : f.faultsJson ? '<span class="chip ok">healthy</span>' : ""}</div>
       <div class="mono fsum">${esc(f.summary)}</div>
-      <div class="actions">${f.protocol !== "tcp" ? `<button class="btn sm" data-act="fakecall" ${d}>Send request</button><button class="btn sm ghost" data-act="open" data-sel="${esc(nodeName)}" data-port="${f.port}" data-scheme="http" data-path="/ui">Open page ↗</button>` : ""}</div>
-      ${controls}
-      ${fc ? (fc.err ? `<p class="err">${esc(fc.err)}</p>` : waterfall(fc.r)) : ""}</div>`;
+      ${path ? `<div class="fpath"><h5>Test the path</h5>${path}</div>` : ""}</div>`;
   }).join("");
   return wrap(body);
 }
 
+// faultCards are a card per fake on a node with the faults it injects into
+// the requests it answers.
+function faultCards(nodeName) {
+  return fakesOn(nodeName).filter((f) => f.faultsJson).map((f) => {
+    let faults = {};
+    try { faults = JSON.parse(f.faultsJson || "{}"); } catch (e) { /* down */ }
+    const d = `data-sel="${esc(nodeName)}" data-svc="${esc(f.service)}"`;
+    const seg = (label, opts) => `<div class="frow"><span>${label}</span><div class="seg">${opts.map(([t, ch, on]) => `<button data-act="fakeset" ${d} data-change="${esc(JSON.stringify(ch))}" class="${on ? "on" : ""}">${t}</button>`).join("")}</div></div>`;
+    const rate = Math.round((faults.error_rate || 0) * 100), p50 = Math.round((faults.p50 || 0) / 1e6);
+    return `<div class="card"><div class="hd"><h3>Fault injection: ${esc(f.service)}</h3><div class="grow"></div><span class="muted" style="font-size:12px">changes live</span></div>
+      <div class="fake faults" style="padding:12px 16px">
+      <p class="sub" style="margin:0 0 2px">Changes how ${esc(f.service)} answers the requests it gets. Services that call it see the result; its upstreams aren't touched.</p>
+      ${seg("Health check", [["passing", { health: { code: 200 } }, (faults.health_code || 200) < 400], ["critical", { health: { code: 503 } }, faults.health_code >= 400]])}
+      ${seg("Fail requests", [0, 10, 50, 100].map((n) => [n + "%", { errors: { rate: n / 100 } }, rate === n]))}
+      ${seg("Slow responses", [0, 200, 1000, 3000].map((n) => [msLabel(n), { latency: { p50: n + "ms", p90: n + "ms", p99: n + "ms" } }, p50 === n]))}
+      <div class="frow"><span></span><button class="btn sm ghost" data-act="fakereset" ${d}>Reset faults</button></div></div></div>`;
+  }).join("");
+}
+
+// rqAction edits the faults on one request.
+function rqAction(btn) {
+  const node = btn.dataset.sel, svc = btn.dataset.svc, rq = rqOf(node, svc), i = +btn.dataset.i;
+  const chain = fakeChain(node, svc);
+  const unused = () => (chain.find((c) => !rq.rows.some((r) => r.svc === c.name)) || chain[0] || { name: "" }).name;
+  switch (btn.dataset.act) {
+    case "rqopen":
+      rq.open = !rq.open;
+      if (rq.open && !rq.rows.length && chain.length) rq.rows.push({ svc: unused(), fail: 100, delay: 0 });
+      break;
+    case "rqadd": rq.rows.push({ svc: unused(), fail: 100, delay: 0 }); break;
+    case "rqdel": rq.rows.splice(i, 1); break;
+    case "rqset": if (rq.rows[i]) rq.rows[i][btn.dataset.k] = +btn.dataset.v; break;
+  }
+  render();
+}
+document.addEventListener("change", (e) => {
+  const p = e.target.closest("select.rqpick");
+  if (!p) return;
+  const rq = rqOf(p.dataset.sel, p.dataset.svc);
+  if (rq.rows[+p.dataset.i]) rq.rows[+p.dataset.i].svc = p.value;
+  render();
+});
+
 async function fakeCall(node, svc) {
+  const rq = S.rq[node + "/" + svc];
+  const rows = rq ? rqActive(rq.rows) : [];
+  const targets = Object.fromEntries(rows.map((r) => [r.svc, rqDesc(r)]));
+  const h = rqHeader(rows);
   try {
-    const res = await call("Fake", { lab: S.route.lab, selector: node, service: svc, action: "call" });
+    const res = await call("Fake", { lab: S.route.lab, selector: node, service: svc, action: "call", headers: h ? { "X-Parker-Fault": h } : {} });
     let r = null;
     try { r = JSON.parse(res.callBody || ""); } catch (e) { /* not JSON */ }
     if (!r || !r.name) throw new Error(`answered ${res.callStatus || "?"}: ${(res.callBody || "").slice(0, 200)}`);
     const hits = new Set(fakeHops(r).map(({ r: h }) => h.node).filter(Boolean));
-    S.fakeCall = { node, svc, r, hits, t: Date.now() };
+    S.fakeCall = { node, svc, r, hits, targets, t: Date.now() };
   } catch (e) {
-    S.fakeCall = { node, svc, err: e.message, hits: new Set(), t: Date.now() };
+    S.fakeCall = { node, svc, err: e.message, hits: new Set(), targets, t: Date.now() };
   }
   render();
 }
@@ -922,7 +1067,7 @@ function topoPanel(g, ts) {
   return `<section><div style="display:flex;gap:10px;align-items:center"><div class="ico ${ico}" style="width:34px;height:34px">${ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ico === "out" ? ICON.out : ICON.svc}</div>
       <div style="min-width:0"><div style="font-weight:650;font-size:15px;overflow-wrap:anywhere">${esc(gn.name)}</div><div class="muted" style="font-size:12.5px">${esc(gn.dc || "lab")}${gn.partition && gn.partition !== "default" ? " · " + esc(gn.partition) : ""} · ${esc(kind)}</div></div>
       <span style="margin-left:auto">${stateChip(s)}</span></div>
-      <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map((sv) => esc(sv) + nsChip(gn, sv)).join(", ")}</dd>` : ""}${(gn.gateways || []).some((k) => nsOf(gn, k + "-gateway")) ? `<dt>gateway</dt><dd>${gn.gateways.map((k) => esc(k) + nsChip(gn, k + "-gateway")).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
+      <dl class="kv" style="margin-top:12px">${(gn.ips || []).length ? `<dt>IP</dt><dd>${gn.ips.map(esc).join("<br>")}</dd>` : ""}${(gn.services || []).length ? `<dt>services</dt><dd>${gn.services.map((sv) => esc(sv) + nsChip(gn, sv)).join(", ")}</dd>` : ""}${(gn.gateways || []).some((k) => nsOf(gn, k + "-gateway")) ? `<dt>gateway</dt><dd>${gn.gateways.map((k) => esc(k) + nsChip(gn, k + "-gateway")).join(", ")}</dd>` : ""}${n && n.role ? `<dt>agent</dt><dd>${esc(n.role)}${n.membersTotal ? ` · LAN members ${n.membersAlive}/${n.membersTotal}` : ""}</dd>` : ""}</dl></section>
     <section><h4>Processes</h4><div class="plist">${ps.map((p) => {
       const st = procState(p), h = procHealth(n, p), bad = st === "down" || h === "critical";
       return `<a class="prow ${bad ? "bad" : ""}" href="${nodeHref}?p=${encodeURIComponent(p.name)}" style="color:inherit;text-decoration:none"><span><b>${esc(p.name)}</b> <span class="mono">${p.pid ? "pid " + p.pid : ""}${h ? " · " + esc(h) : ""}</span></span><span class="st ${st}"><i></i>${st}</span><span class="mono" ${p.restarts ? 'style="color:var(--bad)"' : ""}>${p.restarts || 0}↻</span></a>`;
@@ -993,6 +1138,7 @@ async function onAction(btn) {
     case "fakecall": fakeCall(sel, btn.dataset.svc); return;
     case "fakeset": fakeChange(sel, btn.dataset.svc, btn.dataset.change, false); return;
     case "fakereset": fakeChange(sel, btn.dataset.svc, "", true); return;
+    case "rqopen": case "rqadd": case "rqdel": case "rqset": rqAction(btn); return;
     case "copytoken":
       try { await navigator.clipboard.writeText(btn.dataset.token); toast("Copied the ACL token. Paste it in the Consul UI's Log in."); } catch (e) { toast("Token: " + btn.dataset.token); }
       return;
