@@ -45,7 +45,7 @@ scenario:
   steps:
     - wait: dc1 ready
     - wait: dc2 ready
-    - assert: { consul: { service_healthy: web-sidecar-proxy }, within: 60s }
+    - assert: { consul: { service_healthy: web-sidecar-proxy, dc: dc1 }, within: 60s }
     - name: the API gateway routes to web
       assert:
         exec: { on: dc1/edge, run: "curl -sf -m 2 http://$PARKER_IP:8081/", output: web }
