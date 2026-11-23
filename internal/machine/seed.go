@@ -21,13 +21,9 @@ const installScript = `#!/bin/sh
 set -eu
 src=` + guestShare + `/bin/parker
 dst=/usr/local/bin/parker
-# Transparent proxy needs iptables; some images (Ubuntu minimal) lack it.
+# Transparent proxy needs iptables; the image ships it, this is a fallback.
 if ! command -v iptables >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends iptables
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q iptables-nft
-  fi
+  apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends iptables
 fi
 mark=/var/lib/parker/machine-installed
 mkdir -p /var/lib/parker

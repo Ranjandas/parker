@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -83,7 +82,6 @@ func machineInitCmd() *cobra.Command {
 	c.Flags().UintVar(&o.CPUs, "cpus", uint(min(runtime.NumCPU(), 4)), "virtual CPUs")
 	c.Flags().Uint64Var(&o.MemoryMiB, "memory", 4096, "memory in MiB")
 	c.Flags().Uint64Var(&o.DiskGiB, "disk", 30, "disk size in GiB (grows on demand on the Mac)")
-	c.Flags().StringVar(&o.Image, "image", machine.DefaultImage, "Linux image for the VM: "+strings.Join(machine.ImageNames(), " or "))
 	c.Flags().StringArrayVar(&o.Mounts, "mount", nil, "share a host directory into the VM at the same path (for labs that use files on this Mac); repeatable")
 	return c
 }
