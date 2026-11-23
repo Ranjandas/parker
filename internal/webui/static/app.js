@@ -886,15 +886,17 @@ function renderTopology() {
   for (const s of segs) pairN[pk(s)] = (pairN[pk(s)] || 0) + 1;
 
   const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
-  let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
+  let svg = `<defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
   let labels = "";
   const badges = new Set(), labelled = new Set(), lanes = [];
+  let H = L.h; // grows when lines run in the corridor below the datacenters
   for (const s of segs) {
     const k = pk(s);
     const i = (pairI[k] = (pairI[k] || 0) + 1) - 1;
     const off = (i - (pairN[k] - 1) / 2) * 14;
     const A = anchors(L.pos[s.a], L.pos[s.b], off);
-    const R = route(L.pos, s.a, s.b, A, off, lanes), d = R.d;
+    const R = route(L.pos, s.a, s.b, A, off, lanes, L.regions), d = R.d;
+    if (R.bottom) H = Math.max(H, R.bottom + 24);
     const c = color(s);
     const fo = s.e.kind === "failover", live = fo && active(s.e);
     // A standby failover path is a quiet dashed line; it flows once it's live.
@@ -915,7 +917,7 @@ function renderTopology() {
     const w = 14 + why.length * 6.8;
     svg += `<g transform="translate(${p.x + TW / 2},${p.y - 13})"><rect x="${-w / 2}" y="-11" width="${w}" height="22" rx="11" fill="var(--bad)"/><text x="0" y="4" text-anchor="middle" font-family="JetBrains Mono,ui-monospace,monospace" font-size="11" font-weight="600" fill="#fff">${esc(why)}</text></g>`;
   }
-  svg += "</svg>";
+  svg = `<svg class="edges" width="${L.w}" height="${H}">${svg}</svg>`;
 
   let regions = "";
   for (const r of L.regions) {
@@ -950,7 +952,7 @@ function renderTopology() {
   v.innerHTML = `<div class="topo">
     <div class="stage" id="stage">
       <div class="tools">${layerBtns ? `<div class="seg">${layerBtns}</div>` : ""}</div>
-      <div class="world" id="world" style="width:${L.w}px;height:${L.h}px">${regions}${svg}${labels}${cards}</div>
+      <div class="world" id="world" style="width:${L.w}px;height:${H}px">${regions}${svg}${labels}${cards}</div>
       ${(g.nodes || []).length ? "" : '<div class="tempty"><div class="card empty"><b>No nodes</b>This lab has nothing to draw.</div></div>'}
       <div class="card legend">
         <span><i style="background:var(--ok)"></i>Healthy</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--accent)"></em>Upstream path</span>' : "<span></span>"}
@@ -962,7 +964,7 @@ function renderTopology() {
       <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
     </div>
     <aside class="tpanel" id="tpanel">${topoPanel(g, ts)}</aside></div>`;
-  T.size = { w: L.w, h: L.h };
+  T.size = { w: L.w, h: H };
   if (!T.view || !T.view.user || !keep) fitTopo(); else applyView();
 }
 

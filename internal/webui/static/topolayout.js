@@ -138,10 +138,36 @@ function blockers(pos, a, b, A) {
     return n !== a && n !== b && at[0] + size[0] > lo(x) && at[0] < hi(x) && at[1] + size[1] > lo(y) - 6 && at[1] < hi(y) + 6;
   }).map(([, c]) => c);
 }
+// between lists the datacenter boxes a hop from a to b would cross that
+// hold neither end: the hop doesn't go through those datacenters.
+function between(pos, regions, a, b, A) {
+  if (!A.h || !regions) return [];
+  const inside = (r, c) => c.x >= r.x && c.x + TW <= r.x + r.w && c.y >= r.y && c.y + TH <= r.y + r.h;
+  const lo = Math.min(A.p[0], A.q[0]), hi = Math.max(A.p[0], A.q[0]);
+  return regions.filter((r) => !r.part && r.x < hi && r.x + r.w > lo && !inside(r, pos[a]) && !inside(r, pos[b]));
+}
 // route draws a segment, going round the cards in its way: a hop between
-// two gateways must not look like it passes through a third one.
+// two gateways must not look like it passes through a third one, and a hop
+// between two datacenters must not look like it goes through one between
+// them, so it runs in a corridor below the datacenters instead.
 // lanes holds the detours drawn so far, so two detours don't share a lane.
-function route(pos, a, b, A, off, lanes) {
+// regions (from layout) is optional; without it only cards are avoided.
+function route(pos, a, b, A, off, lanes, regions) {
+  const dcs = between(pos, regions, a, b, A);
+  if (dcs.length) {
+    // Down the gap beside each card, along the corridor, and up the gap
+    // beside the other. Lines that share a pair of cards nest: the upper
+    // one turns outside the lower one at both ends.
+    const r = Math.sign(A.q[0] - A.p[0]) || 1, k = 12;
+    const [px, py] = A.p, [qx, qy] = A.q;
+    const x1 = px + r * (20 - off), x2 = qx - r * (20 - off);
+    let y = Math.max(...regions.filter((g) => !g.part).map((g) => g.y + g.h)) + 24 + off;
+    while (lanes.some((l) => l.h && Math.abs(l.at - y) < 10 && l.lo < Math.max(x1, x2) && Math.min(x1, x2) < l.hi)) y += 14;
+    lanes.push({ h: true, at: y, lo: Math.min(x1, x2), hi: Math.max(x1, x2) });
+    const d = `M${px},${py} L${x1 - r * k},${py} Q${x1},${py} ${x1},${py + k} L${x1},${y - k} Q${x1},${y} ${x1 + r * k},${y}` +
+      ` L${x2 - r * k},${y} Q${x2},${y} ${x2},${y - k} L${x2},${qy + k} Q${x2},${qy} ${x2 + r * k},${qy} L${qx},${qy}`;
+    return { d, mid: [(x1 + x2) / 2, y], lane: true, around: dcs, bottom: y };
+  }
   const bl = blockers(pos, a, b, A);
   if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
   const free = (at, i) => {
@@ -160,7 +186,7 @@ function route(pos, a, b, A, off, lanes) {
   return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
 }
 
-  const api = { TW, TH, GX, GY, PAD, DCGAP, layout, anchors, curve, blockers, route };
+  const api = { TW, TH, GX, GY, PAD, DCGAP, layout, anchors, curve, blockers, between, route };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Topo = api;
 })(typeof window === "object" ? window : globalThis);

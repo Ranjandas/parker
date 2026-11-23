@@ -36,6 +36,18 @@ cookie. It only works while that `parker ui` runs.
   peering links. Health is live: when a sidecar fails, the paths through
   it turn red and say why. Drag to pan, scroll to zoom, and pick a node
   for its details.
+
+  Each path is one line through its gateways: a call through a
+  terminating gateway is drawn once, caller to gateway to service. A
+  failover path is a dotted line until every primary path is broken,
+  then it flows; a gateway that only failover uses (like the peer's
+  terminating gateway in
+  [terminating-failover.yaml](https://github.com/Ranjandas/parker/blob/main/examples/terminating-failover.yaml))
+  has only that dotted line. Lines never run under a card they don't
+  connect, and a line between two datacenters that aren't side by side
+  (or to a service outside Consul past another datacenter) runs in a
+  corridor below the datacenters rather than through one it doesn't go
+  through.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The log viewer fills the window and stays in view while
