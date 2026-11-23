@@ -25,20 +25,26 @@ to set.
   on Apple silicon.
 - About 3 GB of disk to start: a 590 MB image download, kept in the cache,
   and the VM's disk. The disk is 30 GiB, but only what's used takes space.
-- A `parker` binary with VM support. Apple only lets a program start VMs if
-  it's signed with the virtualization entitlement, and release builds
-  don't include that yet. For now, build it from source with Go and the
-  Xcode command line tools (`xcode-select --install`):
+- Parker [installed](install.md) on the Mac. The install script is the
+  easiest way:
 
   ```console
-  $ git clone https://github.com/Ranjandas/parker && cd parker
-  $ make machine
-  built bin/parker (signed) and bin/parker-linux (arm64)
+  $ curl -fsSL https://ranjandas.github.io/parker/install.sh | sh
   ```
 
-  `make machine` signs `bin/parker` on your Mac (ad-hoc, no Apple
-  developer account needed). A build without VM support says so when you
-  run `parker machine start`.
+Apple only lets a program start VMs if it's signed with the
+virtualization entitlement. Parker's macOS releases are signed with it
+(ad-hoc: there's no Apple developer account behind it), so there's nothing
+to set up. Two things to know:
+
+- **A tarball downloaded in a browser** is quarantined, and macOS refuses
+  to open `parker` from it. Clear the flag once:
+  `xattr -d com.apple.quarantine parker`. The install script and `curl`
+  downloads aren't affected.
+- **A build from source** needs signing too. `make machine` builds
+  `bin/parker` and signs it, using Go and the Xcode command line tools
+  (`xcode-select --install`). With a plain `go build`, `parker machine
+  start` fails on the missing entitlement.
 
 ## Create the machine
 
@@ -113,7 +119,7 @@ can't be reached, it keeps the version it has.
 
 To run your own build of Parker in the VM, for working on Parker itself,
 point `PARKER_MACHINE_BINARY` at a Linux binary. `make machine` builds
-one:
+one next to `bin/parker`:
 
 ```console
 $ PARKER_MACHINE_BINARY=bin/parker-linux parker machine start

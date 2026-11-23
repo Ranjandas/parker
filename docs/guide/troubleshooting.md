@@ -138,5 +138,6 @@ prints the end of its log. Look in this order:
 3. **What did the VM process say?** `~/.parker/machine/default/machine.log`
    has every start and stop, and the error when the VM couldn't start at
    all. "The process doesn't have the com.apple.security.virtualization
-   entitlement" means a `parker` that wasn't signed for VMs: build it with
+   entitlement" means a `parker` that wasn't signed for VMs, such as one
+   built with plain `go build`. Use a release, or build with
    `make machine` (see [labs on macOS](macos.md#requirements)).

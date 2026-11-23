@@ -14,8 +14,7 @@ host.
 
 Labs need Linux, so on a Mac start a `parker machine` first: a small
 Linux VM with the Parker daemon in it, which `parker` then uses for every
-command. It needs a build of Parker with VM support (see
-[labs on macOS](macos.md#requirements)):
+command:
 
 ```console
 $ parker machine init

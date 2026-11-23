@@ -53,8 +53,8 @@ against `SHA256SUMS` and installs `parker` into `/usr/local/bin`:
 $ curl -fsSL https://ranjandas.github.io/parker/install.sh | sh
 ```
 
-Or do the same by hand: download a release (static binaries for Linux amd64/arm64; the macOS build is
-a client for a daemon on a Linux host) and check it against `SHA256SUMS`:
+Or do the same by hand: download a release (static binaries for Linux amd64/arm64; on macOS, labs
+run in a local VM with `parker machine`) and check it against `SHA256SUMS`:
 
 ```console
 $ V=0.1.0 ARCH=amd64   # or arm64

@@ -64,10 +64,11 @@ $ sudo install -m 0755 parker /usr/local/bin/parker
 ```
 
 For a Mac, download `parker_<version>_darwin_arm64.tar.gz` (or `amd64`)
-the same way. The release's macOS build is a client: point it at a daemon
-on a Linux host as described in [remote use](remote.md). To run labs on
-the Mac itself, build Parker with VM support; see
-[labs on macOS](macos.md#requirements).
+the same way, with `shasum -a 256 -c` in place of `sha256sum -c`. If you
+download it in a browser instead, clear macOS's quarantine flag before the
+first run: `xattr -d com.apple.quarantine parker`. Then run labs on the
+Mac with [`parker machine`](macos.md), or point it at a daemon on a Linux
+host as described in [remote use](remote.md).
 
 ## Run the daemon as a service
 
