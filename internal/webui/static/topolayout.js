@@ -138,10 +138,50 @@ function blockers(pos, a, b, A) {
     return n !== a && n !== b && at[0] + size[0] > lo(x) && at[0] < hi(x) && at[1] + size[1] > lo(y) - 6 && at[1] < hi(y) + 6;
   }).map(([, c]) => c);
 }
+// between lists the datacenter boxes a hop from a to b would cross that
+// hold neither end: the hop doesn't go through those datacenters.
+function between(pos, regions, a, b, A) {
+  if (!A.h || !regions) return [];
+  const inside = (r, c) => c.x >= r.x && c.x + TW <= r.x + r.w && c.y >= r.y && c.y + TH <= r.y + r.h;
+  const lo = Math.min(A.p[0], A.q[0]), hi = Math.max(A.p[0], A.q[0]);
+  return regions.filter((r) => !r.part && r.x < hi && r.x + r.w > lo && !inside(r, pos[a]) && !inside(r, pos[b]));
+}
+// ortho draws a path through right-angled points with rounded corners.
+function ortho(pts, k) {
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 1; i + 1 < pts.length; i++) {
+    const [px, py] = pts[i - 1], [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    const r1 = Math.min(k, Math.hypot(x - px, y - py) / 2), r2 = Math.min(k, Math.hypot(nx - x, ny - y) / 2);
+    const ux = Math.sign(x - px), uy = Math.sign(y - py), vx = Math.sign(nx - x), vy = Math.sign(ny - y);
+    d += ` L${x - ux * r1},${y - uy * r1} Q${x},${y} ${x + vx * r2},${y + vy * r2}`;
+  }
+  const [lx, ly] = pts[pts.length - 1];
+  return d + ` L${lx},${ly}`;
+}
 // route draws a segment, going round the cards in its way: a hop between
-// two gateways must not look like it passes through a third one.
+// two gateways must not look like it passes through a third one, and a hop
+// between two datacenters must not look like it goes through one between
+// them, so it runs in a corridor below the datacenters instead.
 // lanes holds the detours drawn so far, so two detours don't share a lane.
-function route(pos, a, b, A, off, lanes) {
+// regions (from layout) is optional; without it only cards are avoided.
+function route(pos, a, b, A, off, lanes, regions) {
+  const dcs = between(pos, regions, a, b, A);
+  if (dcs.length) {
+    // Out of the bottom of each card where nothing sits below it (else
+    // down the gap beside it), along the corridor, and up into the other.
+    // Lines that share a pair of cards nest without crossing.
+    const r = Math.sign(A.q[0] - A.p[0]) || 1;
+    let y = Math.max(...regions.filter((g) => !g.part).map((g) => g.y + g.h)) + 24 + off;
+    const clear = (n, x) => !Object.entries(pos).some(([m, c]) => m !== n && x > c.x - 6 && x < c.x + TW + 6 && c.y > pos[n].y && c.y < y);
+    const ca = pos[a].x + TW / 2 - r * off, cb = pos[b].x + TW / 2 + r * off;
+    const head = clear(a, ca) ? [[ca, pos[a].y + TH]] : [A.p, [A.p[0] + r * (20 - off), A.p[1]]];
+    const tail = clear(b, cb) ? [[cb, pos[b].y + TH]] : [[A.q[0] - r * (20 - off), A.q[1]], A.q];
+    const x1 = head[head.length - 1][0], x2 = tail[0][0];
+    while (lanes.some((l) => l.h && Math.abs(l.at - y) < 10 && l.lo < Math.max(x1, x2) && Math.min(x1, x2) < l.hi)) y += 14;
+    lanes.push({ h: true, at: y, lo: Math.min(x1, x2), hi: Math.max(x1, x2) });
+    const pts = [...head, [x1, y], [x2, y], ...tail];
+    return { d: ortho(pts, 12), pts, mid: [(x1 + x2) / 2, y], lane: true, around: dcs, bottom: y };
+  }
   const bl = blockers(pos, a, b, A);
   if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
   const free = (at, i) => {
@@ -160,7 +200,7 @@ function route(pos, a, b, A, off, lanes) {
   return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
 }
 
-  const api = { TW, TH, GX, GY, PAD, DCGAP, layout, anchors, curve, blockers, route };
+  const api = { TW, TH, GX, GY, PAD, DCGAP, layout, anchors, curve, blockers, between, route };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Topo = api;
 })(typeof window === "object" ? window : globalThis);

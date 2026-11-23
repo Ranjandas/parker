@@ -563,6 +563,18 @@ func Build(f *spec.File) *Graph {
 		}
 	}
 
+	// A gateway's route to a service that a caller's path already runs
+	// through is that path's last hop: one line is enough, drawn as the
+	// path that uses it (an upstream, or a failover when only a failover
+	// goes that way). A route no path uses stays, as the gateway's own.
+	used := map[[2]string]bool{}
+	for _, e := range g.Edges {
+		if (e.Kind == Upstream || e.Kind == Failover) && len(e.Via) > 0 {
+			used[[2]string{e.Via[len(e.Via)-1], e.To}] = true
+		}
+	}
+	g.Edges = slices.DeleteFunc(g.Edges, func(e Edge) bool { return e.Kind == Route && used[[2]string{e.From, e.To}] })
+
 	if len(outside) > 0 {
 		name := OutsideNode
 		for byName[name] != nil {

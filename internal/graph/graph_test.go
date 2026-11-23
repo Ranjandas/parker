@@ -148,8 +148,9 @@ func wantNS(t *testing.T, g *Graph, name string, w map[string]string) {
 
 func TestGateways(t *testing.T) {
 	g := build(t, "gateways.yaml")
-	// The terminating gateway forwards to the service it links.
-	want(t, "routes", edges(g, Route), "dc1-edge>dc1-api api", "dc1-ingress>dc1-api api :8080", "dc1-terminating>dc1-legacy legacy",
+	// The terminating gateway's hop to legacy is the last hop of web's
+	// upstream path, so it isn't a route of its own as well.
+	want(t, "routes", edges(g, Route), "dc1-edge>dc1-api api", "dc1-ingress>dc1-api api :8080",
 		// Clients outside the lab call the ingress and API gateways' listeners.
 		"internet>dc1-edge :8081 http", "internet>dc1-ingress :8080 http")
 	if n := node(t, g, OutsideNode); n.Role != OutsideRole || n.DC != "" {
@@ -199,7 +200,9 @@ func TestLinks(t *testing.T) {
 func TestTerminatingFailover(t *testing.T) {
 	g := build(t, "terminating-failover.yaml")
 	want(t, "upstreams", edges(g, Upstream), "dc1-web>api api :9091 ~dc1-terminating")
-	want(t, "routes", edges(g, Route), "dc1-terminating>api api", "dc2-terminating>api api")
+	// Each terminating gateway's hop to api is drawn once, by the path
+	// that uses it: dc2's only carries the failover.
+	want(t, "routes", edges(g, Route))
 	want(t, "failovers", edges(g, Failover), "dc1-web>api api failover (peer dc1-dc2) ~dc1-mesh ~dc2-mesh ~dc2-terminating")
 }
 
@@ -207,7 +210,7 @@ func TestTerminatingFailoverPartitions(t *testing.T) {
 	t.Setenv("CONSUL_LICENSE", "test")
 	g := build(t, "terminating-failover-partitions.yaml")
 	want(t, "upstreams", edges(g, Upstream), "dc1-part-a-web>api api :9091 ~dc1-part-a-terminating")
-	want(t, "routes", edges(g, Route), "dc1-part-a-terminating>api api", "dc2-part-b-terminating>api api")
+	want(t, "routes", edges(g, Route))
 	want(t, "failovers", edges(g, Failover),
 		"dc1-part-a-web>api api failover (peer dc1-dc2) ~dc1-part-a-mesh ~dc2-part-b-mesh ~dc2-part-b-terminating")
 	// web, its terminating gateway and the external api sit in app; the

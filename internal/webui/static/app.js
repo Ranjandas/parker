@@ -867,7 +867,8 @@ function renderTopology() {
     if (!shown(e)) continue;
     const { hops, bad } = edgeHealth(e, ts);
     if (!hops.every((h) => L.pos[h])) continue;
-    // The label goes on the hop with the most room left around it.
+    // A path carries its label on every hop with room for it (at least the
+    // roomiest), so it can be followed through its gateways.
     const lw = 14 + (e.label || "").length * 6.6;
     const len = (i) => {
       const A = anchors(L.pos[hops[i]], L.pos[hops[i + 1]], 0);
@@ -878,7 +879,7 @@ function renderTopology() {
     for (let i = 0; i + 1 < hops.length; i++) {
       // The segment into the first broken hop and everything after it are broken.
       const broken = bad >= 0 && i + 1 >= bad;
-      segs.push({ e, a: hops[i], b: hops[i + 1], broken, last: i + 2 === hops.length, mid: i === longest, badNode: bad >= 0 ? hops[bad] : "" });
+      segs.push({ e, a: hops[i], b: hops[i + 1], broken, last: i + 2 === hops.length, mid: i === longest || (e.kind !== "wan" && e.kind !== "peering" && len(i) > 0), main: i === longest, badNode: bad >= 0 ? hops[bad] : "" });
     }
   }
   const pairN = {}, pairI = {};
@@ -886,15 +887,18 @@ function renderTopology() {
   for (const s of segs) pairN[pk(s)] = (pairN[pk(s)] || 0) + 1;
 
   const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
-  let svg = `<svg class="edges" width="${L.w}" height="${L.h}"><defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
+  let svg = `<defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
   let labels = "";
   const badges = new Set(), labelled = new Set(), lanes = [];
+  const tags = []; // edge labels, placed once every line is drawn
+  let H = L.h; // grows when lines run in the corridor below the datacenters
   for (const s of segs) {
     const k = pk(s);
     const i = (pairI[k] = (pairI[k] || 0) + 1) - 1;
     const off = (i - (pairN[k] - 1) / 2) * 14;
     const A = anchors(L.pos[s.a], L.pos[s.b], off);
-    const R = route(L.pos, s.a, s.b, A, off, lanes), d = R.d;
+    const R = route(L.pos, s.a, s.b, A, off, lanes, L.regions), d = R.d;
+    if (R.bottom) H = Math.max(H, R.bottom + 24);
     const c = color(s);
     const fo = s.e.kind === "failover", live = fo && active(s.e);
     // A standby failover path is a quiet dashed line; it flows once it's live.
@@ -906,16 +910,32 @@ function renderTopology() {
     if (s.e.label && s.mid && !labelled.has(pk(s) + "|" + s.e.label)) {
       labelled.add(pk(s) + "|" + s.e.label);
       const mx = R.mid[0], my = R.mid[1] + (A.h && !R.lane ? (off < 0 ? -12 : off > 0 ? 12 : -12) : 0);
-      labels += `<div class="elbl ${esc(s.e.kind)} ${s.broken ? "broken" : ""}" style="left:${mx}px;top:${my}px">${esc(s.e.label)}</div>`;
+      tags.push({ s, x: mx, y: my, w: 14 + s.e.label.length * 6.6 });
     }
     if (s.broken && s.badNode) badges.add(s.badNode);
+  }
+  // A path's own label always shows; the copies on its other hops show
+  // where they don't cover a card or another label.
+  const boxes = Object.values(L.pos).map((p) => ({ x: p.x + TW / 2, y: p.y + TH / 2, w: TW, h: TH }));
+  const hit = (t, b) => Math.abs(t.x - b.x) < (t.w + b.w) / 2 && Math.abs(t.y - b.y) < (18 + b.h) / 2;
+  // Upstream paths' copies go before failover paths', and a copy moves
+  // up or down a little to find room.
+  const rank = (t) => (t.s.main ? 0 : t.s.e.kind === "failover" ? 2 : 1);
+  for (const t of [...tags].sort((a, b) => rank(a) - rank(b))) {
+    if (!t.s.main) {
+      const y = [0, 18, -18].map((d) => t.y + d).find((y) => !boxes.some((b) => hit({ ...t, y }, b)));
+      if (y === undefined) continue;
+      t.y = y;
+    }
+    boxes.push({ x: t.x, y: t.y, w: t.w, h: 18 });
+    labels += `<div class="elbl ${esc(t.s.e.kind)} ${t.s.broken ? "broken" : ""}" style="left:${t.x}px;top:${t.y}px">${esc(t.s.e.label)}</div>`;
   }
   for (const name of badges) {
     const p = L.pos[name], why = problemOf(ts.byName.get(name)) || "failing";
     const w = 14 + why.length * 6.8;
     svg += `<g transform="translate(${p.x + TW / 2},${p.y - 13})"><rect x="${-w / 2}" y="-11" width="${w}" height="22" rx="11" fill="var(--bad)"/><text x="0" y="4" text-anchor="middle" font-family="JetBrains Mono,ui-monospace,monospace" font-size="11" font-weight="600" fill="#fff">${esc(why)}</text></g>`;
   }
-  svg += "</svg>";
+  svg = `<svg class="edges" width="${L.w}" height="${H}">${svg}</svg>`;
 
   let regions = "";
   for (const r of L.regions) {
@@ -950,7 +970,7 @@ function renderTopology() {
   v.innerHTML = `<div class="topo">
     <div class="stage" id="stage">
       <div class="tools">${layerBtns ? `<div class="seg">${layerBtns}</div>` : ""}</div>
-      <div class="world" id="world" style="width:${L.w}px;height:${L.h}px">${regions}${svg}${labels}${cards}</div>
+      <div class="world" id="world" style="width:${L.w}px;height:${H}px">${regions}${svg}${labels}${cards}</div>
       ${(g.nodes || []).length ? "" : '<div class="tempty"><div class="card empty"><b>No nodes</b>This lab has nothing to draw.</div></div>'}
       <div class="card legend">
         <span><i style="background:var(--ok)"></i>Healthy</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--accent)"></em>Upstream path</span>' : "<span></span>"}
@@ -962,7 +982,7 @@ function renderTopology() {
       <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
     </div>
     <aside class="tpanel" id="tpanel">${topoPanel(g, ts)}</aside></div>`;
-  T.size = { w: L.w, h: L.h };
+  T.size = { w: L.w, h: H };
   if (!T.view || !T.view.user || !keep) fitTopo(); else applyView();
 }
 

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -17,7 +18,7 @@ import (
 )
 
 // layoutOf lays out an example's topology with static/topolayout.js.
-func layoutOf(t *testing.T, node, example string) (pos map[string]struct{ X, Y float64 }, crossings, overlaps []string) {
+func layoutOf(t *testing.T, node, example string) (pos map[string]struct{ X, Y float64 }, crossings, overlaps, around []string) {
 	t.Helper()
 	f, err := spec.Load(filepath.Join("..", "..", "examples", example), nil)
 	if err != nil {
@@ -44,16 +45,18 @@ func layoutOf(t *testing.T, node, example string) (pos map[string]struct{ X, Y f
 		Pos       map[string]struct{ X, Y float64 }
 		Crossings []string
 		Overlaps  []string
+		Around    []string
 	}
 	if err := json.Unmarshal(out, &r); err != nil {
 		t.Fatal(err)
 	}
-	return r.Pos, r.Crossings, r.Overlaps
+	return r.Pos, r.Crossings, r.Overlaps, r.Around
 }
 
 // TestTopologyLayout checks the topology view's layout of the examples:
-// no two cards overlap, and in the multi-dc labs no line has to run under
-// a card it doesn't connect.
+// no two cards overlap, in the multi-dc labs no line has to run under a
+// card it doesn't connect, and a line doesn't cross a datacenter it
+// doesn't go through.
 func TestTopologyLayout(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -64,7 +67,7 @@ func TestTopologyLayout(t *testing.T) {
 	for _, ex := range examples {
 		ex = filepath.Base(ex)
 		t.Run(ex, func(t *testing.T) {
-			pos, crossings, overlaps := layoutOf(t, node, ex)
+			pos, crossings, overlaps, _ := layoutOf(t, node, ex)
 			if len(pos) == 0 {
 				t.Skip("no nodes")
 			}
@@ -77,9 +80,23 @@ func TestTopologyLayout(t *testing.T) {
 		})
 	}
 
+	// api, outside Consul, sits past dc2: dc1's terminating gateway reaches
+	// it in a corridor below dc2, not through dc2's box.
+	for _, ex := range []string{"terminating-failover.yaml", "terminating-failover-partitions.yaml"} {
+		_, crossings, _, around := layoutOf(t, node, ex)
+		if len(around) != 1 || !strings.HasSuffix(around[0], "terminating > api around dc2") {
+			t.Errorf("%s: lines round other datacenters: %q", ex, around)
+		}
+		for _, c := range crossings {
+			if strings.Contains(c, "detour") {
+				t.Errorf("%s: %s", ex, c)
+			}
+		}
+	}
+
 	// Peering between partitions: each dc's gateways face the other dc,
 	// the default partition's (control plane) on the servers' row.
-	pos, _, _ := layoutOf(t, node, "peering-partitions.yaml")
+	pos, _, _, _ := layoutOf(t, node, "peering-partitions.yaml")
 	if !(pos["dc1-mesh"].X > pos["dc1-server-1"].X && pos["dc2-mesh"].X < pos["dc2-server-1"].X) {
 		t.Errorf("default-partition gateways don't face each other: %v", pos)
 	}
