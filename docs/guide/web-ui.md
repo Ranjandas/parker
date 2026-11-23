@@ -38,7 +38,9 @@ cookie. It only works while that `parker ui` runs.
   for its details.
 
   Each path is one line through its gateways: a call through a
-  terminating gateway is drawn once, caller to gateway to service. A
+  terminating gateway is drawn once, caller to gateway to service, and
+  each hop with room carries the path's label (such as `api :9091`) so
+  you can follow it from end to end. A
   failover path is a dotted line until every primary path is broken,
   then it flows; a gateway that only failover uses (like the peer's
   terminating gateway in
@@ -46,8 +48,8 @@ cookie. It only works while that `parker ui` runs.
   has only that dotted line. Lines never run under a card they don't
   connect, and a line between two datacenters that aren't side by side
   (or to a service outside Consul past another datacenter) runs in a
-  corridor below the datacenters rather than through one it doesn't go
-  through.
+  corridor below the datacenters, leaving and entering its cards from
+  the bottom, rather than through one it doesn't go through.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The log viewer fills the window and stays in view while

@@ -146,6 +146,18 @@ function between(pos, regions, a, b, A) {
   const lo = Math.min(A.p[0], A.q[0]), hi = Math.max(A.p[0], A.q[0]);
   return regions.filter((r) => !r.part && r.x < hi && r.x + r.w > lo && !inside(r, pos[a]) && !inside(r, pos[b]));
 }
+// ortho draws a path through right-angled points with rounded corners.
+function ortho(pts, k) {
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 1; i + 1 < pts.length; i++) {
+    const [px, py] = pts[i - 1], [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    const r1 = Math.min(k, Math.hypot(x - px, y - py) / 2), r2 = Math.min(k, Math.hypot(nx - x, ny - y) / 2);
+    const ux = Math.sign(x - px), uy = Math.sign(y - py), vx = Math.sign(nx - x), vy = Math.sign(ny - y);
+    d += ` L${x - ux * r1},${y - uy * r1} Q${x},${y} ${x + vx * r2},${y + vy * r2}`;
+  }
+  const [lx, ly] = pts[pts.length - 1];
+  return d + ` L${lx},${ly}`;
+}
 // route draws a segment, going round the cards in its way: a hop between
 // two gateways must not look like it passes through a third one, and a hop
 // between two datacenters must not look like it goes through one between
@@ -155,18 +167,20 @@ function between(pos, regions, a, b, A) {
 function route(pos, a, b, A, off, lanes, regions) {
   const dcs = between(pos, regions, a, b, A);
   if (dcs.length) {
-    // Down the gap beside each card, along the corridor, and up the gap
-    // beside the other. Lines that share a pair of cards nest: the upper
-    // one turns outside the lower one at both ends.
-    const r = Math.sign(A.q[0] - A.p[0]) || 1, k = 12;
-    const [px, py] = A.p, [qx, qy] = A.q;
-    const x1 = px + r * (20 - off), x2 = qx - r * (20 - off);
+    // Out of the bottom of each card where nothing sits below it (else
+    // down the gap beside it), along the corridor, and up into the other.
+    // Lines that share a pair of cards nest without crossing.
+    const r = Math.sign(A.q[0] - A.p[0]) || 1;
     let y = Math.max(...regions.filter((g) => !g.part).map((g) => g.y + g.h)) + 24 + off;
+    const clear = (n, x) => !Object.entries(pos).some(([m, c]) => m !== n && x > c.x - 6 && x < c.x + TW + 6 && c.y > pos[n].y && c.y < y);
+    const ca = pos[a].x + TW / 2 - r * off, cb = pos[b].x + TW / 2 + r * off;
+    const head = clear(a, ca) ? [[ca, pos[a].y + TH]] : [A.p, [A.p[0] + r * (20 - off), A.p[1]]];
+    const tail = clear(b, cb) ? [[cb, pos[b].y + TH]] : [[A.q[0] - r * (20 - off), A.q[1]], A.q];
+    const x1 = head[head.length - 1][0], x2 = tail[0][0];
     while (lanes.some((l) => l.h && Math.abs(l.at - y) < 10 && l.lo < Math.max(x1, x2) && Math.min(x1, x2) < l.hi)) y += 14;
     lanes.push({ h: true, at: y, lo: Math.min(x1, x2), hi: Math.max(x1, x2) });
-    const d = `M${px},${py} L${x1 - r * k},${py} Q${x1},${py} ${x1},${py + k} L${x1},${y - k} Q${x1},${y} ${x1 + r * k},${y}` +
-      ` L${x2 - r * k},${y} Q${x2},${y} ${x2},${y - k} L${x2},${qy + k} Q${x2},${qy} ${x2 + r * k},${qy} L${qx},${qy}`;
-    return { d, mid: [(x1 + x2) / 2, y], lane: true, around: dcs, bottom: y };
+    const pts = [...head, [x1, y], [x2, y], ...tail];
+    return { d: ortho(pts, 12), pts, mid: [(x1 + x2) / 2, y], lane: true, around: dcs, bottom: y };
   }
   const bl = blockers(pos, a, b, A);
   if (!bl.length) return { d: curve(A.p, A.q, A.h), mid: [(A.p[0] + A.q[0]) / 2, (A.p[1] + A.q[1]) / 2], lane: false };
