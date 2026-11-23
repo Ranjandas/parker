@@ -93,8 +93,16 @@ func Clashes(lab string, f *spec.File, host []HostNet) []Clash {
 // FreeSubnet returns the first 10.N.0.0/24 that overlaps neither the host nor
 // any of the given subnets, or false if there is none.
 func FreeSubnet(host []HostNet, taken []netip.Prefix) (netip.Prefix, bool) {
+	return freeSubnet(24, host, taken)
+}
+
+// freeSubnet is FreeSubnet for a /bits network (bits 16 to 30).
+func freeSubnet(bits int, host []HostNet, taken []netip.Prefix) (netip.Prefix, bool) {
+	if bits < 16 || bits > 30 {
+		return netip.Prefix{}, false
+	}
 	for n := 1; n < 255; n++ {
-		c := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(n), 0, 0}), 24)
+		c := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(n), 0, 0}), bits)
 		ok := true
 		for _, h := range host {
 			if c.Overlaps(h.Prefix) {
@@ -115,8 +123,9 @@ func FreeSubnet(host []HostNet, taken []netip.Prefix) (netip.Prefix, bool) {
 	return netip.Prefix{}, false
 }
 
-// CheckSubnets fails if any lab network overlaps a subnet the host already
-// uses, naming the clash and suggesting a free subnet.
+// CheckSubnets fails if any lab network with a fixed subnet overlaps a
+// subnet the host already uses, naming the clash and suggesting a free
+// subnet. Networks marked auto are left out: Relocate moves them.
 func CheckSubnets(lab string, f *spec.File) error {
 	host, err := HostNets()
 	if err != nil {
@@ -126,7 +135,12 @@ func CheckSubnets(lab string, f *spec.File) error {
 }
 
 func clashError(lab string, f *spec.File, host []HostNet) error {
-	clashes := Clashes(lab, f, host)
+	var clashes []Clash
+	for _, c := range Clashes(lab, f, host) {
+		if !f.Networks[c.Network].Auto {
+			clashes = append(clashes, c)
+		}
+	}
 	if len(clashes) == 0 {
 		return nil
 	}
@@ -149,6 +163,7 @@ func clashError(lab string, f *spec.File, host []HostNet) error {
 		} else {
 			fmt.Fprintf(&b, "networks.%s.subnet: %s", c.Network, free)
 		}
+		b.WriteString(", or leave subnet: out to let parker pick a free one")
 	}
 	return fmt.Errorf("%s", b.String())
 }

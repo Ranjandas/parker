@@ -82,6 +82,23 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 			}
 		}
 	}
+	// Pick free subnets and create the network under one lock, so labs
+	// coming up together don't pick the same one.
+	unlock, err := lockSubnets()
+	if err != nil {
+		return nil, err
+	}
+	locked := true
+	release := func() {
+		if locked {
+			unlock()
+			locked = false
+		}
+	}
+	defer release()
+	if err := relocate(name, low, say); err != nil {
+		return nil, err
+	}
 	if err := netsetup.Down(name, func(f string, a ...any) { say("cleanup: "+f, a...) }); err != nil {
 		return nil, PrivHint(err)
 	}
@@ -106,7 +123,9 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 		_ = os.WriteFile(filepath.Join(dir, TopologyFile), b, 0o644)
 	}
 	say("network: %d networks, %d nodes", len(low.Networks), len(low.Nodes))
-	if err := netsetup.Up(name, low); err != nil {
+	err = netsetup.Up(name, low)
+	release()
+	if err != nil {
 		_ = netsetup.Down(name, func(string, ...any) {})
 		_ = license.Remove(dir)
 		return nil, PrivHint(err)

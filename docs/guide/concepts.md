@@ -58,8 +58,11 @@ Each datacenter gets its own LAN, a bridge on the host:
 | Other nodes (clients, gateways, services) | `.100` and up, in name order |
 | WAN network, when datacenters are [federated](multiple-datacenters.md) | `10.255.0.0/24` |
 
-`parker status` lists every node's address, and `parker up` refuses a
-subnet that clashes with one the host already uses.
+These are the defaults. When one is already in use by another running
+lab or by the host, `parker up` moves that network to a free subnet,
+and the lab's addresses with it; a `subnet:` you set never moves. See
+[Several labs at once](lifecycle.md#several-labs-at-once).
+`parker status` lists every node's actual address.
 
 ## Processes and readiness
 

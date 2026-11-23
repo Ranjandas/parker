@@ -245,7 +245,7 @@
         },
         "subnet": {
           "type": "string",
-          "description": "Subnet of the datacenter LAN, e.g. 10.1.0.0/24; picked automatically\nif empty."
+          "description": "Subnet of the datacenter LAN, e.g. 10.1.0.0/24. Leave it out and\nParker uses 10.\u003cn\u003e.0.0/24, or a free subnet when another running lab\nor the host already uses that one. Set it when addresses matter to\nthe repro: an explicit subnet never moves."
         },
         "ui": {
           "type": "boolean",
@@ -835,6 +835,10 @@
         "gateway": {
           "type": "string",
           "description": "Gateway is the host-side bridge address; default the subnet's .1."
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "Auto lets `parker up` move the network to a free subnet when this\none is already in use, by another running lab or by the host. The\nlab's addresses move with it. Expansion sets it on the networks whose\nsubnet the file didn't choose."
         }
       },
       "additionalProperties": false,

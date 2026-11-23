@@ -78,7 +78,9 @@ $ parker up FILE [flags]
 ```
 
 Creates the lab's networks and starts its processes, and returns when
-everything is ready. See [starting and stopping labs](lifecycle.md).
+everything is ready. A network whose default subnet is already in use
+moves to a free one ([several labs at once](lifecycle.md#several-labs-at-once)).
+See [starting and stopping labs](lifecycle.md).
 
 | Flag | Effect |
 |---|---|

@@ -37,8 +37,53 @@ and takes the lab down again.
 | `--no-daemon` | Run in this process. Nothing supervises the lab after `up` returns, so `restart:` policies don't apply. |
 | `--no-firewall` | Don't add firewall rules for the lab's bridges; print them instead. See below. |
 
-`parker up` also refuses a subnet that clashes with a network the host
-already uses: set the datacenter's `subnet:` to move it.
+### Several labs at once
+
+Labs run side by side. When a subnet Parker picked for the lab, such as
+a datacenter's default `10.<n>.0.0/24` or the `wan` network, is already
+in use by another running lab or by the host (a VPN, Docker, a cloud
+VPC), `parker up` moves that network to the next free `10.<n>.0.0` of
+the same size and says so. Every address in the lab moves with it, to
+the same offset: node IPs, the generated Consul configs, and full
+addresses in your own commands and scenario steps.
+
+Two copies of the same one-datacenter lab, `a.yaml` and `b.yaml`:
+
+```console
+$ parker up a.yaml
+...
+lab "a" is up in 5.6s
+  dc1-server-1             10.1.0.10      consul
+  dc1-server-2             10.1.0.11      consul
+  dc1-server-3             10.1.0.12      consul
+$ parker up b.yaml
+network dc1-lan: 10.1.0.0/24 is taken (running lab "a" uses it); using 10.2.0.0/24
+network: 1 networks, 3 nodes
+...
+lab "b" is up in 8.6s
+  dc1-server-1             10.2.0.10      consul
+  dc1-server-2             10.2.0.11      consul
+  dc1-server-3             10.2.0.12      consul
+```
+
+A lab that moved keeps its new subnet when you bring it up again, as
+long as that one is still free. `parker status LAB` and the web UI show
+the addresses the lab actually runs with; `parker expand` shows the
+file's defaults.
+
+A subnet you set yourself (a datacenter's `subnet:`, or a network under
+`networks:`) never moves: Parker assumes the addresses matter to the
+repro. When it clashes, `parker up` refuses and names what uses it:
+
+```console
+$ parker up fixed.yaml
+error: subnet clash:
+  network dc1-lan (10.1.0.0/24) overlaps 10.1.0.0/24 used by running lab "a" (pk-33e12c1c); `parker down a` or pick another subnet
+hint: move the network to a free subnet, e.g. consul.datacenters.dc1.subnet: 10.5.0.0/24, or leave subnet: out to let parker pick a free one
+```
+
+Set `subnet:` when a scenario matches part of an address, such as
+`output: '"from":"10.1.0.'`: only whole addresses are moved.
 
 ### Firewalls and Docker
 

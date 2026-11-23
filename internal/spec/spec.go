@@ -478,8 +478,10 @@ type Datacenter struct {
 
 	// Primary marks the primary datacenter (for federation and ACLs).
 	Primary *bool `yaml:"primary,omitempty"`
-	// Subnet of the datacenter LAN, e.g. 10.1.0.0/24; picked automatically
-	// if empty.
+	// Subnet of the datacenter LAN, e.g. 10.1.0.0/24. Leave it out and
+	// Parker uses 10.<n>.0.0/24, or a free subnet when another running lab
+	// or the host already uses that one. Set it when addresses matter to
+	// the repro: an explicit subnet never moves.
 	Subnet string `yaml:"subnet,omitempty"`
 	// UI enables the Consul web UI on the servers.
 	UI *bool `yaml:"ui,omitempty"`
@@ -947,6 +949,11 @@ type Network struct {
 	Subnet string `yaml:"subnet"`
 	// Gateway is the host-side bridge address; default the subnet's .1.
 	Gateway string `yaml:"gateway,omitempty"`
+	// Auto lets `parker up` move the network to a free subnet when this
+	// one is already in use, by another running lab or by the host. The
+	// lab's addresses move with it. Expansion sets it on the networks whose
+	// subnet the file didn't choose.
+	Auto bool `yaml:"auto,omitempty"`
 }
 
 type RawNode struct {
