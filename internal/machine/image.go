@@ -150,9 +150,9 @@ func (p *progress) Write(b []byte) (int, error) {
 	if p.out != nil && time.Since(p.last) > 500*time.Millisecond {
 		p.last = time.Now()
 		if p.total > 0 {
-			fmt.Fprintf(p.out, "\r%s: %d%% (%d of %d MB)", p.label, p.n*100/p.total, p.n>>20, p.total>>20)
+			fmt.Fprintf(p.out, "\r\033[K%s: %d%% (%d of %d MB)", p.label, p.n*100/p.total, p.n>>20, p.total>>20)
 		} else {
-			fmt.Fprintf(p.out, "\r%s: %d MB", p.label, p.n>>20)
+			fmt.Fprintf(p.out, "\r\033[K%s: %d MB", p.label, p.n>>20)
 		}
 	}
 	return len(b), nil
@@ -160,6 +160,6 @@ func (p *progress) Write(b []byte) (int, error) {
 
 func (p *progress) done() {
 	if p.out != nil {
-		fmt.Fprintf(p.out, "\r%s: done (%d MB)\n", p.label, p.n>>20)
+		fmt.Fprintf(p.out, "\r\033[K%s: done (%d MB)\n", p.label, p.n>>20)
 	}
 }
