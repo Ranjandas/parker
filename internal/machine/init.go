@@ -14,6 +14,7 @@ type InitOptions struct {
 	CPUs      uint
 	MemoryMiB uint64
 	DiskGiB   uint64
+	Image     string   // an ImageNames entry; "" = DefaultImage
 	Mounts    []string // host directories to share at the same path
 }
 
@@ -23,7 +24,10 @@ func (m Machine) Init(o InitOptions, out io.Writer) error {
 	if m.Initialized() {
 		return fmt.Errorf("a parker machine already exists in %s (parker machine rm first)", m.Dir)
 	}
-	img, err := HostImage()
+	if o.Image == "" {
+		o.Image = DefaultImage
+	}
+	img, err := HostImage(o.Image)
 	if err != nil {
 		return err
 	}

@@ -126,17 +126,36 @@ func TestConvertDisk(t *testing.T) {
 }
 
 func TestPinnedImages(t *testing.T) {
-	for _, arch := range []string{"arm64", "amd64"} {
-		img, err := ImageFor(arch)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(img.SHA256) != 64 || !strings.HasPrefix(img.URL, "https://") || !strings.Contains(img.URL, arch) {
-			t.Errorf("%s: %+v", arch, img)
+	for _, name := range ImageNames() {
+		for _, arch := range []string{"arm64", "amd64"} {
+			img, err := ImageFor(name, arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(img.SHA256) != 64 && img.ChecksumURL == "") || !strings.HasPrefix(img.URL, "https://") {
+				t.Errorf("%s/%s: %+v", name, arch, img)
+			}
 		}
 	}
-	if _, err := ImageFor("riscv64"); err == nil {
+	if _, err := ImageFor(DefaultImage, "riscv64"); err == nil {
 		t.Error("riscv64: want an error")
+	}
+	if _, err := ImageFor("alpine", "arm64"); err == nil {
+		t.Error("unknown image: want an error")
+	}
+}
+
+func TestChecksumFrom(t *testing.T) {
+	h := strings.Repeat("ab", 32)
+	fedora := "-----BEGIN PGP SIGNED MESSAGE-----\n# Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2: 544997376 bytes\nSHA256 (Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2) = " + h + "\nSHA256 (other.raw.xz) = " + strings.Repeat("cd", 32) + "\n"
+	if got, ok := checksumFrom(fedora, "Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2"); !ok || got != h {
+		t.Errorf("fedora: %q %v", got, ok)
+	}
+	if got, ok := checksumFrom(h+" *ubuntu.img\n", "ubuntu.img"); !ok || got != h {
+		t.Errorf("sha256sum: %q %v", got, ok)
+	}
+	if _, ok := checksumFrom(fedora, "missing.qcow2"); ok {
+		t.Error("missing file: want not found")
 	}
 }
 

@@ -21,6 +21,14 @@ const installScript = `#!/bin/sh
 set -eu
 src=` + guestShare + `/bin/parker
 dst=/usr/local/bin/parker
+# Transparent proxy needs iptables; some images (Ubuntu minimal) lack it.
+if ! command -v iptables >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends iptables
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q iptables-nft
+  fi
+fi
 mark=/var/lib/parker/machine-installed
 mkdir -p /var/lib/parker
 if [ -x "$src" ]; then
@@ -121,8 +129,6 @@ func UserData(pubKey string, mounts []string) string {
 	for i, dir := range mounts {
 		fmt.Fprintf(&b, "  - [%s, %q, virtiofs, \"rw,nofail\", \"0\", \"0\"]\n", MountTag(i), dir)
 	}
-	// The minimal image has no iptables; transparent proxy needs it.
-	b.WriteString("packages: [iptables]\n")
 	b.WriteString("write_files:\n")
 	file := func(path, perm, content string) {
 		fmt.Fprintf(&b, "  - path: %s\n    permissions: %q\n    content: |\n", path, perm)
