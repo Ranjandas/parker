@@ -17,7 +17,7 @@ jobs:
     # macOS: the darwin build needs cgo (Virtualization framework, for
     # `parker machine`) and codesign. Linux builds cross-compile as before.
     needs: test
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
         with:

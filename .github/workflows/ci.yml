@@ -47,7 +47,7 @@ jobs:
   macos:
     # The release's macOS build: cgo for `parker machine`, ad-hoc signed
     # with the virtualization entitlement, as .goreleaser.yaml does it.
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
