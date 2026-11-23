@@ -147,7 +147,11 @@ func machineStartCmd() *cobra.Command {
 					return true
 				}
 			}
-			fmt.Fprintf(os.Stderr, "booting parker machine (%s; first boot installs the daemon, about a minute)\n", conf.Image)
+			note := ""
+			if _, err := os.Stat(m.EFIVarsPath()); err != nil {
+				note = "; the first boot installs the daemon"
+			}
+			fmt.Fprintf(os.Stderr, "booting parker machine (%s%s)\n", conf.Image, note)
 			n := 0
 			r, err := m.WaitReady(began, 10*time.Minute, alive, func() {
 				n++
