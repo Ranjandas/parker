@@ -395,9 +395,15 @@ function bCanvas() {
 }
 
 // ---------- inspector ----------
-// A field. doc (from the schema) shows while the field is hovered or
-// focused; note always shows.
-const fld = (label, input, doc, forId, note) => `<div class="fld"><label${forId ? ` for="${forId}"` : ""}${doc ? ` title="${esc(doc)}"` : ""}>${label}</label><div>${input}${note ? `<div class="hint">${esc(note)}</div>` : ""}${doc ? `<div class="hint doc">${esc(doc)}</div>` : ""}</div></div>`;
+// An info icon whose note opens in a floating tip (see tipShow in app.js)
+// on hover, focus or click, so the form never reflows under the cursor.
+// Notes are joined into paragraphs.
+const info = (about, ...notes) => { const t = notes.filter(Boolean).join("\n\n"); return t ? `<button type="button" class="info" data-tip="${esc(t)}" aria-label="About ${esc(about)}">i</button>` : ""; };
+// A field's label, with an info icon when it has a doc.
+const flbl = (label, forId, ...doc) => `<div class="fl"><label${forId ? ` for="${forId}"` : ""}>${label}</label>${info(label, ...doc)}</div>`;
+// A field. doc (from the schema) sits behind the label's info icon; note
+// always shows.
+const fld = (label, input, doc, forId, note) => `<div class="fld">${flbl(label, forId, doc)}<div>${input}${note ? `<div class="hint">${esc(note)}</div>` : ""}</div></div>`;
 const seg = (f, opts, cur) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" data-f="${f}" data-v="${esc(v)}" class="${String(cur) === String(v) ? "on" : ""}">${esc(l)}</button>`).join("")}</div>`;
 const stepper = (f, n) => `<span class="stepper"><button type="button" data-f="${f}" data-v="-1" aria-label="Fewer">−</button><span>${n}</span><button type="button" data-f="${f}" data-v="1" aria-label="More">+</button></span>`;
 // vlist is a text field with suggestions (a datalist).
@@ -467,7 +473,7 @@ function bInspector() {
       body += fld("Port", `<input id="bf-port" data-f="port" value="${n.svc.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-port") +
         fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_template)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
         fld("Connect", `<select data-f="connect" id="bf-connect">${conn.map(([v, l]) => `<option value="${v}" ${n.svc.connect === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Service", "connect"), "bf-connect") +
-        `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Service", "upstreams"))}">Upstreams</label><div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button><div class="hint doc">dc:, peer: or partition: follow from where the two services sit.</div></div></div>` +
+        `<div class="fld" style="align-items:start">${flbl("Upstreams", "", sdoc("Service", "upstreams"), "dc:, peer: or partition: follow from where the two services sit.")}<div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button></div></div>` +
         bFailFld(n.id, f.dc.id, n.part);
     }
     body += `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(n.name)}</button></div>`;
@@ -487,7 +493,7 @@ function bInspector() {
     body = fld("Name", txt("name", x.name), "", "bf-name") +
       fld("Port", `<input id="bf-xport" data-f="xport" value="${x.port}" inputmode="numeric">`, sdoc("Service", "port"), "bf-xport") +
       fld("Namespace", txt("xns", x.ns || "", m.defNs ? `${m.defNs} (from service_template)` : "default"), sdoc("Service", "namespace"), "bf-xns", "Consul Enterprise.") +
-      `<div class="fld" style="align-items:start"><label title="${esc(sdoc("External", "in"))}">Registered in</label><div class="ups">${regs || '<span class="hint">Nowhere yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Register in a datacenter</button><div class="hint doc">Linking a terminating gateway to it registers it in the gateway's datacenter and partition.</div></div></div>` +
+      `<div class="fld" style="align-items:start">${flbl("Registered in", "", sdoc("External", "in"), "Linking a terminating gateway to it registers it in the gateway's datacenter and partition.")}<div class="ups">${regs || '<span class="hint">Nowhere yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Register in a datacenter</button></div></div>` +
       x.in.map((r) => bFailFld(x.id, r.dc, r.part, `From ${esc(Build.sideName(m, r.dc, r.part))}`)).join("") +
       `<div class="hint">One node outside Consul, with no agent, on the LAN of every datacenter that registers it. Each registers it on an external node that Parker health-checks from server-1, as consul-esm would. The mesh reaches it through a terminating gateway.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(x.name)}</button></div>`;
@@ -527,7 +533,7 @@ function bFailFld(id, dcId, part, label) {
   const left = Build.foSides(m, id, dcId, part).filter((t) => !fo || !fo.to.some((x) => x.dc === t.dc && (x.part || "") === (t.part || "")));
   const pick = left.length ? `<select data-f="foadd" data-sk="${k}" aria-label="Fail over to"><option value="">+ Fail over to…</option>${left.map((t) => `<option value="${t.dc}:${t.part}">${esc(Build.sideName(m, t.dc, t.part))}</option>`).join("")}</select>` : "";
   if (!rows && !pick) return "";
-  return `<div class="fld" style="align-items:start"><label title="A service-resolver: when every instance here is unhealthy, calls go to the next target">${label || "Fails over to"}</label><div class="ups">${rows || ""}${pick}${fo ? `<label class="sf inl"><span>ConnectTimeout</span><input data-f="fotimeout" data-fo="${fo.id}" value="${esc(fo.timeout || "")}" placeholder="Consul's default (5s)" spellcheck="false"></label>` : ""}<div class="hint doc">Each target gets the service exported and its callers allowed, as a call there would.</div></div></div>`;
+  return `<div class="fld" style="align-items:start">${flbl(label || "Fails over to", "", "A service-resolver: when every instance here is unhealthy, calls go to the next target.", "Each target gets the service exported and its callers allowed, as a call there would.")}<div class="ups">${rows || ""}${pick}${fo ? `<label class="sf inl"><span>ConnectTimeout</span><input data-f="fotimeout" data-fo="${fo.id}" value="${esc(fo.timeout || "")}" placeholder="Consul's default (5s)" spellcheck="false"></label>` : ""}</div></div>`;
 }
 
 // ---------- config entries ----------
@@ -540,7 +546,7 @@ function bEntries(d, pid, label) {
   const sk = `${d.id}:${pid || ""}`;
   const g = gen.map((x, i) => `<div class="up ce gen ${x.over ? "over" : ""}"><span title="${esc(ceName(x.e))}: ${x.over ? "overridden by yours" : `from the canvas: ${esc(x.why)}`}">${esc(ceName(x.e))} <i>${x.over ? "overridden by yours" : `from the canvas: ${esc(x.why)}`}</i></span>${x.over ? "" : `<button class="x" data-f="ceover" data-sk="${sk}" data-i="${i}" title="Write your own ${esc(x.e.Kind)} for ${esc(x.e.Name || "")}; it replaces this one">Override</button>`}</div>`).join("");
   const o = own.map((e, i) => `<div class="up ce"><span title="${esc(ceName(e))}">${esc(ceName(e))}</span><button class="x" data-f="ceedit" data-sk="${sk}" data-i="${i}" title="Edit">Edit</button><button class="x" data-f="cerm" data-sk="${sk}" data-i="${i}" title="Remove">✕</button></div>`).join("");
-  return `<div class="fld" style="align-items:start"><label title="${esc(sdoc("Datacenter", "config_entries"))}">${label || "Config entries"}</label><div class="ups">${g}${o}${g || o ? "" : '<span class="hint">None yet.</span>'}<button class="btn sm" data-f="ceadd" data-sk="${sk}">+ Add an entry</button><div class="hint doc">The canvas writes the entries its calls, gateways and failovers need. Anything else goes here, as Consul's YAML; yours win over the canvas's for the same kind and name.</div></div></div>`;
+  return `<div class="fld" style="align-items:start">${flbl(label || "Config entries", "", sdoc("Datacenter", "config_entries"), "The canvas writes the entries its calls, gateways and failovers need. Anything else goes here, as Consul's YAML; yours win over the canvas's for the same kind and name.")}<div class="ups">${g}${o}${g || o ? "" : '<span class="hint">None yet.</span>'}<button class="btn sm" data-f="ceadd" data-sk="${sk}">+ Add an entry</button></div></div>`;
 }
 // ceYAML writes an entry as block YAML for the editor.
 function ceYAML(v, ind) {
@@ -602,7 +608,7 @@ function bStepBtns(id) {
   if (!ks.length) return "";
   const faults = ks.filter((k) => Build.FAULTS.includes(k) || k === "fault" || k === "unfault"), checks = ks.filter((k) => !faults.includes(k));
   const row = (l) => l.map((k) => `<button class="btn sm" data-step="${k}" data-sid="${esc(id)}">${STEP_LABEL[k]}</button>`).join("");
-  return `<div class="fld" style="align-items:start"><label title="Adds a step to the lab's scenario; right-click it on the canvas too">Scenario</label><div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}<div class="hint doc">Adds a step on <span class="mono">${esc(Build.sel(BL.m, id))}</span> to the scenario.</div></div></div>`;
+  return `<div class="fld" style="align-items:start">${flbl("Scenario", "", `Adds a step on ${Build.sel(BL.m, id)} to the lab's scenario. Right-click it on the canvas for the same steps.`)}<div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}</div></div>`;
 }
 // bLeaves lists a step's editable values: [{path, v, k}], k str, num,
 // bool, list (of scalars) or ro (edit it in the YAML).

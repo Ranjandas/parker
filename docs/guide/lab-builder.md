@@ -19,7 +19,9 @@ $ parker ui
   upstream gets `dc:`, `peer:` or `partition:` from where the two sit.
 - Link two datacenters to federate or peer them, and a gateway to the
   services it routes to.
-- The inspector edits the selected item, with each field's description.
+- The inspector edits the selected item. Hover over or click the **i**
+  icon beside a field to read what it does; the note opens over the
+  form, so nothing moves while you work.
 
 The YAML next to the canvas reads like a hand-written file: shared
 settings go in `consul.defaults`, and the builder writes the config

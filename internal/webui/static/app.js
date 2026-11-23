@@ -1349,6 +1349,37 @@ document.addEventListener("dblclick", (e) => {
   const nd = e.target.closest(".nd[data-tnode]");
   if (nd) location.hash = `#/lab/${encodeURIComponent(S.route.lab)}/node/${encodeURIComponent(nd.dataset.tnode)}`;
 });
+// Floating tips for .info icons: hover or focus shows the note, a click pins
+// it (for touch), Esc, a scroll or a click elsewhere closes it. One fixed
+// element over the page, so opening a tip never moves anything.
+const tipEl = () => document.getElementById("tip") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "tip", role: "tooltip" }));
+let tipFor = null;
+function tipShow(b) {
+  const t = tipEl();
+  if (tipFor && tipFor !== b) tipFor.classList.remove("on");
+  tipFor = b; t.textContent = b.dataset.tip; t.classList.add("show");
+  b.setAttribute("aria-describedby", "tip");
+  const r = b.getBoundingClientRect(), w = t.offsetWidth, h = t.offsetHeight;
+  const x = Math.max(8, Math.min(r.left + r.width / 2 - 24, innerWidth - w - 8));
+  const y = r.bottom + 6 + h > innerHeight - 8 ? r.top - 6 - h : r.bottom + 6;
+  t.style.left = x + "px"; t.style.top = Math.max(8, y) + "px";
+}
+function tipHide(force) {
+  if (!tipFor || (!force && tipFor.classList.contains("on"))) return;
+  tipFor.classList.remove("on"); tipFor.removeAttribute("aria-describedby"); tipFor = null;
+  tipEl().classList.remove("show");
+}
+document.addEventListener("pointerover", (e) => { const b = e.target.closest && e.target.closest(".info"); if (b && b !== tipFor) { tipHide(true); tipShow(b); } });
+document.addEventListener("pointerout", (e) => { const b = e.target.closest && e.target.closest(".info"); if (b && b === tipFor && !b.contains(e.relatedTarget)) tipHide(); });
+document.addEventListener("focusin", (e) => { if (e.target.matches(".info")) { tipHide(true); tipShow(e.target); } });
+document.addEventListener("focusout", (e) => { if (e.target === tipFor) tipHide(true); });
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".info");
+  if (b) { e.preventDefault(); const pinned = b.classList.toggle("on"); if (pinned) tipShow(b); else tipHide(true); return; }
+  tipHide(true);
+}, true);
+document.addEventListener("scroll", () => tipHide(true), true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && tipFor) { e.stopPropagation(); tipHide(true); } }, true);
 addEventListener("hashchange", onRoute);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && S.info) poll(); });
 
