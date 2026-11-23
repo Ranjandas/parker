@@ -132,18 +132,17 @@ type identityACL interface {
 	TokenCreate(*api.ACLToken, *api.WriteOptions) (*api.ACLToken, *api.WriteMeta, error)
 }
 
-// ensurePolicy creates a policy in its partition's default namespace
-// unless it is there.
+// ensurePolicy creates a policy in its namespace unless it is there.
 func ensurePolicy(a identityACL, p expand.IdentityPolicy) error {
-	got, _, err := a.PolicyReadByName(p.Name, &api.QueryOptions{Partition: p.Partition})
+	got, _, err := a.PolicyReadByName(p.Name, &api.QueryOptions{Partition: p.Partition, Namespace: p.Namespace})
 	if err != nil && !strings.Contains(err.Error(), "404") {
 		return err
 	}
 	if got != nil {
 		return nil
 	}
-	_, _, err = a.PolicyCreate(&api.ACLPolicy{Name: p.Name, Description: "Parker lab", Rules: p.Rules, Partition: p.Partition},
-		&api.WriteOptions{Partition: p.Partition})
+	_, _, err = a.PolicyCreate(&api.ACLPolicy{Name: p.Name, Description: "Parker lab", Rules: p.Rules, Partition: p.Partition, Namespace: p.Namespace},
+		&api.WriteOptions{Partition: p.Partition, Namespace: p.Namespace})
 	return err
 }
 
@@ -168,9 +167,8 @@ func ensureIdentityToken(a identityACL, t expand.IdentityToken) error {
 		tok.ServiceIdentities = []*api.ACLServiceIdentity{{ServiceName: t.Service}}
 	}
 	for _, name := range t.Policies {
-		// The policies are in the partition's default namespace, as is
-		// every token that links one.
-		p, _, err := a.PolicyReadByName(name, &api.QueryOptions{Partition: t.Partition})
+		// A token links policies of its own namespace.
+		p, _, err := a.PolicyReadByName(name, &api.QueryOptions{Partition: t.Partition, Namespace: ns})
 		if err != nil {
 			return fmt.Errorf("policy %s: %w", name, err)
 		}

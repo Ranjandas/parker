@@ -874,6 +874,11 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			return err
 		}
 		dpEntries = append(dpEntries, extEntries...)
+		if acl {
+			for i, n := range ten.Namespaces {
+				ten.Namespaces[i].PolicyDefaults = ids.namespaceDefaults(n.Partition)
+			}
+		}
 		ten.Policies, ten.Tokens = ids.policies, ids.tokens
 		if s1 := out.Nodes[dcName+"-server-1"]; s1.Processes[Tenancy] != nil {
 			s1.Files[TenancyManifest] = mustJSON(ten)

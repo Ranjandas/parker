@@ -72,7 +72,7 @@ func TestExternalServicePartitions(t *testing.T) {
 	if err := json.Unmarshal([]byte(low.Nodes["dc2-server-1"].Files[TenancyManifest]), &ten); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(ten.Namespaces, NamespaceRef{Partition: "part-b", Name: "app"}) {
+	if !slices.ContainsFunc(ten.Namespaces, func(n NamespaceRef) bool { return n.Partition == "part-b" && n.Name == "app" }) {
 		t.Errorf("dc2 creates app in part-b for api and the gateway, though no node runs there: %+v", ten)
 	}
 	if ns := low.Nodes["api"].Labels.Namespaces; !slices.Equal(ns, []string{"app"}) {
@@ -80,8 +80,39 @@ func TestExternalServicePartitions(t *testing.T) {
 	}
 
 	tgw := low.Nodes["dc1-part-a-terminating"]
-	if env := tgw.Processes["terminating-gateway"].Env; env["CONSUL_NAMESPACE"] != "app" || env["CONSUL_PARTITION"] != "part-a" {
+	env := tgw.Processes["terminating-gateway"].Env
+	if env["CONSUL_NAMESPACE"] != "app" || env["CONSUL_PARTITION"] != "part-a" {
 		t.Errorf("terminating gateway registers in part-a/app: %v", env)
+	}
+	// Its linked service (api) is in app too, so its token lives in app,
+	// with a service identity and a policy there, and app's ACL defaults
+	// give it read everywhere.
+	var ten1 TenancySpec
+	if err := json.Unmarshal([]byte(low.Nodes["dc1-server-1"].Files[TenancyManifest]), &ten1); err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range ten1.Tokens {
+		if tok.SecretID != env["CONSUL_HTTP_TOKEN"] {
+			continue
+		}
+		if tok.Scoped || tok.Namespace != "app" || tok.Partition != "part-a" || tok.Service != "terminating-gateway" ||
+			!slices.Equal(tok.Policies, []string{"parker-terminating-gateway-terminating-gateway"}) {
+			t.Errorf("terminating gateway's token: %+v", tok)
+		}
+	}
+	var linked string
+	for _, p := range ten1.Policies {
+		if p.Partition == "part-a" && p.Namespace == "app" && p.Name == "parker-terminating-gateway-terminating-gateway" {
+			linked = p.Rules
+		}
+	}
+	if linked != "service \"api\" { policy = \"write\" }\n" {
+		t.Errorf("terminating gateway's policy in app: %q", linked)
+	}
+	if !slices.ContainsFunc(ten1.Namespaces, func(n NamespaceRef) bool {
+		return n.Partition == "part-a" && n.Name == "app" && slices.Equal(n.PolicyDefaults, []string{ReadEverywherePolicy})
+	}) {
+		t.Errorf("part-a/app links parker-read-everywhere through its ACL defaults: %+v", ten1.Namespaces)
 	}
 	if mgw := low.Nodes["dc1-part-a-mesh"].Processes["mesh-gateway"].Env; mgw["CONSUL_NAMESPACE"] != "default" {
 		t.Errorf("mesh gateway stays in default: %v", mgw)

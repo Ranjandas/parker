@@ -30,6 +30,9 @@ type TenancySpec struct {
 type NamespaceRef struct {
 	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
+	// PolicyDefaults are policies (in the partition's default namespace)
+	// that every token in the namespace gets: its ACL defaults.
+	PolicyDefaults []string `json:"policy_defaults,omitempty"`
 }
 
 func (t TenancySpec) empty() bool {

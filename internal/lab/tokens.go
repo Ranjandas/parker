@@ -52,7 +52,9 @@ func identityLabel(t expand.IdentityToken) string {
 	if t.Partition != "" {
 		where = append(where, "partition "+t.Partition)
 	}
-	if t.Namespace != "" {
+	if t.Scoped {
+		where = append(where, "default namespace, scoped to "+t.Namespace)
+	} else if t.Namespace != "" {
 		where = append(where, "namespace "+t.Namespace)
 	}
 	if len(t.Policies) > 0 {

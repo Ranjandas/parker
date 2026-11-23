@@ -55,13 +55,14 @@ docs set them up:
 
 With namespaces (Consul Enterprise), services and gateways also get
 `parker-read-everywhere`: service and node read in every namespace of
-their partition, which cross-namespace upstreams need. A service or
-gateway in a namespace other than `default` has its token in the
-partition's default namespace instead, with a `parker-service-<ns>-<svc>`
-(or `parker-<kind>-gateway-<ns>-<svc>`) policy that grants the service
-identity's rules inside a `namespace "<ns>"` block: Enterprise only
-links a token to its own namespace's policies, and only default-namespace
-policies can grant partition-wide rules.
+their partition, which cross-namespace upstreams need. A token lives in
+its service's namespace, so look for it there
+(`consul acl token list -partition part-a -namespace app`). Outside
+`default`, `parker-read-everywhere` comes from the namespace's ACL
+defaults rather than the token's own policies. An API gateway, or a
+terminating gateway fronting a service in another namespace, has a
+[scoped token](acl-tokens.md#scoped-tokens) in the partition's default
+namespace instead.
 
 The `tenancy` process on each datacenter's `server-1` creates the
 policies and tokens before any client starts; its log lists each one.
@@ -71,7 +72,7 @@ environments, and ends with a note naming every token in them:
 ```
 # ACL tokens above:
 #   2f1c…  node identity web (dc1)
-#   9a07…  service identity web; namespace app; policies parker-read-everywhere
+#   9a07…  service identity web; partition part-a; namespace app
 ```
 
 So when a sidecar can't see its upstreams, read its token's policies
