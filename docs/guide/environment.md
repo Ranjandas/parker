@@ -12,7 +12,9 @@ description: The environment variables Parker reads, and the ones it sets for th
 | `PARKER_TLS_CA` | The remote daemon's certificate, to trust it. |
 | `PARKER_RUN_DIR` | Where labs' run directories go, instead of `/var/lib/parker/run`. The daemon's socket and log move there too. |
 | `PARKER_STATE_DIR` | Where the daemon keeps its TLS certificate and token, instead of `/var/lib/parker`. |
-| `PARKER_CACHE` | Where downloaded binaries are cached, instead of `~/.cache/parker`. |
+| `PARKER_CACHE` | Where downloaded binaries are cached, instead of `~/.cache/parker`. [`parker machine`](macos.md) keeps its images in `images/` under it. |
+| `PARKER_MACHINE_DIR` | Where [`parker machine`](macos.md) keeps the VM, instead of `~/.parker/machine/default`. |
+| `PARKER_MACHINE_BINARY` | A Linux `parker` binary for the [machine's VM](macos.md#which-parker-runs-in-the-vm) to run instead of a release. |
 | `PARKER_RELEASES_URL` | Where to download binaries from, instead of `https://releases.hashicorp.com`: a mirror with the same layout. |
 | `CONSUL_LICENSE_PATH`, `CONSUL_LICENSE` | The Consul Enterprise license, a file or the license itself. See [Enterprise](enterprise.md#the-license). |
 | `NO_COLOR`, `PARKER_TUI_STATIC` | Keep the [TUI](tui.md)'s logo still. |

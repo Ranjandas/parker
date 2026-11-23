@@ -19,7 +19,7 @@ sections:
       - reuse
       - low-level
   - title: Running labs
-    pages: [lifecycle, getting-in, log-levels, tui, web-ui, lab-builder, rootless, remote]
+    pages: [lifecycle, getting-in, log-levels, tui, web-ui, lab-builder, rootless, macos, remote]
   - title: Testing and repros
     pages: [selectors, faults, scenarios, upgrades]
   - title: Reference

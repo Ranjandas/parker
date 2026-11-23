@@ -9,6 +9,10 @@ a Linux machine (a VM, a cloud host, a box under your desk) and use
 `logs`, `tui`, `ui`, everything. The macOS build of Parker is exactly
 this client.
 
+On a Mac, [`parker machine`](macos.md) does all of this for you: it runs
+the daemon in a small local Linux VM and connects to it, with nothing on
+this page to set up.
+
 ## Set up the daemon
 
 On the Linux machine, start the daemon with a TCP listener:

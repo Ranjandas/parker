@@ -321,6 +321,68 @@ Stops the daemon. Labs keep running (except [rootless](rootless.md) ones).
 Prints what a remote client needs: the token and the certificate's path.
 Creates them if they're missing.
 
+## Labs on macOS
+
+### parker machine
+
+```console
+$ parker machine init|start|stop|rm|ssh
+```
+
+Runs labs on a Mac: a small Linux VM with the Parker daemon inside, which
+`parker` on the Mac uses while it runs. See [labs on macOS](macos.md).
+
+### parker machine init
+
+```console
+$ parker machine init [flags]
+```
+
+Creates the machine: downloads the Linux image (cached), checks it and
+prepares the VM's disk. Doesn't start it.
+
+| Flag | Effect |
+|---|---|
+| `--cpus` | Virtual CPUs. Default: the Mac's, at most 4. |
+| `--memory` | Memory in MiB. Default 4096. |
+| `--disk` | Disk size in GiB. Default 30; it grows on demand. |
+| `--mount` | Share a directory on the Mac with the VM, at the same path. Repeatable. See [files on your Mac](macos.md#files-on-your-mac). |
+
+```console
+$ parker machine init --cpus 6 --memory 8192 --mount ~/repros/certs
+```
+
+### parker machine start
+
+Boots the machine in the background and waits until its daemon is ready.
+The VM runs the Parker release matching this `parker`, or the latest
+release (see [which Parker runs in the VM](macos.md#which-parker-runs-in-the-vm)).
+
+### parker machine stop
+
+Shuts the VM down. Labs in it stop too.
+
+### parker machine rm
+
+```console
+$ parker machine rm [--force]
+```
+
+Deletes the machine and its disk. The downloaded image stays cached.
+
+| Flag | Effect |
+|---|---|
+| `--force` (`-f`) | Stop the machine first if it's running. |
+
+### parker machine ssh
+
+```console
+$ parker machine ssh [-- COMMAND...]
+```
+
+Opens a shell in the VM as its `parker` user (who can `sudo`), or runs
+`COMMAND` there.
+
 ## Other
 
 ### parker version

@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	connectrpc.com/connect v1.21.1
+	github.com/Code-Hex/vz/v3 v3.7.1
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -12,17 +13,21 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/hashicorp/consul/api v1.35.0
 	github.com/invopop/jsonschema v0.14.0
+	github.com/kdomanski/iso9660 v0.4.0
+	github.com/lima-vm/go-qcow2reader v0.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
 	github.com/yuin/goldmark v1.8.7
+	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
+	github.com/Code-Hex/go-infinity-channel v1.0.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -61,5 +66,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )

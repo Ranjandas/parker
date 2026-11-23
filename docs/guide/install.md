@@ -4,8 +4,9 @@ description: Install Parker on Linux with one command, from a package, or by han
 ---
 
 Parker is a single static binary. Labs run on **Linux** (amd64 or arm64).
-On macOS, Parker runs as a client that drives labs on a Linux machine or
-VM; see [remote use](remote.md).
+On a Mac, [`parker machine`](macos.md) runs them in a small Linux VM it
+sets up for you, or Parker can drive labs on another Linux machine; see
+[remote use](remote.md).
 
 ## Requirements
 
@@ -63,8 +64,11 @@ $ sudo install -m 0755 parker /usr/local/bin/parker
 ```
 
 For a Mac, download `parker_<version>_darwin_arm64.tar.gz` (or `amd64`)
-the same way. The macOS build is a client only: point it at a daemon on a
-Linux host as described in [remote use](remote.md).
+the same way, with `shasum -a 256 -c` in place of `sha256sum -c`. If you
+download it in a browser instead, clear macOS's quarantine flag before the
+first run: `xattr -d com.apple.quarantine parker`. Then run labs on the
+Mac with [`parker machine`](macos.md), or point it at a daemon on a Linux
+host as described in [remote use](remote.md).
 
 ## Run the daemon as a service
 

@@ -6,8 +6,8 @@
 # Downloads the latest release (or PARKER_VERSION, e.g. 0.9.0) for this OS
 # and CPU, checks it against the release's SHA256SUMS, and installs the
 # binary into PARKER_INSTALL_DIR (default /usr/local/bin, using sudo when
-# that directory isn't writable). On macOS this installs the client, which
-# drives a Parker daemon on a Linux host.
+# that directory isn't writable). On macOS, run labs in a local VM with
+# `parker machine`, or drive a Parker daemon on a Linux host.
 set -eu
 
 repo="Ranjandas/parker"
@@ -24,7 +24,7 @@ need uname
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
-  *) die "unsupported OS $(uname -s): Parker runs on Linux (and macOS as a client)" ;;
+  *) die "unsupported OS $(uname -s): Parker runs on Linux and macOS" ;;
 esac
 case "$(uname -m)" in
   x86_64 | amd64) arch=amd64 ;;

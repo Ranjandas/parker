@@ -44,6 +44,26 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/parker
           GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/parker
 
+  macos:
+    # The release's macOS build: cgo for `parker machine`, ad-hoc signed
+    # with the virtualization entitlement, as .goreleaser.yaml does it.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./internal/machine ./cmd/parker
+      - run: go test ./internal/machine
+      - name: build and sign (arm64, amd64)
+        run: |
+          for arch in arm64 amd64; do
+            CGO_ENABLED=1 GOARCH=$arch go build -trimpath -o "bin/parker-$arch" ./cmd/parker
+            codesign --force --sign - --entitlements hack/machine/parker.entitlements "bin/parker-$arch"
+            codesign -d --entitlements - "bin/parker-$arch" 2>/dev/null | grep -q com.apple.security.virtualization
+          done
+          bin/parker-arm64 machine --help >/dev/null
+
   plan:
     # Which e2e labs to run: on a PR, the ones its changes touch
     # (hack/e2eplan); on main, nightly and by hand, all of them.
@@ -127,10 +147,10 @@ jobs:
     # One status for the whole matrix: green when every planned lab passed
     # or the PR needed none.
     runs-on: ubuntu-24.04
-    needs: [test, plan, e2e-lab]
+    needs: [test, macos, plan, e2e-lab]
     if: always()
     steps:
       - run: |
-          echo "test: ${{ needs.test.result }}, plan: ${{ needs.plan.result }}, labs: ${{ needs.e2e-lab.result }}"
-          [ "${{ needs.test.result }}" = success ] && [ "${{ needs.plan.result }}" = success ] || exit 1
+          echo "test: ${{ needs.test.result }}, macos: ${{ needs.macos.result }}, plan: ${{ needs.plan.result }}, labs: ${{ needs.e2e-lab.result }}"
+          [ "${{ needs.test.result }}" = success ] && [ "${{ needs.macos.result }}" = success ] && [ "${{ needs.plan.result }}" = success ] || exit 1
           case "${{ needs.e2e-lab.result }}" in success|skipped) ;; *) exit 1 ;; esac

@@ -1,5 +1,6 @@
 # Release build: `git tag v0.1.0 && git push origin v0.1.0` runs
-# .github/workflows/release.yml. Try locally with
+# .github/workflows/release.yml, on macOS (the darwin build needs cgo and
+# codesign). Try locally on a Mac with
 #   goreleaser release --snapshot --clean
 version: 2
 project_name: parker
@@ -21,17 +22,24 @@ builds:
       - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}
     goos: [linux]
     goarch: [amd64, arm64]
-  # macOS: client only (exec, logs, status, proxy, port-forward against a
-  # daemon on a Linux host). Labs themselves need Linux.
+  # macOS: a client for a daemon on a Linux host, and `parker machine`,
+  # which runs that daemon in a local VM with Apple's Virtualization
+  # framework. That needs cgo, so releases build on a macOS runner, and an
+  # ad-hoc signature with the virtualization entitlement (no Apple
+  # account needed).
   - id: parker-client
     main: ./cmd/parker
     binary: parker
-    env: [CGO_ENABLED=0]
+    env: [CGO_ENABLED=1]
     flags: [-trimpath]
     ldflags:
       - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}
     goos: [darwin]
     goarch: [amd64, arm64]
+    hooks:
+      post:
+        - codesign --force --sign - --entitlements hack/machine/parker.entitlements "{{ .Path }}"
+        - sh -c 'codesign -d --entitlements - "{{ .Path }}" 2>/dev/null | grep -q com.apple.security.virtualization'
 
 archives:
   - id: parker
