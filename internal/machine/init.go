@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // InitOptions are `parker machine init`'s choices.
 type InitOptions struct {
-	CPUs          uint
-	MemoryMiB     uint64
-	DiskGiB       uint64
-	Mounts        []string // host directories to share at the same path
-	ParkerBinary  string   // linux binary to run in the VM, "" = a release
-	ParkerVersion string   // release to install when no binary; "" = latest
+	CPUs      uint
+	MemoryMiB uint64
+	DiskGiB   uint64
+	Mounts    []string // host directories to share at the same path
 }
 
 // Init creates the machine: disk from the pinned image, SSH key, cloud-init
@@ -60,14 +59,9 @@ func (m Machine) Init(o InitOptions, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if o.ParkerVersion != "" && o.ParkerBinary == "" {
-		if err := os.WriteFile(m.path("share", "version"), []byte(o.ParkerVersion+"\n"), 0o644); err != nil {
-			return err
-		}
-	}
 	c := Config{
 		CPUs: o.CPUs, MemoryMiB: o.MemoryMiB, DiskGiB: o.DiskGiB, MAC: mac,
-		Image: img.Name, Mounts: o.Mounts, ParkerBinary: o.ParkerBinary, ParkerVersion: o.ParkerVersion,
+		Image: img.Name, Mounts: o.Mounts,
 	}
 	if err := m.SaveConfig(c); err != nil {
 		return err
@@ -76,17 +70,26 @@ func (m Machine) Init(o InitOptions, out io.Writer) error {
 	return nil
 }
 
-// CopyBinary refreshes the dev binary in the share, if the machine uses one.
-func (m Machine) CopyBinary(c Config) error {
-	if c.ParkerBinary == "" {
-		return nil
+// VersionPath holds the release the VM should run; its install script
+// installs it before the daemon starts when it differs from what it has.
+func (m Machine) VersionPath() string { return m.path("share", "version") }
+
+// SetDaemon says which parker the VM runs from its next boot: release
+// version (vX.Y.Z or X.Y.Z), or, if binary is set, that Linux binary
+// (a dev build; PARKER_MACHINE_BINARY).
+func (m Machine) SetDaemon(version, binary string) error {
+	if binary == "" {
+		_ = os.Remove(m.BinaryPath())
+		v := strings.TrimPrefix(version, "v")
+		return os.WriteFile(m.VersionPath(), []byte(v+"\n"), 0o644)
 	}
-	b, err := os.ReadFile(c.ParkerBinary)
+	_ = os.Remove(m.VersionPath())
+	b, err := os.ReadFile(binary)
 	if err != nil {
 		return fmt.Errorf("parker binary for the VM: %w", err)
 	}
 	if len(b) < 4 || string(b[:4]) != "\x7fELF" {
-		return fmt.Errorf("%s is not a Linux binary (build one with GOOS=linux)", c.ParkerBinary)
+		return fmt.Errorf("%s is not a Linux binary (build one with GOOS=linux)", binary)
 	}
 	if err := os.MkdirAll(m.path("share", "bin"), 0o755); err != nil {
 		return err

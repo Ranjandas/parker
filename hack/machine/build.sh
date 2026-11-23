@@ -2,7 +2,9 @@
 # Build parker for `parker machine` on a Mac (spike):
 #   bin/parker        macOS client with VM support (CGO), ad-hoc signed with
 #                     the virtualization entitlement Apple requires
-#   bin/parker-linux  the daemon binary the VM runs, for this Mac's CPU
+#   bin/parker-linux  a dev daemon for the VM, for this Mac's CPU. The VM
+#                     runs a release by default; to run this build instead:
+#                     PARKER_MACHINE_BINARY=bin/parker-linux bin/parker machine start
 # Needs Go and the Xcode command line tools (xcode-select --install).
 set -eu
 cd "$(dirname "$0")/../.."

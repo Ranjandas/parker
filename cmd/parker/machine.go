@@ -3,10 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"syscall"
 	"time"
@@ -68,9 +71,6 @@ func machineInitCmd() *cobra.Command {
 					return fmt.Errorf("--mount %s: not a directory", d)
 				}
 			}
-			if o.ParkerBinary == "" && version != "dev" {
-				o.ParkerVersion = version
-			}
 			if err := m.Init(o, os.Stderr); err != nil {
 				return err
 			}
@@ -82,7 +82,6 @@ func machineInitCmd() *cobra.Command {
 	c.Flags().UintVar(&o.CPUs, "cpus", uint(min(runtime.NumCPU(), 4)), "virtual CPUs")
 	c.Flags().Uint64Var(&o.MemoryMiB, "memory", 4096, "memory in MiB")
 	c.Flags().Uint64Var(&o.DiskGiB, "disk", 30, "disk size in GiB (grows on demand on the Mac)")
-	c.Flags().StringVar(&o.ParkerBinary, "parker-binary", "", "a Linux parker binary to run in the VM, copied in on every start (default: the matching release)")
 	c.Flags().StringArrayVar(&o.Mounts, "mount", nil, "share a host directory into the VM at the same path (for labs that use files on this Mac); repeatable")
 	return c
 }
@@ -120,7 +119,7 @@ func machineStartCmd() *cobra.Command {
 				}
 				return fmt.Errorf("parker machine is already running (pid %d) but not ready; see %s", pid, m.LogPath())
 			}
-			if err := m.CopyBinary(conf); err != nil {
+			if err := m.SetDaemon(daemonRelease(), os.Getenv("PARKER_MACHINE_BINARY")); err != nil {
 				return err
 			}
 			_ = os.Remove(m.ReadyPath())
@@ -174,6 +173,29 @@ func machineStartCmd() *cobra.Command {
 	_ = c.Flags().MarkHidden("foreground")
 	return c
 }
+
+// daemonRelease is the parker release the machine's daemon should run: this
+// binary's version if it is a release, else the latest release ("" if
+// GitHub can't be reached: the VM keeps what it has).
+func daemonRelease() string {
+	if releaseVersion.MatchString(version) {
+		return version
+	}
+	c := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Head("https://github.com/Ranjandas/parker/releases/latest")
+	if err != nil {
+		return ""
+	}
+	resp.Body.Close()
+	// .../releases/tag/vX.Y.Z
+	v := path.Base(resp.Header.Get("Location"))
+	if !releaseVersion.MatchString(v) {
+		return ""
+	}
+	return v
+}
+
+var releaseVersion = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
 
 func stopMachine(m machine.Machine) error {
 	pid := m.PID()

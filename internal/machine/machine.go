@@ -33,11 +33,6 @@ type Config struct {
 	// labs that point at files on the Mac (certificates, local builds).
 	// None by default: the VM sees only its own share.
 	Mounts []string `json:"mounts,omitempty"`
-	// ParkerBinary, if set, is a linux binary copied into the VM on every
-	// start (dev builds). Otherwise the VM installs ParkerVersion (or the
-	// latest release) with the website's install script.
-	ParkerBinary  string `json:"parker_binary,omitempty"`
-	ParkerVersion string `json:"parker_version,omitempty"`
 }
 
 // Ready is what the VM writes to the share once its daemon serves remote

@@ -21,14 +21,23 @@ const installScript = `#!/bin/sh
 set -eu
 src=` + guestShare + `/bin/parker
 dst=/usr/local/bin/parker
+mark=/var/lib/parker/machine-installed
+mkdir -p /var/lib/parker
 if [ -x "$src" ]; then
   cmp -s "$src" "$dst" || install -m 0755 "$src" "$dst"
+  echo binary > "$mark"
   exit 0
 fi
-[ -x "$dst" ] && exit 0
-ver=$(cat ` + guestShare + `/version 2>/dev/null || true)
+want=$(cat ` + guestShare + `/version 2>/dev/null || true)
+have=$(cat "$mark" 2>/dev/null || true)
+# Nothing to do if this release is in; with no version known (the host was
+# offline), keep any release already installed.
+if [ -x "$dst" ] && [ "$have" != binary ] && { [ -z "$want" ] || [ "$want" = "$have" ]; }; then
+  exit 0
+fi
 curl -fsSL https://ranjandas.github.io/parker/install.sh |
-  PARKER_INSTALL_DIR=/usr/local/bin PARKER_VERSION="$ver" sh
+  PARKER_INSTALL_DIR=/usr/local/bin PARKER_VERSION="$want" sh
+echo "$want" > "$mark"
 `
 
 // readyScript hands the host what it needs to reach the daemon, through the

@@ -208,12 +208,13 @@ func TestWaitReady(t *testing.T) {
 	}
 }
 
-func TestCopyBinary(t *testing.T) {
+func TestSetDaemon(t *testing.T) {
 	m := Machine{Dir: t.TempDir()}
+	_ = os.MkdirAll(m.ShareDir(), 0o700)
 	dir := t.TempDir()
 	elf := filepath.Join(dir, "parker")
 	_ = os.WriteFile(elf, []byte("\x7fELFrest"), 0o755)
-	if err := m.CopyBinary(Config{ParkerBinary: elf}); err != nil {
+	if err := m.SetDaemon("", elf); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(m.BinaryPath()); string(b) != "\x7fELFrest" {
@@ -221,11 +222,18 @@ func TestCopyBinary(t *testing.T) {
 	}
 	macho := filepath.Join(dir, "mac")
 	_ = os.WriteFile(macho, []byte("\xcf\xfa\xed\xfe"), 0o755)
-	if err := m.CopyBinary(Config{ParkerBinary: macho}); err == nil {
+	if err := m.SetDaemon("", macho); err == nil {
 		t.Error("a macOS binary: want an error")
 	}
-	if err := m.CopyBinary(Config{}); err != nil {
-		t.Error("no binary configured: nothing to do")
+	// A release replaces the dev binary.
+	if err := m.SetDaemon("v0.9.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.BinaryPath()); err == nil {
+		t.Error("dev binary left behind")
+	}
+	if b, _ := os.ReadFile(m.VersionPath()); string(b) != "0.9.0\n" {
+		t.Errorf("version file %q", b)
 	}
 }
 
