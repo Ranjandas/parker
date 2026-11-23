@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 // tenancyCmd runs on a dc's first server once its servers (and ACLs) are
@@ -56,6 +57,7 @@ func tenancyCmd() *cobra.Command {
 type tenancyAPI interface {
 	CreatePartition(ctx context.Context, name string) error
 	CreateNamespace(partition, name string) error
+	SetNamespaceDefaults(partition, name string, policies []string) error
 	EnsurePolicy(p expand.IdentityPolicy) error
 	EnsureToken(t expand.IdentityToken) error
 }
@@ -69,6 +71,17 @@ func (t consulTenancy) CreatePartition(ctx context.Context, name string) error {
 
 func (t consulTenancy) CreateNamespace(partition, name string) error {
 	_, _, err := t.c.Namespaces().Create(&api.Namespace{Name: name, Partition: partition, Description: "Parker lab"}, &api.WriteOptions{Partition: partition})
+	return err
+}
+
+// SetNamespaceDefaults links policies (by name, from the partition's
+// default namespace) to every token in the namespace.
+func (t consulTenancy) SetNamespaceDefaults(partition, name string, policies []string) error {
+	acls := &api.NamespaceACLConfig{}
+	for _, p := range policies {
+		acls.PolicyDefaults = append(acls.PolicyDefaults, api.ACLLink{Name: p})
+	}
+	_, _, err := t.c.Namespaces().Update(&api.Namespace{Name: name, Partition: partition, Description: "Parker lab", ACLs: acls}, &api.WriteOptions{Partition: partition})
 	return err
 }
 
@@ -87,13 +100,21 @@ func inPartition(p string) string {
 	return " in partition " + p
 }
 
+func inNamespace(n string) string {
+	if n == "" || n == spec.DefaultNamespace {
+		return ""
+	}
+	return " in namespace " + n
+}
+
 // exists: creating something that's there (a rerun) is fine.
 func exists(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
-// applyTenancy creates partitions, then namespaces, then policies and
-// tokens, retrying while the cluster settles.
+// applyTenancy creates partitions, then namespaces, then policies, then
+// the namespaces' ACL defaults (which name policies), then tokens,
+// retrying while the cluster settles.
 func applyTenancy(ctx context.Context, a tenancyAPI, t expand.TenancySpec, patience time.Duration, log io.Writer) error {
 	type step struct {
 		label string
@@ -111,10 +132,21 @@ func applyTenancy(ctx context.Context, a tenancyAPI, t expand.TenancySpec, patie
 		steps = append(steps, step{label, func() error { return a.CreateNamespace(n.Partition, n.Name) }})
 	}
 	for _, p := range t.Policies {
-		steps = append(steps, step{"policy " + p.Name + inPartition(p.Partition), func() error { return a.EnsurePolicy(p) }})
+		steps = append(steps, step{"policy " + p.Name + inNamespace(p.Namespace) + inPartition(p.Partition), func() error { return a.EnsurePolicy(p) }})
+	}
+	for _, n := range t.Namespaces {
+		if len(n.PolicyDefaults) == 0 {
+			continue
+		}
+		label := "ACL defaults (" + strings.Join(n.PolicyDefaults, ", ") + ") of namespace " + n.Name + inPartition(n.Partition)
+		steps = append(steps, step{label, func() error { return a.SetNamespaceDefaults(n.Partition, n.Name, n.PolicyDefaults) }})
 	}
 	for _, tok := range t.Tokens {
-		steps = append(steps, step{"token " + strings.ToLower(tok.Description) + inPartition(tok.Partition), func() error { return a.EnsureToken(tok) }})
+		ns := tok.Namespace
+		if tok.Scoped {
+			ns = ""
+		}
+		steps = append(steps, step{"token " + strings.ToLower(tok.Description) + inNamespace(ns) + inPartition(tok.Partition), func() error { return a.EnsureToken(tok) }})
 	}
 	for _, s := range steps {
 		deadline := time.Now().Add(patience)

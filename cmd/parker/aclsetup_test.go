@@ -17,15 +17,24 @@ type fakeACL struct {
 	creates  int
 }
 
-func (f *fakeACL) PolicyReadByName(n string, _ *api.QueryOptions) (*api.ACLPolicy, *api.QueryMeta, error) {
-	if p := f.policies[n]; p != nil {
+// policyKey is a policy's key in fakeACL.policies: ns/name, or name in
+// the default namespace.
+func policyKey(ns, name string) string {
+	if ns == "" {
+		return name
+	}
+	return ns + "/" + name
+}
+
+func (f *fakeACL) PolicyReadByName(n string, q *api.QueryOptions) (*api.ACLPolicy, *api.QueryMeta, error) {
+	if p := f.policies[policyKey(q.Namespace, n)]; p != nil {
 		return p, nil, nil
 	}
 	return nil, nil, errors.New("Unexpected response code: 404 (ACL not found)")
 }
 
 func (f *fakeACL) PolicyCreate(p *api.ACLPolicy, _ *api.WriteOptions) (*api.ACLPolicy, *api.WriteMeta, error) {
-	f.policies[p.Name] = p
+	f.policies[policyKey(p.Namespace, p.Name)] = p
 	f.creates++
 	return p, nil, nil
 }
@@ -88,11 +97,16 @@ func TestAgentRulesNamespaceNodeRead(t *testing.T) {
 
 func TestEnsureIdentityToken(t *testing.T) {
 	f := &fakeACL{policies: map[string]*api.ACLPolicy{}, tokens: map[string]*api.ACLToken{}}
-	pol := expand.IdentityPolicy{Name: "parker-tgw", Partition: "part-a", Rules: `service "api" { policy = "write" }`}
+	// A token in namespace app links the policy of that name in app.
+	pol := expand.IdentityPolicy{Name: "parker-tgw", Partition: "part-a", Namespace: "app", Rules: `service "api" { policy = "write" }`}
 	if err := ensurePolicy(f, pol); err != nil {
 		t.Fatal(err)
 	}
-	f.policies["parker-tgw"].ID = "pol-1"
+	f.policies["app/parker-tgw"].ID = "pol-1"
+	if err := ensurePolicy(f, expand.IdentityPolicy{Name: "parker-tgw", Partition: "part-a", Rules: `namespace "app" {}`}); err != nil {
+		t.Fatal(err)
+	}
+	f.policies["parker-tgw"].ID = "pol-default"
 	tok := expand.IdentityToken{SecretID: "s-1", Description: "Parker terminating gateway tgw", Partition: "part-a", Namespace: "app",
 		Service: "tgw", Policies: []string{"parker-tgw"}}
 	if err := ensureIdentityToken(f, tok); err != nil {
@@ -109,7 +123,7 @@ func TestEnsureIdentityToken(t *testing.T) {
 	if err := ensureIdentityToken(f, scoped); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.tokens["s-3"]; got == nil || got.Partition != "part-a" || got.Namespace != "" || len(got.ServiceIdentities) != 0 || len(got.Policies) != 1 {
+	if got := f.tokens["s-3"]; got == nil || got.Partition != "part-a" || got.Namespace != "" || len(got.ServiceIdentities) != 0 || len(got.Policies) != 1 || got.Policies[0].ID != "pol-default" {
 		t.Fatalf("scoped token: %+v", got)
 	}
 	node := expand.IdentityToken{SecretID: "s-2", Node: "web", Datacenter: "dc1"}

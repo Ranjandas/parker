@@ -12,7 +12,16 @@ import (
 // With ACLs, every client agent, service and gateway gets its own token,
 // the way Consul's docs set them up (#136): a node identity for an agent,
 // a service identity for a service and its sidecar, and a service
-// identity plus the documented rules for a gateway. Setup jobs (acl-setup,
+// identity plus the documented rules for a gateway.
+//
+// With namespaces (Consul Enterprise), a token lives in its service's
+// namespace, as consul-k8s and most production setups have it, and that
+// namespace's ACL defaults (PolicyDefaults) link parker-read-everywhere
+// from the partition's default namespace for cross-namespace upstreams.
+// Only where Consul gives no other way does a token live in the
+// partition's default namespace instead ("scoped"): an API gateway (mesh
+// read is partition-wide) and a terminating gateway with a linked service
+// in another namespace. Setup jobs (acl-setup,
 // tenancy, config entries, peering) keep the management token: they are
 // lab plumbing, not what a lab tests. Servers keep the parker-agent token
 // acl-setup creates, since they start before anything else can be made.
@@ -34,21 +43,22 @@ type IdentityToken struct {
 	// Policies (by name, from TenancySpec.Policies in the token's
 	// partition) add to the identity.
 	Policies []string `json:"policies,omitempty"`
-	// Scoped: the service is in a namespace other than default, and the
-	// token lives in its partition's default namespace with no service
-	// identity; its policy grants the identity's rules inside a namespace
-	// block. Consul Enterprise links a token only to policies of its own
-	// namespace, and only default-namespace policies may name other
-	// namespaces, which partition-wide rules (mesh, peering, read
-	// everywhere) need.
+	// Scoped: the service is in a namespace other than default but needs
+	// rules a policy there can't hold, so the token lives in its
+	// partition's default namespace with no service identity; its policy
+	// grants the identity's rules inside a namespace block. Consul
+	// Enterprise links a token only to policies of its own namespace, and
+	// only default-namespace policies may name other namespaces or grant
+	// partition-wide rules (mesh, peering).
 	Scoped bool `json:"scoped,omitempty"`
 }
 
-// IdentityPolicy is a policy the tenancy process creates, in its
-// partition's default namespace.
+// IdentityPolicy is a policy the tenancy process creates, in the
+// namespace of the tokens that link it.
 type IdentityPolicy struct {
 	Name      string `json:"name"`
 	Partition string `json:"partition,omitempty"`
+	Namespace string `json:"namespace,omitempty"` // "" for the partition's default
 	Rules     string `json:"rules"`
 }
 
@@ -82,14 +92,35 @@ func (id *identities) token(key string, mk func() IdentityToken) (string, error)
 	return s, nil
 }
 
+// policy adds a policy in partition's default namespace.
 func (id *identities) policy(partition, name, rules string) string {
+	return id.policyIn(partition, "", name, rules)
+}
+
+// policyIn adds a policy in a namespace ("" for the partition's default).
+func (id *identities) policyIn(partition, namespace, name, rules string) string {
 	for _, p := range id.policies {
-		if p.Partition == partition && p.Name == name {
+		if p.Partition == partition && p.Namespace == namespace && p.Name == name {
 			return name
 		}
 	}
-	id.policies = append(id.policies, IdentityPolicy{Name: name, Partition: partition, Rules: rules})
+	id.policies = append(id.policies, IdentityPolicy{Name: name, Partition: partition, Namespace: namespace, Rules: rules})
 	return name
+}
+
+// ReadEverywherePolicy is the policy, in a partition's default namespace,
+// that grants read in all its namespaces. Services in the default
+// namespace link it; every other namespace links it through its ACL
+// defaults, so each token there gets it.
+const ReadEverywherePolicy = "parker-read-everywhere"
+
+// namespaceDefaults is the policy a partition's namespaces link through
+// their ACL defaults (Consul Enterprise).
+func (id *identities) namespaceDefaults(partition string) []string {
+	if !id.ent {
+		return nil
+	}
+	return []string{id.policy(partition, ReadEverywherePolicy, readEverywhere)}
 }
 
 // readEverywhere is service and node read in every namespace (Consul
@@ -139,16 +170,13 @@ func identityBody(svc, indent string) string {
 }
 
 // service is a service's token: a service identity, which covers its
-// sidecar too.
+// sidecar too. In a namespace other than default, the token lives there
+// and gets read everywhere from the namespace's ACL defaults.
 func (id *identities) service(partition, namespace, svc string) (string, error) {
 	return id.token("service/"+partition+"/"+namespace+"/"+svc, func() IdentityToken {
 		t := IdentityToken{Description: "Parker service " + svc, Partition: partition, Namespace: namespace, Service: svc}
-		switch {
-		case namespace != "" && namespace != spec.DefaultNamespace:
-			t.Scoped = true
-			t.Policies = []string{id.policy(partition, "parker-service-"+namespace+"-"+svc, identityRules(namespace, svc)+readEverywhere)}
-		case id.ent:
-			t.Policies = []string{id.policy(partition, "parker-read-everywhere", readEverywhere)}
+		if id.ent && (namespace == "" || namespace == spec.DefaultNamespace) {
+			t.Policies = []string{id.policy(partition, ReadEverywherePolicy, readEverywhere)}
 		}
 		return t
 	})
@@ -196,7 +224,13 @@ query_prefix "" { policy = "read" }
 func (id *identities) gateway(g gatewayNode, partition, namespace string, linked []linkedService) (string, error) {
 	svc := g.service()
 	return id.token("gateway/"+partition+"/"+namespace+"/"+svc, func() IdentityToken {
-		scoped := namespace != "" && namespace != spec.DefaultNamespace
+		namespaced := namespace != "" && namespace != spec.DefaultNamespace
+		if namespaced {
+			if t, ok := id.namespacedGateway(g, partition, namespace, linked); ok {
+				return t
+			}
+		}
+		scoped := namespaced
 		var rules string
 		switch g.kind {
 		case "mesh":
@@ -226,6 +260,32 @@ func (id *identities) gateway(g gatewayNode, partition, namespace string, linked
 		}
 		return t
 	})
+}
+
+// namespacedGateway is the token of a gateway in a namespace other than
+// default, living in that namespace with a service identity, when a
+// policy there can hold everything the gateway needs: an ingress gateway
+// (read comes from the namespace's ACL defaults), or a terminating
+// gateway whose linked services are all in its namespace. ok is false
+// otherwise, and the gateway gets a scoped token.
+func (id *identities) namespacedGateway(g gatewayNode, partition, namespace string, linked []linkedService) (IdentityToken, bool) {
+	svc := g.service()
+	t := IdentityToken{Description: "Parker " + g.kind + " gateway " + svc, Partition: partition, Namespace: namespace, Service: svc}
+	switch g.kind {
+	case "ingress":
+		return t, true
+	case "terminating":
+		for _, s := range linked {
+			if s.namespace != "" && s.namespace != namespace {
+				return IdentityToken{}, false
+			}
+		}
+		if rules := linkedRules(linked, namespace, false, ""); rules != "" {
+			t.Policies = []string{id.policyIn(partition, namespace, "parker-terminating-gateway-"+svc, rules)}
+		}
+		return t, true
+	}
+	return IdentityToken{}, false
 }
 
 // linkedService is a service a terminating gateway fronts.

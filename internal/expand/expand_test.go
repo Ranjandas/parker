@@ -598,7 +598,8 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(ten.Partitions, []string{"team-a", "team-b"}) ||
-		!reflect.DeepEqual(ten.Namespaces, []NamespaceRef{{Partition: "team-a", Name: "payments"}, {Partition: "team-b", Name: "payments"}}) {
+		!reflect.DeepEqual(ten.Namespaces, []NamespaceRef{{Partition: "team-a", Name: "payments", PolicyDefaults: []string{ReadEverywherePolicy}},
+			{Partition: "team-b", Name: "payments", PolicyDefaults: []string{ReadEverywherePolicy}}}) {
 		t.Errorf("tenancy %+v", ten)
 	}
 	byID := map[string]IdentityToken{}
@@ -611,23 +612,16 @@ func TestPartitionsAndNamespaces(t *testing.T) {
 	if it := byID[tokB.(string)]; it.Partition != "team-b" || it.Node != "billing" {
 		t.Errorf("team-b billing's agent token: %+v", it)
 	}
-	// billing is in payments: its token sits in team-a's default namespace
-	// (Enterprise links a token only to its own namespace's policies) and
-	// its policy grants the service identity's rules in payments.
-	if it := byID[reg["token"].(string)]; it.Partition != "team-a" || it.Namespace != "payments" || it.Service != "billing" || !it.Scoped ||
-		!slices.Equal(it.Policies, []string{"parker-service-payments-billing"}) {
+	// billing is in payments: its token lives there too, with a service
+	// identity; payments' ACL defaults give it read everywhere.
+	if it := byID[reg["token"].(string)]; it.Partition != "team-a" || it.Namespace != "payments" || it.Service != "billing" || it.Scoped ||
+		len(it.Policies) != 0 {
 		t.Errorf("billing's service token: %+v", it)
 	}
-	var billingRules string
-	for _, p := range ten.Policies {
-		if p.Partition == "team-a" && p.Name == "parker-service-payments-billing" {
-			billingRules = p.Rules
-		}
-	}
-	for _, w := range []string{`namespace "payments" {`, `service "billing" { policy = "write" }`, `service "billing-sidecar-proxy" { policy = "write" }`, `namespace_prefix "" {`} {
-		if !strings.Contains(billingRules, w) {
-			t.Errorf("billing's rules lack %s:\n%s", w, billingRules)
-		}
+	if !slices.ContainsFunc(ten.Policies, func(p IdentityPolicy) bool {
+		return p.Partition == "team-a" && p.Namespace == "" && p.Name == ReadEverywherePolicy
+	}) {
+		t.Errorf("team-a has no %s for payments' ACL defaults: %+v", ReadEverywherePolicy, ten.Policies)
 	}
 	gwTok := low.Nodes["dc1-team-a-mesh"].Processes["mesh-gateway"].Env["CONSUL_HTTP_TOKEN"]
 	if it := byID[gwTok]; it.Partition != "team-a" || it.Service != "mesh-gateway" || !slices.Equal(it.Policies, []string{"parker-mesh-gateway-mesh-gateway"}) {

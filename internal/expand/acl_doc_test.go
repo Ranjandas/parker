@@ -21,7 +21,6 @@ func TestACLDocQuotesTheRules(t *testing.T) {
 		"service identity":       identityBody("<svc>", ""),
 		"parker-read-everywhere": readEverywhere,
 		"parker-dns":             dnsRules,
-		"scoped service":         identityRules("<ns>", "<svc>") + readEverywhere,
 		"mesh gateway":           mesh,
 		"mesh, all partitions":   meshAll,
 		"terminating":            linkedRules([]linkedService{{"<linked>", ""}}, "", false, ""),
