@@ -135,7 +135,9 @@ namespace as well.
 
 Two cases need rules that only a `default`-namespace policy can grant:
 
-- an API gateway, whose `mesh = "read"` is partition-wide;
+- an API gateway, whose `mesh = "read"` is partition-wide. Consul
+  refuses it in a namespace: "mesh rules are not allowed in namespaced
+  policies";
 - a terminating gateway with a linked service in another namespace.
 
 These gateways get a *scoped* token in the partition's `default`
