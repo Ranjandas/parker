@@ -39,10 +39,8 @@ func machineTarget() (daemon.Target, bool) {
 
 func machineCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use: "machine",
-		// A spike: hidden until it earns a place in the guide.
-		Hidden: true,
-		Short:  "Run labs on macOS: a small Linux VM with the Parker daemon inside",
+		Use:   "machine",
+		Short: "Run labs on macOS: a small Linux VM with the Parker daemon inside",
 		Long: "parker machine runs a small Linux VM (Apple's Virtualization framework) with the\n" +
 			"Parker daemon in it. While it runs, parker on this Mac uses that daemon, with no\n" +
 			"PARKER_HOST to set. The VM sees none of your files unless you --mount them at init.",

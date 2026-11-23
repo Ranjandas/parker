@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Reach Consul with the right token, find which token each part of a lab uses, read logs, and debug the mesh.
+description: Reach Consul with the right token, find which token each part of a lab uses, read logs, debug the mesh, and get parker machine going.
 ---
 
 When something in a lab doesn't work, start here: how to reach Consul
@@ -105,3 +105,38 @@ node's processes, each Envoy's recent log and cluster health, and from
 each datacenter's first server the health checks, connect endpoints,
 config entries and peerings of every partition and namespace. It only
 reads, and it's what to attach to a bug report.
+
+## parker machine doesn't start
+
+If `parker machine start` keeps printing "still booting", the VM is up
+but its daemon hasn't reported in yet. It gives up after 10 minutes and
+prints the end of its log. Look in this order:
+
+1. **Did the VM boot?** The console log ends at a
+   `parker-machine login:` prompt once it has:
+
+   ```console
+   $ tail -5 ~/.parker/machine/default/console.log
+   ```
+
+2. **Where is the daemon?** `parker machine ssh` needs a machine that's
+   ready, so log in by hand. macOS's DHCP leases have the VM's address,
+   under the name `parker-machine`:
+
+   ```console
+   $ grep -A1 name=parker-machine /var/db/dhcpd_leases
+   	name=parker-machine
+   	ip_address=192.168.64.2
+   $ ssh -i ~/.parker/machine/default/id_ed25519 parker@192.168.64.2 \
+       'cloud-init status --long; sudo journalctl -u parker -u parker-machine-ready -b --no-pager | tail -40'
+   ```
+
+   `parker.service` stuck in "Starting" means it's still installing
+   Parker. That needs `github.com` and `ranjandas.github.io` to be
+   reachable from the VM.
+
+3. **What did the VM process say?** `~/.parker/machine/default/machine.log`
+   has every start and stop, and the error when the VM couldn't start at
+   all. "The process doesn't have the com.apple.security.virtualization
+   entitlement" means a `parker` that wasn't signed for VMs: build it with
+   `make machine` (see [labs on macOS](macos.md#requirements)).

@@ -4,10 +4,36 @@ description: Bring up your first Consul cluster, look around, add services, brea
 ---
 
 This walk-through takes about ten minutes, most of it reading. You need
-Parker [installed](install.md) on a Linux machine. Every command works
+Parker [installed](install.md) on a Linux machine, or on a Mac with
+[`parker machine`](#on-a-mac) running. On Linux, every command works
 without `sudo`: Parker then runs in [rootless mode](rootless.md). Use
 `sudo parker` instead if you'd like to reach lab nodes directly from the
 host.
+
+## On a Mac
+
+Labs need Linux, so on a Mac start a `parker machine` first: a small
+Linux VM with the Parker daemon in it, which `parker` then uses for every
+command. It needs a build of Parker with VM support (see
+[labs on macOS](macos.md#requirements)):
+
+```console
+$ parker machine init
+downloading Ubuntu 24.04 (20261017, arm64): done (587 MB)
+creating a 30 GiB disk
+created parker machine in /Users/you/.parker/machine/default
+next: parker machine start
+$ parker machine start
+booting parker machine (Ubuntu 24.04 (20261017, arm64); the first boot installs the daemon)
+parker machine is up at 192.168.64.2 in 14s (daemon parker 0.11.0 ...)
+parker on this Mac now uses it: try `parker up examples/minimal.yaml`
+```
+
+The rest of this walk-through is the same on a Mac. Two things differ:
+lab node addresses live inside the VM, so reach them with `parker exec`,
+`parker ui` or [`parker port-forward`](getting-in.md), and
+`parker machine stop` at the end stops the VM. More in
+[labs on macOS](macos.md).
 
 ## 1. Write a lab file
 
@@ -156,6 +182,9 @@ $ parker prune        # delete the logs and data of labs that aren't running
 
 `parker down` removes everything the lab created. It's safe to run twice,
 and works even after a crash.
+
+On a Mac, `parker machine stop` then shuts the VM down; `parker machine
+start` brings it back in a few seconds.
 
 ## Where next
 
