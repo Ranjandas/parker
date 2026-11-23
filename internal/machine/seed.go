@@ -11,9 +11,8 @@ import (
 
 // Guest paths.
 const (
-	guestShare   = "/mnt/parker-machine"
-	shareTag     = "parker"
-	homeShareTag = "home"
+	guestShare = "/mnt/parker-machine"
+	shareTag   = "parker"
 )
 
 // installScript puts parker in the VM before each daemon start: the host's
@@ -91,9 +90,12 @@ ExecStart=/usr/local/libexec/parker-machine-ready
 WantedBy=multi-user.target
 `
 
+// MountTag is the virtiofs tag of the i-th --mount.
+func MountTag(i int) string { return fmt.Sprintf("mount%d", i) }
+
 // UserData is the cloud-init config: a login user with the machine's key,
-// the two virtiofs shares, and the daemon as a systemd service.
-func UserData(pubKey, home string) string {
+// the virtiofs shares, and the daemon as a systemd service.
+func UserData(pubKey string, mounts []string) string {
 	var b strings.Builder
 	b.WriteString("#cloud-config\n")
 	b.WriteString("hostname: parker-machine\n")
@@ -107,9 +109,11 @@ func UserData(pubKey, home string) string {
 	b.WriteString("ssh_pwauth: false\n")
 	b.WriteString("mounts:\n")
 	fmt.Fprintf(&b, "  - [%s, %s, virtiofs, \"rw,nofail\", \"0\", \"0\"]\n", shareTag, guestShare)
-	if home != "" {
-		fmt.Fprintf(&b, "  - [%s, %q, virtiofs, \"rw,nofail\", \"0\", \"0\"]\n", homeShareTag, home)
+	for i, dir := range mounts {
+		fmt.Fprintf(&b, "  - [%s, %q, virtiofs, \"rw,nofail\", \"0\", \"0\"]\n", MountTag(i), dir)
 	}
+	// The minimal image has no iptables; transparent proxy needs it.
+	b.WriteString("packages: [iptables]\n")
 	b.WriteString("write_files:\n")
 	file := func(path, perm, content string) {
 		fmt.Fprintf(&b, "  - path: %s\n    permissions: %q\n    content: |\n", path, perm)

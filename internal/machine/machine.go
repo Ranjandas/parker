@@ -29,9 +29,10 @@ type Config struct {
 	DiskGiB   uint64 `json:"disk_gib"`
 	MAC       string `json:"mac"`
 	Image     string `json:"image"`
-	// Home is the host directory shared into the VM at the same path, so
-	// lab files and `parker exec` paths mean the same thing on both sides.
-	Home string `json:"home"`
+	// Mounts are host directories shared into the VM at the same paths, for
+	// labs that point at files on the Mac (certificates, local builds).
+	// None by default: the VM sees only its own share.
+	Mounts []string `json:"mounts,omitempty"`
 	// ParkerBinary, if set, is a linux binary copied into the VM on every
 	// start (dev builds). Otherwise the VM installs ParkerVersion (or the
 	// latest release) with the website's install script.

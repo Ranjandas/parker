@@ -13,9 +13,9 @@ type InitOptions struct {
 	CPUs          uint
 	MemoryMiB     uint64
 	DiskGiB       uint64
-	Home          string // "" shares nothing
-	ParkerBinary  string // linux binary to run in the VM, "" = a release
-	ParkerVersion string // release to install when no binary; "" = latest
+	Mounts        []string // host directories to share at the same path
+	ParkerBinary  string   // linux binary to run in the VM, "" = a release
+	ParkerVersion string   // release to install when no binary; "" = latest
 }
 
 // Init creates the machine: disk from the pinned image, SSH key, cloud-init
@@ -53,7 +53,7 @@ func (m Machine) Init(o InitOptions, out io.Writer) error {
 	if _, err := rand.Read(id); err != nil {
 		return err
 	}
-	if err := WriteSeed(m.SeedPath(), UserData(pub, o.Home), MetaData("parker-"+hex.EncodeToString(id))); err != nil {
+	if err := WriteSeed(m.SeedPath(), UserData(pub, o.Mounts), MetaData("parker-"+hex.EncodeToString(id))); err != nil {
 		return err
 	}
 	mac, err := RandomMAC()
@@ -67,7 +67,7 @@ func (m Machine) Init(o InitOptions, out io.Writer) error {
 	}
 	c := Config{
 		CPUs: o.CPUs, MemoryMiB: o.MemoryMiB, DiskGiB: o.DiskGiB, MAC: mac,
-		Image: img.Name, Home: o.Home, ParkerBinary: o.ParkerBinary, ParkerVersion: o.ParkerVersion,
+		Image: img.Name, Mounts: o.Mounts, ParkerBinary: o.ParkerBinary, ParkerVersion: o.ParkerVersion,
 	}
 	if err := m.SaveConfig(c); err != nil {
 		return err

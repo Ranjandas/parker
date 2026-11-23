@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestUserDataIsCloudConfig(t *testing.T) {
-	ud := UserData("ssh-ed25519 AAAA parker-machine", "/Users/me")
+	ud := UserData("ssh-ed25519 AAAA parker-machine", []string{"/Users/me/labs"})
 	if !strings.HasPrefix(ud, "#cloud-config\n") {
 		t.Fatal("user-data must start with #cloud-config")
 	}
@@ -39,7 +40,7 @@ func TestUserDataIsCloudConfig(t *testing.T) {
 	if len(doc.Users) != 1 || doc.Users[0].Name != User || doc.Users[0].Keys[0] != "ssh-ed25519 AAAA parker-machine" {
 		t.Errorf("users: %+v", doc.Users)
 	}
-	if len(doc.Mounts) != 2 || doc.Mounts[0][0] != shareTag || doc.Mounts[1][1] != "/Users/me" || doc.Mounts[1][2] != "virtiofs" {
+	if len(doc.Mounts) != 2 || doc.Mounts[0][0] != shareTag || doc.Mounts[1][0] != "mount0" || doc.Mounts[1][1] != "/Users/me/labs" || doc.Mounts[1][2] != "virtiofs" {
 		t.Errorf("mounts: %v", doc.Mounts)
 	}
 	files := map[string]string{}
@@ -59,8 +60,8 @@ func TestUserDataIsCloudConfig(t *testing.T) {
 		t.Errorf("runcmd: %v", doc.RunCmd)
 	}
 
-	if ud := UserData("k", ""); strings.Contains(ud, homeShareTag+",") {
-		t.Error("no home: no home mount")
+	if ud := UserData("k", nil); strings.Contains(ud, "mount0") {
+		t.Error("no --mount: only the machine's own share")
 	}
 }
 
@@ -233,12 +234,12 @@ func TestConfigRoundTrip(t *testing.T) {
 	if _, err := m.LoadConfig(); err == nil || !strings.Contains(err.Error(), "parker machine init") {
 		t.Errorf("no config: %v", err)
 	}
-	c := Config{CPUs: 2, MemoryMiB: 2048, DiskGiB: 20, MAC: "02:00:00:00:00:01", Home: "/Users/me"}
+	c := Config{CPUs: 2, MemoryMiB: 2048, DiskGiB: 20, MAC: "02:00:00:00:00:01", Mounts: []string{"/Users/me/labs"}}
 	if err := m.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.LoadConfig()
-	if err != nil || got != c {
+	if err != nil || !reflect.DeepEqual(got, c) {
 		t.Errorf("%+v %v", got, err)
 	}
 	if !m.Initialized() {

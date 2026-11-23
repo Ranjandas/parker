@@ -23,18 +23,18 @@ type Image struct {
 	SHA256 string
 }
 
-// Ubuntu 24.04 LTS, release 20261017: EFI-bootable, its kernel has
-// virtiofs, and cloud-init reads the NoCloud seed.
+// Ubuntu 24.04 LTS minimal, release 20261105 (about 220 MB): EFI-bootable,
+// generic kernel with virtiofs, and cloud-init reads the NoCloud seed.
 var images = map[string]Image{
 	"arm64": {
-		Name:   "Ubuntu 24.04 (20261017, arm64)",
-		URL:    "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img",
-		SHA256: "50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e",
+		Name:   "Ubuntu 24.04 minimal (20261105, arm64)",
+		URL:    "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261105/ubuntu-24.04-minimal-cloudimg-arm64.img",
+		SHA256: "3dc8370d923978d4b610fa7964d1b36ba040eefb43198809ca5bc8ac51777b18",
 	},
 	"amd64": {
-		Name:   "Ubuntu 24.04 (20261017, amd64)",
-		URL:    "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img",
-		SHA256: "04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94",
+		Name:   "Ubuntu 24.04 minimal (20261105, amd64)",
+		URL:    "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261105/ubuntu-24.04-minimal-cloudimg-amd64.img",
+		SHA256: "406630c08b5e545fcc7209854b129d47e3af822db128c9f19336593b5a2d3fe0",
 	},
 }
 

@@ -168,7 +168,7 @@ func (m Machine) vmConfig(c Config) (*vz.VirtualMachineConfiguration, error) {
 	nic.SetMACAddress(mac)
 	cfg.SetNetworkDevicesVirtualMachineConfiguration([]*vz.VirtioNetworkDeviceConfiguration{nic})
 
-	// Shares: the machine's own directory, and the user's home.
+	// Shares: the machine's own directory, and any --mount directories.
 	shares := []vz.DirectorySharingDeviceConfiguration{}
 	addShare := func(tag, dir string) error {
 		sd, err := vz.NewSharedDirectory(dir, false)
@@ -190,8 +190,8 @@ func (m Machine) vmConfig(c Config) (*vz.VirtualMachineConfiguration, error) {
 	if err := addShare(shareTag, m.ShareDir()); err != nil {
 		return nil, err
 	}
-	if c.Home != "" {
-		if err := addShare(homeShareTag, c.Home); err != nil {
+	for i, dir := range c.Mounts {
+		if err := addShare(MountTag(i), dir); err != nil {
 			return nil, err
 		}
 	}

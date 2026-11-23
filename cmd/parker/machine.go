@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -41,7 +42,7 @@ func machineCmd() *cobra.Command {
 		Short:  "Run labs on macOS: a small Linux VM with the Parker daemon inside",
 		Long: "parker machine runs a small Linux VM (Apple's Virtualization framework) with the\n" +
 			"Parker daemon in it. While it runs, parker on this Mac uses that daemon, with no\n" +
-			"PARKER_HOST to set. Your home directory is shared into the VM at the same path.",
+			"PARKER_HOST to set. The VM sees none of your files unless you --mount them at init.",
 		Example: "  parker machine init\n  parker machine start\n  parker up examples/minimal.yaml",
 	}
 	c.AddCommand(machineInitCmd(), machineStartCmd(), machineStopCmd(), machineRmCmd(), machineSSHCmd())
@@ -50,7 +51,6 @@ func machineCmd() *cobra.Command {
 
 func machineInitCmd() *cobra.Command {
 	o := machine.InitOptions{}
-	var noHome bool
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Create the machine: download the Linux image and prepare its disk",
@@ -60,9 +60,12 @@ func machineInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !noHome {
-				if o.Home, err = os.UserHomeDir(); err != nil {
+			for i, d := range o.Mounts {
+				if o.Mounts[i], err = filepath.Abs(d); err != nil {
 					return err
+				}
+				if fi, err := os.Stat(o.Mounts[i]); err != nil || !fi.IsDir() {
+					return fmt.Errorf("--mount %s: not a directory", d)
 				}
 			}
 			if o.ParkerBinary == "" && version != "dev" {
@@ -80,7 +83,7 @@ func machineInitCmd() *cobra.Command {
 	c.Flags().Uint64Var(&o.MemoryMiB, "memory", 4096, "memory in MiB")
 	c.Flags().Uint64Var(&o.DiskGiB, "disk", 30, "disk size in GiB (grows on demand on the Mac)")
 	c.Flags().StringVar(&o.ParkerBinary, "parker-binary", "", "a Linux parker binary to run in the VM, copied in on every start (default: the matching release)")
-	c.Flags().BoolVar(&noHome, "no-home", false, "don't share your home directory into the VM")
+	c.Flags().StringArrayVar(&o.Mounts, "mount", nil, "share a host directory into the VM at the same path (for labs that use files on this Mac); repeatable")
 	return c
 }
 
