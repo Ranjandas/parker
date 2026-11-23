@@ -45,8 +45,9 @@ $ parker exec federation dc1/client -- consul catalog services -datacenter dc2
   name.
 - Servers keep their LAN address and also join `wan`, `10.255.0.0/24`
   (dc1's servers at `.10` and up, dc2's at `.30` and up, and so on).
-  Client agents stay on their own LAN. To move the `wan` network, declare
-  it: `networks: { wan: { subnet: 10.200.0.0/24 } }`.
+  Client agents stay on their own LAN. When another running lab already
+  uses `10.255.0.0/24`, `parker up` moves `wan` to a free subnet. To pin
+  it, declare it: `networks: { wan: { subnet: 10.200.0.0/24 } }`.
 - `parker up` waits until every server sees every other server over the
   WAN.
 - With [ACLs](acl-and-tls.md), secondaries replicate tokens and policies

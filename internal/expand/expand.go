@@ -113,17 +113,20 @@ func Expand(in *spec.File) (*spec.File, error) {
 		Nodes:    map[string]*spec.RawNode{},
 	}
 	if in.Consul != nil {
-		wanSubnet := WANSubnet
+		wanSubnet, wanAuto := WANSubnet, true
 		if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
-			wanSubnet = w.Subnet
+			wanSubnet, wanAuto = w.Subnet, false
 		}
 		if err := expandConsul(in.Consul, wanSubnet, out); err != nil {
 			return nil, err
 		}
+		if w := out.Networks[WANNetwork]; w != nil && wanAuto {
+			w.Auto = true
+		}
 	}
 	for k, v := range in.Networks {
 		if cur, ok := out.Networks[k]; ok && v.Subnet == "" {
-			v.Subnet = cur.Subnet
+			v.Subnet, v.Auto = cur.Subnet, cur.Auto
 		}
 		out.Networks[k] = v
 	}
@@ -350,8 +353,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		if acl {
 			aclDeps[dcPrimary+"-server-1/"+ACLSetup] = &spec.Dep{Condition: "ready"}
 		}
-		subnet := dc.Subnet
-		if subnet == "" {
+		subnet, auto := dc.Subnet, dc.Subnet == ""
+		if auto {
 			subnet = fmt.Sprintf("10.%d.0.0/24", i+1)
 		}
 		pfx, err := netip.ParsePrefix(subnet)
@@ -362,7 +365,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		ipAt := func(off int) string { return addrAt(base, off) }
 
 		lan := dcName + "-lan"
-		out.Networks[lan] = &spec.Network{Subnet: subnet}
+		out.Networks[lan] = &spec.Network{Subnet: subnet, Auto: auto}
 
 		// Servers: .10 upwards. Client nodes: .100 upwards.
 		n := dc.Servers.Count

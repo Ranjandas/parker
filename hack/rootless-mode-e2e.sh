@@ -44,6 +44,15 @@ sleep 1
 curl -sf --proxy socks5h://127.0.0.1:1081 "http://$first.$lab.parker:8500/v1/status/leader" | grep 8300 >/dev/null
 curl -sf http://127.0.0.1:18501/v1/status/leader | grep 8300 >/dev/null
 kill $pp $pf
+echo "--- a second copy runs alongside, on a subnet picked for it"
+T=$(mktemp -d)
+grep -v '^name:' "$F" > "$T/second.yaml"
+$P up "$T/second.yaml" | tee "$T/up.log"
+grep -q 'is taken (running lab .*); using 10\.' "$T/up.log" || { echo "second lab didn't move off the first one's subnet"; exit 1; }
+second=$($P status "$T/second.yaml" | awk 'NR==3 {print $1}')
+$P exec -T "$T/second.yaml" "$second" -- consul members </dev/null | grep alive >/dev/null
+$P exec -T "$F" "$first" -- consul members </dev/null | grep alive >/dev/null
+$P down "$T/second.yaml"
 echo "--- host is untouched"
 if ip -o link | grep ' pk-' >/dev/null; then echo "bridge leaked onto the host"; exit 1; fi
 echo "--- down, daemon stop"

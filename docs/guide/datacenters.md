@@ -100,7 +100,7 @@ many services short. See [services](nodes-and-services.md#service-template).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `subnet` | `10.<n>.0.0/24` | The datacenter's LAN. Set it when the default clashes with a network you use, or when addresses matter to the repro. |
+| `subnet` | `10.<n>.0.0/24`, or a free subnet when that one is in use | The datacenter's LAN. Without it, `parker up` moves the LAN to a free subnet when another running lab or the host uses the default ([more](lifecycle.md#several-labs-at-once)). Set it when addresses matter to the repro: an explicit subnet never moves. |
 | `primary` | the first datacenter by name | Marks the primary datacenter, for federation and ACL replication. |
 | `ui` | `true` | Serves the Consul web UI on the servers. |
 | `acl`, `tls` | off | Turn on ACLs and TLS. See [ACLs and TLS](acl-and-tls.md). |

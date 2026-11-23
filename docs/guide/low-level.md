@@ -29,6 +29,7 @@ nodes:
 |---|---|---|
 | `subnet` | | The bridge's subnet, such as `10.9.0.0/24`. |
 | `gateway` | the subnet's `.1` | The host side of the bridge. |
+| `auto` | `false` | Let `parker up` move the network, and every address in it, to a free subnet of the same size when this one is in use. Parker sets it on the networks it generates without a `subnet:` from you, so it shows up in `parker expand`. See [Several labs at once](lifecycle.md#several-labs-at-once). |
 
 Every datacenter's LAN is a network too, named `<dc>-lan`, and a
 low-level node can join it. This puts a node next to the Consul agents,
