@@ -66,7 +66,8 @@ var hostFlag string
 
 // errNotLinux: off Linux, parker is a client for a daemon on a Linux host.
 var errNotLinux = errors.New("labs need Linux (network namespaces); from " + runtime.GOOS +
-	" point parker at a daemon on a Linux host:\n" +
+	" run them in a parker machine (parker machine init, then parker machine start)\n" +
+	"or point parker at a daemon on a Linux host:\n" +
 	"  PARKER_HOST=https://HOST:7443 PARKER_TOKEN=... PARKER_TLS_CA=cert.pem parker status\n" +
 	"(on that host: parker daemon --listen :7443, then parker daemon credentials)")
 
@@ -76,6 +77,11 @@ func target() daemon.Target {
 	h := hostFlag
 	if h == "" {
 		h = os.Getenv("PARKER_HOST")
+	}
+	if h == "" {
+		if t, ok := machineTarget(); ok {
+			return t
+		}
 	}
 	return daemon.Target{
 		Host:     h,

@@ -1,4 +1,4 @@
-.PHONY: build test cover e2e e2e-rootless e2e-ent proto
+.PHONY: build test cover e2e e2e-rootless e2e-ent proto machine
 build:
 	go build -o bin/parker ./cmd/parker
 test:
@@ -18,3 +18,7 @@ e2e-ent: build
 	hack/ent-e2e.sh examples/peering-partitions.yaml
 proto:
 	buf generate
+# macOS only: a signed bin/parker with `parker machine` support, plus the
+# Linux binary for the VM (bin/parker-linux). Spike, not in CI.
+machine:
+	hack/machine/build.sh
