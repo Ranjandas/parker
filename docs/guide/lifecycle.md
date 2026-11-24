@@ -149,6 +149,42 @@ $ parker down clients --purge     # also delete the run directory
 $ parker prune                    # purge every lab that isn't running (asks first; -y doesn't)
 ```
 
+## Bring it back by name
+
+Each `parker up` saves the lab's expanded topology in its run
+directory. Pass the lab's name instead of a file and `parker up` brings
+the lab back from that copy, so you don't need the original file:
+
+```console
+$ parker down minimal
+...
+lab "minimal" is down
+$ parker up minimal
+  ...
+  ready   dc1-server-1/consul          6s
+
+lab "minimal" is up in 6.1s
+  dc1-server-1             10.1.0.10      consul
+  dc1-server-2             10.1.0.11      consul
+  dc1-server-3             10.1.0.12      consul
+```
+
+The copy is read where the lab runs, so this works the same with
+[`parker machine`](macos.md) on macOS and with a
+[remote daemon](remote.md), where the run directory isn't on your
+machine. `parker status` lists the labs you can bring back.
+
+- It's the lab exactly as it last ran, including any subnet it was
+  [moved to](#several-labs-at-once) and the certificates it was given.
+  Edits to the original file don't apply; pass the file to pick them up.
+- `--set`, `--var` and `--overlay` still apply on top of it.
+- A file or directory with the same name in the current directory wins.
+  Use a path such as `./minimal` when you mean the file.
+- `parker down --purge` and `parker prune` delete the copy. After that,
+  bring the lab up from its file.
+- With [TLS](acl-and-tls.md), the certificates are valid for 90 days
+  from the first `up` of the file. Bring an older lab up from its file.
+
 ## Download ahead of time
 
 ```console

@@ -247,6 +247,17 @@ func (s *Server) Describe(_ context.Context, req *connect.Request[parkerv1.Descr
 	return connect.NewResponse(&parkerv1.DescribeResponse{Node: name, Yaml: text}), nil
 }
 
+func (s *Server) Topology(_ context.Context, req *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error) {
+	b, err := lab.SavedTopology(req.Msg.Lab)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&parkerv1.TopologyResponse{TopologyYaml: b}), nil
+}
+
 func (s *Server) Graph(_ context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
 	low, err := lab.LoadTopology(req.Msg.Lab)
 	if err != nil {

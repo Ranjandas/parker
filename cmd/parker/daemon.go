@@ -307,19 +307,21 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 func upCmd() *cobra.Command {
 	var keepOnFail, noFirewall, noDaemon bool
 	c := &cobra.Command{
-		Use:   "up FILE",
+		Use:   "up FILE|LAB",
 		Short: "Create the lab's network and start its processes; returns when everything is ready",
 		Long: "Create the lab's network and start its processes; returns when everything is ready.\n\n" +
 			"The lab is run by `parker daemon`, which is started in the background if needed and\n" +
-			"keeps supervising the processes (restart: policies) after up returns.",
+			"keeps supervising the processes (restart: policies) after up returns.\n\n" +
+			"Given a lab name instead of a file, up brings the lab back from the expanded topology\n" +
+			"its last up saved (kept by down, removed by down --purge and prune).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, low, err := load(args[0])
+			ctx, stop := signalContext()
+			defer stop()
+			low, err := loadUp(ctx, args[0], noDaemon)
 			if err != nil {
 				return err
 			}
-			ctx, stop := signalContext()
-			defer stop()
 			if err := bringUp(ctx, low, upOptions{keepOnFail: keepOnFail, noFirewall: noFirewall, noDaemon: noDaemon}); err != nil {
 				return err
 			}
@@ -336,6 +338,71 @@ func upCmd() *cobra.Command {
 	c.Flags().BoolVar(&noFirewall, "no-firewall", false, "don't add iptables ACCEPT rules for the lab bridges; print them instead")
 	c.Flags().BoolVar(&noDaemon, "no-daemon", false, "run in this process; nothing supervises the lab after up returns")
 	return c
+}
+
+// loadUp loads what `parker up ARG` brings up: the file ARG if there is
+// one, else the expanded topology saved by the lab ARG's last up. That
+// copy is read where the lab runs (through the daemon, so it works with
+// parker machine and remote daemons too), or from the local run dir when
+// no daemon is running or with --no-daemon.
+func loadUp(ctx context.Context, arg string, noDaemon bool) (*spec.File, error) {
+	if !savedLabArg(arg) {
+		_, low, err := load(arg)
+		return low, err
+	}
+	b, err := savedTopology(ctx, arg, noDaemon)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not a file, and %w", arg, err)
+	}
+	dir, err := os.MkdirTemp("", "parker-up-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, arg+".yaml")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return nil, err
+	}
+	_, low, err := load(path)
+	if err != nil {
+		return nil, fmt.Errorf("lab %q's saved topology: %w", arg, err)
+	}
+	if low.Name != arg {
+		return nil, fmt.Errorf("lab %q's saved topology names lab %q", arg, low.Name)
+	}
+	return low, nil
+}
+
+// savedLabArg reports whether up's argument names a lab rather than a
+// file: nothing exists at that path, and it looks like a name, not a path.
+func savedLabArg(arg string) bool {
+	if _, err := os.Stat(arg); err == nil {
+		return false
+	}
+	return !strings.ContainsAny(arg, `/\`) && !strings.HasSuffix(arg, ".yaml") && !strings.HasSuffix(arg, ".yml")
+}
+
+func savedTopology(ctx context.Context, name string, noDaemon bool) ([]byte, error) {
+	if !noDaemon {
+		c, ok, err := connectDaemon(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			if err := checkBuild(ctx, c); err != nil {
+				return nil, err
+			}
+			resp, err := c.Topology(ctx, connect.NewRequest(&parkerv1.TopologyRequest{Lab: name}))
+			if connect.CodeOf(err) == connect.CodeUnimplemented {
+				return nil, errors.New("the parker daemon is too old to bring a lab back by name; upgrade it, or pass the lab's file")
+			}
+			if err != nil {
+				return nil, rpcErr(err)
+			}
+			return resp.Msg.TopologyYaml, nil
+		}
+	}
+	return lab.SavedTopology(name)
 }
 
 func downCmd() *cobra.Command {

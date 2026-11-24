@@ -74,12 +74,15 @@ Prints the JSON Schema for lab files, for [editor support](lab-files.md#editor-s
 ### parker up
 
 ```console
-$ parker up FILE [flags]
+$ parker up FILE|LAB [flags]
 ```
 
 Creates the lab's networks and starts its processes, and returns when
 everything is ready. A network whose default subnet is already in use
 moves to a free one ([several labs at once](lifecycle.md#several-labs-at-once)).
+Given a lab's name instead of a file, brings the lab back from the
+expanded topology its last `up` saved, also on `parker machine` and
+remote daemons ([bring it back by name](lifecycle.md#bring-it-back-by-name)).
 See [starting and stopping labs](lifecycle.md).
 
 | Flag | Effect |

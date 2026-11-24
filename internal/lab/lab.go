@@ -170,6 +170,28 @@ func LoadTopology(name string) (*spec.File, error) {
 	return spec.Load(filepath.Join(RunDir(name), TopologyFile), nil)
 }
 
+// SavedTopology returns the expanded topology file saved by Up, as is.
+// The error wraps os.ErrNotExist when the lab has none (never up here, or
+// purged).
+func SavedTopology(name string) ([]byte, error) {
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+		return nil, fmt.Errorf("lab %q: not a lab name", name)
+	}
+	b, err := os.ReadFile(filepath.Join(RunDir(name), TopologyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, noSavedTopology{name}
+	}
+	return b, err
+}
+
+type noSavedTopology struct{ name string }
+
+func (e noSavedTopology) Error() string {
+	return fmt.Sprintf("lab %q has no saved topology in %s (never brought up here, or removed by down --purge or prune); `parker status` lists labs, or pass the lab's file", e.name, RunBase())
+}
+
+func (noSavedTopology) Unwrap() error { return os.ErrNotExist }
+
 // Labs lists the labs that have a run directory.
 func Labs() ([]string, error) {
 	es, err := os.ReadDir(RunBase())
