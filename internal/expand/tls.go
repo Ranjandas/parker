@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -186,4 +187,92 @@ func (c *ca) clientTLS(cfg map[string]any, files map[string]string) {
 	}
 	cfg["auto_encrypt"] = map[string]any{"tls": true}
 	cfg["ports"] = map[string]any{"http": -1, "https": HTTPSPort}
+}
+
+// ReissueServerCerts re-signs every server certificate in f whose IP
+// addresses fix changes, for the new addresses, with the same key and the
+// lab CA. `parker up` calls it after moving the lab to free subnets: the
+// certificates are opaque PEM, so rewriting the lab's addresses can't reach
+// the IPs inside them.
+func ReissueServerCerts(f *spec.File, fix func(string) string) error {
+	for name, n := range f.Nodes {
+		certPEM, ok := n.Files[CertFile]
+		if !ok || n.Files[CAFile] == "" {
+			continue
+		}
+		cert, err := parseCertPEM(certPEM)
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", name, CertFile, err)
+		}
+		ips, changed := make([]net.IP, 0, len(cert.IPAddresses)), false
+		for _, ip := range cert.IPAddresses {
+			moved := net.ParseIP(fix(ip.String()))
+			if moved == nil {
+				moved = ip
+			}
+			if !moved.Equal(ip) {
+				changed = true
+			}
+			ips = append(ips, moved)
+		}
+		if !changed {
+			continue
+		}
+		caCert, err := parseCertPEM(n.Files[CAFile])
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", name, CAFile, err)
+		}
+		caKey, err := caKeyOf(n.Files["consul.json"])
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		sn, err := serial()
+		if err != nil {
+			return err
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber: sn,
+			Subject:      cert.Subject,
+			DNSNames:     cert.DNSNames,
+			IPAddresses:  ips,
+			NotBefore:    cert.NotBefore,
+			NotAfter:     cert.NotAfter,
+			KeyUsage:     cert.KeyUsage,
+			ExtKeyUsage:  cert.ExtKeyUsage,
+		}
+		der, err := x509.CreateCertificate(Rand, tmpl, caCert, cert.PublicKey, caKey)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		n.Files[CertFile] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	}
+	return nil
+}
+
+func parseCertPEM(s string) (*x509.Certificate, error) {
+	b, _ := pem.Decode([]byte(s))
+	if b == nil || b.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("no certificate")
+	}
+	return x509.ParseCertificate(b.Bytes)
+}
+
+// caKeyOf reads the lab CA's key from a server's agent config, where it is
+// the Connect root (see serverTLS).
+func caKeyOf(consulJSON string) (*ecdsa.PrivateKey, error) {
+	var cfg struct {
+		Connect struct {
+			CAConfig struct {
+				PrivateKey string `json:"private_key"`
+			} `json:"ca_config"`
+		} `json:"connect"`
+	}
+	if err := json.Unmarshal([]byte(consulJSON), &cfg); err != nil {
+		return nil, fmt.Errorf("consul.json: %w", err)
+	}
+	b, _ := pem.Decode([]byte(cfg.Connect.CAConfig.PrivateKey))
+	if b == nil {
+		return nil, fmt.Errorf("consul.json: no lab CA key to re-sign the server certificate with")
+	}
+	return x509.ParseECPrivateKey(b.Bytes)
 }
