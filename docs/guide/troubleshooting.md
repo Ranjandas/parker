@@ -147,8 +147,8 @@ prints the end of its log. Look in this order:
 If labs in the VM stop answering, `parker exec` or `parker status LAB`
 fails with `input/output error`, and `parker machine ssh` gets
 "Connection refused", the VM's disk has failed under it. Parker 0.12.0
-could do this after a lab had been running for a while; later releases
-set the VM's disk up so it doesn't. Upgrade `parker` on your Mac first.
+could do this after a lab had been running for a while, often after the
+Mac had slept; later releases set the VM's disk up so it doesn't. Upgrade `parker` on your Mac first.
 
 To confirm, look for disk errors on the VM's console:
 
