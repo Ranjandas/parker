@@ -183,35 +183,23 @@ to 200. `path`, `header` and `service` work like the CLI's options.
 ### The fake's page (`/ui`)
 
 Open it from the web UI (`parker ui`): pick the node, then the fake under
-**Open**. The page shows, top to bottom:
+**Open**. The page shows:
 
-- **Stats** for the requests this page has sent: how many, the success
-  rate and latency (p50 and p99) over the last 40, and **Answered by**,
-  the split between the places that answered, such as
+- **Stats** for the requests this page has sent, and **Answered by**, the
+  split between the places that answered, such as
   `api dc2 64% · api dc3 36%`.
-- **Send request**, and **Loop**, which sends one every 0.5 to 5 seconds.
-  A strip of the last 40 answers is coloured by who answered, with
-  failures in red.
-- **Break an upstream for requests from this page**: tick a service
-  further down the chain, then set how often it fails (percent) and how
-  long it waits (ms). The page sends these as the
-  [`X-Parker-Fault` header](#faults-on-one-request) on its own requests
-  only, so other callers of that service get normal answers.
+- **Send request**, and **Loop**, which keeps sending them.
+- **Break an upstream for requests from this page**: make a service
+  further down the chain fail or slow down for this page's requests
+  only, through the [`X-Parker-Fault` header](#faults-on-one-request).
   **Copy as parker call** copies the same request as a
   [`parker call`](getting-in.md#calling-services) command.
-- **The last answer**: one line on what happened (`api failed, broken
-  from this page, so web answered 500`), then a row per hop with its node
-  and dc, its IP address, the address it was called from, and its time.
-  A hop that failed says why: *Fault injection on api*, *Broken for
-  requests from this page*, *an upstream failed*, or the error, such as
-  `connection refused`. The request id is at the bottom: every hop logs
-  it as `id=<id>`, so you can find the request in each service's logs.
-- **Space fact**: the fact from the deepest hop that sent one, with that
-  hop's service, node, address and the request id.
-- **Fault injection: web**: the health check, the error rate and code,
-  latency (p50 and p99), the rate limit, and Reset. Changes apply live,
-  and the line by Reset lists the faults in force. These change how web
-  answers every caller; they never touch its upstreams.
+- **The last answer**: a row per hop with its node, address and time,
+  and why a hop failed. Every hop logs the request id as `id=<id>`, so
+  you can find the request in each service's logs.
+- **Space fact**: the fact from the deepest hop that sent one.
+- **Fault injection: web**: the health check, error rate, latency and
+  rate limit, applied live to every caller of web.
 
 In a service mesh, a hop is called through its sidecar, so its "from"
 address is the sidecar's (`127.0.0.1:<port>`), not the caller's.
@@ -227,23 +215,13 @@ On a node page (**Nodes & logs**), each fake service gets two cards.
 **Fake service** shows what the service calls, and lets you send a
 request through it:
 
-- **Test the path** appears when the service has upstreams. It lists
-  them, and **Send request through web** sends a request to web, which
-  calls its upstreams. **Last call** draws the answer as a waterfall, one
-  row per hop with its status and time.
-- **+ Add a fault to this request** breaks services further down the
-  chain for that request only, through the
-  [`X-Parker-Fault` header](#faults-on-one-request). Pick a service, then
-  **Fail** (10%, 50% or 100% of the time) and **Delay** (200ms, 1s or
-  3s), and add more rows for more services. The picker lists every fake
-  the request can reach, so from web you can break db behind api
-  (`db (via api)`). A line under the button sums up what will be sent,
-  such as `2 faults: api fails 100% · db +1s`, and the hops you broke are
-  marked *this request* in **Last call**. Their own fault settings don't
-  change.
-- A service with no upstreams has nothing to send a request through. It
-  says so, and **Called by** links to the nodes that call it, where you
-  can send one and watch its faults.
+- **Send request through web** sends a request to web, which calls its
+  upstreams, and **Last call** draws the answer as a waterfall.
+- **+ Add a fault to this request** makes services further down the
+  chain fail or slow down for that request only, through the
+  [`X-Parker-Fault` header](#faults-on-one-request). Their own fault
+  settings don't change.
+- A service with no upstreams links to the nodes that call it instead.
 
 **Fault injection: web** changes how web answers the requests it gets,
 for every caller, until you change it back:
@@ -263,7 +241,7 @@ service** section, without the per-request faults. Sending a request
 there also highlights the nodes it went through. A **⚡ faults** badge
 marks nodes whose fakes have faults injected.
 
-Limits: the picker reads the lab's topology, so it lists a fake that sets
+Limits: the list of services to break comes from the lab's topology, so it includes a fake that sets
 `request_faults: false` too, and that fake ignores the fault. A TCP fake
 has no requests to send, so it only gets the fault card.
 

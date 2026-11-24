@@ -102,9 +102,8 @@ A process starts in its node's directory under the lab's run directory,
 and its output goes to `<process>.log` there (read it with
 [`parker logs`](getting-in.md#logs)). It doesn't inherit your shell's
 environment: it gets `PATH` (with the binaries the lab pins, such as
-`consul`, first), `HOME` set to the node's directory, `TMPDIR` set to
-its own `tmp/<process>` directory there, `PARKER_LAB`, `PARKER_NODE`, and
-what you set in `env:`.
+`consul`, first), `HOME` set to the node's directory, `PARKER_LAB`,
+`PARKER_NODE`, and what you set in `env:` ([full list](environment.md#variables-parker-sets)).
 
 ### Registering in Consul
 
