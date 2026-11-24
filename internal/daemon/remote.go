@@ -60,7 +60,13 @@ func Token() (string, error) {
 	if err := os.MkdirAll(StateDir(), 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(TokenPath(), []byte(tok+"\n"), 0o600); err != nil {
+	// Write it whole, then rename: a reader (a client, or the daemon's
+	// own tests) must never see the file empty or half written.
+	tmp := TokenPath() + ".tmp"
+	if err := os.WriteFile(tmp, []byte(tok+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, TokenPath()); err != nil {
 		return "", err
 	}
 	return tok, nil
