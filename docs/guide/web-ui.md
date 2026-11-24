@@ -11,19 +11,15 @@ parker web UI on http://127.0.0.1:40121 (daemon: /run/parker/parker.sock)
 open: http://127.0.0.1:40121/#token=...&lab=meshfed
 ```
 
-It works the same against the local daemon and a [remote](remote.md)
-one: the CLI serves the UI on a loopback port and passes its calls to the
-daemon the CLI uses, so a remote daemon needs no certificate exception
-in the browser. Stop it with Ctrl-C.
+It works the same with a local or a [remote](remote.md) daemon, with no
+certificate warning in the browser. Stop it with Ctrl-C.
 
 | Flag | Effect |
 |---|---|
 | `--no-open` | Print the link instead of opening a browser. |
 | `--listen ADDR` | Where to serve the UI; default a free loopback port. Keep it on loopback: anyone who can reach it can use the link. |
 
-The link signs you in once: its token is in the URL's `#` part, which
-browsers never send to a server, and the page swaps it for a session
-cookie. It only works while that `parker ui` runs.
+The link signs you in once, and only works while that `parker ui` runs.
 
 ## What it shows
 
@@ -45,11 +41,7 @@ cookie. It only works while that `parker ui` runs.
   then it flows; a gateway that only failover uses (like the peer's
   terminating gateway in
   [terminating-failover.yaml](https://github.com/Ranjandas/parker/blob/main/examples/terminating-failover.yaml))
-  has only that dotted line. Lines never run under a card they don't
-  connect, and a line between two datacenters that aren't side by side
-  (or to a service outside Consul past another datacenter) runs in a
-  corridor below the datacenters, leaving and entering its cards from
-  the bottom, rather than through one it doesn't go through.
+  has only that dotted line.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The header shows the node's IPs,

@@ -100,12 +100,6 @@ parker exec lab.yaml dc1/web -- consul troubleshoot proxy -envoy-admin-endpoint 
 The first sidecar on a node has its Envoy admin on `127.0.0.1:19000`, the
 next on 19001, and so on (`parker describe` shows each `-admin-bind`).
 
-`hack/lab-diag.sh FILE` prints a running lab's whole mesh at once: every
-node's processes, each Envoy's recent log and cluster health, and from
-each datacenter's first server the health checks, connect endpoints,
-config entries and peerings of every partition and namespace. It only
-reads, and it's what to attach to a bug report.
-
 ## parker machine doesn't start
 
 If `parker machine start` keeps printing "still booting", the VM is up
@@ -146,15 +140,8 @@ prints the end of its log. Look in this order:
 
 If labs in the VM stop answering, `parker exec` or `parker status LAB`
 fails with `input/output error`, and `parker machine ssh` gets
-"Connection refused", the VM's disk has failed under it. Parker 0.12.0
-could do this after a lab had been running for a while, often after the
-Mac had slept; later releases set the VM's disk up so it doesn't. Upgrade `parker` on your Mac first.
-
-To confirm, look for disk errors on the VM's console:
-
-```console
-$ grep -E 'I/O error|EXT4-fs error' ~/.parker/machine/default/console.log | tail -5
-```
+"Connection refused", the VM's disk has failed under it (seen with
+Parker 0.12.0; upgrade `parker` on your Mac first).
 
 To recover, try restarting the machine first. The VM checks its disk as
 it boots, and labs come back with `parker up`:
