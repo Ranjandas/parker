@@ -64,13 +64,23 @@
   });
 
   // ---- latest release version ----
+  // The headline comes from the release title, "v0.13.0 · resume labs by
+  // name": the release workflow builds it from the annotated tag's message.
+  // A release without one keeps the page's own headline only if the page
+  // already names that version; otherwise it says "what's new", so an old
+  // headline never sits next to a newer version.
   const verEls = document.querySelectorAll('[data-version]');
-  if (verEls.length) {
+  const headEls = document.querySelectorAll('[data-release="headline"]');
+  if (verEls.length || headEls.length) {
+    const pageTag = (document.querySelector('[data-version="tag"]') || {}).textContent;
     fetch('https://api.github.com/repos/Ranjandas/parker/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!j || !/^v\d+\.\d+\.\d+$/.test(j.tag_name)) return;
         const v = j.tag_name.slice(1);
+        const rest = (j.name || '').trim().replace(j.tag_name, '').replace(/^[\s·:—–-]+/, '').trim();
+        const headline = rest || (j.tag_name === pageTag ? null : 'what’s new');
+        if (headline) headEls.forEach((el) => (el.textContent = headline));
         verEls.forEach((el) => (el.textContent = el.dataset.version === 'tag' ? 'v' + v : v));
       })
       .catch(() => {});

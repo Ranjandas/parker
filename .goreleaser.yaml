@@ -83,6 +83,12 @@ checksum:
     - glob: ./parker.schema.json
 
 release:
+  # "v0.14.0 · <headline>", from an annotated tag's message:
+  #   git tag -a v0.14.0 -m "resume labs by name"
+  # The homepage shows the headline next to the version. A tag whose message
+  # is just the tag name gets a plain "v0.14.0" title.
+  name_template: >-
+    {{ .Tag }}{{ if and .TagSubject (ne .TagSubject .Tag) }} · {{ .TagSubject }}{{ end }}
   extra_files:
     - glob: ./parker.schema.json
 
