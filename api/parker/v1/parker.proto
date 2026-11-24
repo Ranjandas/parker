@@ -89,6 +89,9 @@ message UpRequest {
   // CONSUL_LICENSE_PATH or license.file). The daemon writes it to the lab's
   // run dir (0600) for the agents and never logs or stores it elsewhere.
   bytes consul_license = 4;
+  // Bring the lab back on its kept run dir (data, logs) instead of a
+  // fresh one, as `parker up LAB` does; fail rather than move its subnets.
+  bool resume = 5;
 }
 
 message LogLine {

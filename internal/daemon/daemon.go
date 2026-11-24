@@ -139,7 +139,7 @@ func (s *Server) Up(ctx context.Context, req *connect.Request[parkerv1.UpRequest
 	}
 	w := streamWriter(stream)
 	defer w.Flush()
-	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense}, w); err != nil {
+	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense, Resume: req.Msg.Resume}, w); err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return nil

@@ -41,8 +41,8 @@ and takes the lab down again.
 
 Labs run side by side. When a subnet Parker picked for the lab, such as
 a datacenter's default `10.<n>.0.0/24` or the `wan` network, is already
-in use by another running lab or by the host (a VPN, Docker, a cloud
-VPC), `parker up` moves that network to the next free `10.<n>.0.0` of
+in use by another running lab, a stopped lab that is kept, or the host
+(a VPN, Docker, a cloud VPC), `parker up` moves that network to the next free `10.<n>.0.0` of
 the same size and says so. Every address in the lab moves with it, to
 the same offset: node IPs, the generated Consul configs, and full
 addresses in your own commands and scenario steps.
@@ -67,7 +67,9 @@ lab "b" is up in 8.6s
 ```
 
 A lab that moved keeps its new subnet when you bring it up again, as
-long as that one is still free. `parker status LAB` and the web UI show
+long as that one is still free. A lab that is down but not purged holds
+its subnets too, so it can [start again](#start-a-stopped-lab-again) on
+the same addresses. `parker status LAB` and the web UI show
 the addresses the lab actually runs with; `parker expand` shows the
 file's defaults.
 
@@ -149,41 +151,76 @@ $ parker down clients --purge     # also delete the run directory
 $ parker prune                    # purge every lab that isn't running (asks first; -y doesn't)
 ```
 
-## Bring it back by name
+## Start a stopped lab again
 
-Each `parker up` saves the lab's expanded topology in its run
-directory. Pass the lab's name instead of a file and `parker up` brings
-the lab back from that copy, so you don't need the original file:
+`parker down` keeps the lab's run directory, and with it the expanded
+topology its last `up` saved. Pass the lab's name instead of a file and
+`parker up` starts the lab again where it left off: on the same
+addresses, with its Consul data, tokens and peerings, so you don't need
+the original file:
 
 ```console
+$ parker exec minimal dc1-server-1 -- consul kv put kept yes
+Success! Data written to: kept
 $ parker down minimal
 ...
 lab "minimal" is down
 $ parker up minimal
-  ...
-  ready   dc1-server-1/consul          6s
-
+resuming lab "minimal" on its data in /var/lib/parker/run/minimal
+network: 1 networks, 3 nodes
+...
 lab "minimal" is up in 6.1s
   dc1-server-1             10.1.0.10      consul
   dc1-server-2             10.1.0.11      consul
   dc1-server-3             10.1.0.12      consul
+$ parker exec minimal dc1-server-1 -- consul kv get kept
+yes
 ```
 
-The copy is read where the lab runs, so this works the same with
+The saved copy is read where the lab runs, so this works the same with
 [`parker machine`](macos.md) on macOS and with a
 [remote daemon](remote.md), where the run directory isn't on your
-machine. `parker status` lists the labs you can bring back.
+machine. `parker status` lists the labs you can start again.
 
-- It's the lab exactly as it last ran, including any subnet it was
-  [moved to](#several-labs-at-once) and the certificates it was given.
-  Edits to the original file don't apply; pass the file to pick them up.
-- `--set`, `--var` and `--overlay` still apply on top of it.
-- A file or directory with the same name in the current directory wins.
-  Use a path such as `./minimal` when you mean the file.
-- `parker down --purge` and `parker prune` delete the copy. After that,
-  bring the lab up from its file.
+To get the clean lab back without its file, add `--fresh`: `parker up`
+rebuilds the lab from the saved copy with fresh data, as `parker up
+FILE` does.
+
+```console
+$ parker up minimal --fresh
+```
+
+| You run | What you get |
+|---|---|
+| `parker up FILE` | A fresh lab, built from the file as it is now. |
+| `parker up LAB` | The lab as it last ran, started again on its data. |
+| `parker up LAB --fresh` | The lab as it last ran, rebuilt with fresh data. |
+
+Things to know:
+
+- The lab's definition is frozen: it's the copy the last `up` saved,
+  including any subnet it was [moved to](#several-labs-at-once) and the
+  certificates it was given. Edits to the original file don't apply;
+  pass the file to pick them up.
+- Its state isn't: whatever scenarios, [faults](faults.md) or your own
+  commands changed in Consul is still there. Parker's setup steps (ACLs,
+  partitions, config entries) run again, so the file's config entries
+  are written back.
+- A stopped lab holds its subnets. Another lab that would land on them
+  moves to a free subnet instead (`stopped lab "minimal" holds it`), and
+  `parker down --purge` or `parker prune` releases them. A `subnet:` you
+  set yourself can still take a stopped lab's subnet. When that happens,
+  the stopped lab can't come back on its addresses: `parker up LAB`
+  stops with an error, and `--fresh` moves it.
+- After a scenario [upgraded](upgrades.md) Consul, the lab starts again
+  on the versions in its saved copy, not the upgraded ones. Use `--fresh`.
 - With [TLS](acl-and-tls.md), the certificates are valid for 90 days
-  from the first `up` of the file. Bring an older lab up from its file.
+  from the `up` that made them. Bring an older lab up from its file.
+- `--set`, `--var` and `--overlay` still apply on top of the saved copy.
+- A file or directory with the lab's name in the current directory wins.
+  Use a path such as `./minimal` when you mean the file.
+- `parker down --purge` and `parker prune` delete the saved copy. After
+  that, bring the lab up from its file.
 
 ## Download ahead of time
 

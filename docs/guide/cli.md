@@ -80,13 +80,15 @@ $ parker up FILE|LAB [flags]
 Creates the lab's networks and starts its processes, and returns when
 everything is ready. A network whose default subnet is already in use
 moves to a free one ([several labs at once](lifecycle.md#several-labs-at-once)).
-Given a lab's name instead of a file, brings the lab back from the
-expanded topology its last `up` saved, also on `parker machine` and
-remote daemons ([bring it back by name](lifecycle.md#bring-it-back-by-name)).
+Given a lab's name instead of a file, starts that stopped lab again on
+its kept data and addresses, from the expanded topology its last `up`
+saved, also on `parker machine` and remote daemons
+([start a stopped lab again](lifecycle.md#start-a-stopped-lab-again)).
 See [starting and stopping labs](lifecycle.md).
 
 | Flag | Effect |
 |---|---|
+| `--fresh` | With a lab name: rebuild the lab from its saved topology with fresh data instead of resuming it. |
 | `--keep-on-failure` | Leave the lab running when a readiness check fails. |
 | `--no-daemon` | Run in this process; nothing supervises the lab after `up` returns. |
 | `--no-firewall` | Don't add firewall rules for the lab's bridges; print them instead. |

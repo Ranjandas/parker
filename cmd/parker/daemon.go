@@ -237,6 +237,8 @@ func writeLines(w io.Writer, stream interface {
 
 type upOptions struct {
 	keepOnFail, noFirewall, noDaemon bool
+	// resume brings the lab back on its kept run dir (parker up LAB).
+	resume bool
 	// out takes progress (stdout when nil); quiet leaves out the
 	// compatibility warnings (the caller has shown them).
 	out   io.Writer
@@ -284,7 +286,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		}
 	}
 	if o.noDaemon {
-		_, err := lab.Up(ctx, low, lab.Options{Log: out, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic})
+		_, err := lab.Up(ctx, low, lab.Options{Log: out, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic, Resume: o.resume})
 		return err
 	}
 	c, err := ensureDaemon(ctx)
@@ -296,7 +298,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		return err
 	}
 	stream, err := c.Up(ctx, connect.NewRequest(&parkerv1.UpRequest{
-		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, ConsulLicense: lic,
+		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, ConsulLicense: lic, Resume: o.resume,
 	}))
 	if err != nil {
 		return rpcErr(err)
@@ -305,15 +307,17 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 }
 
 func upCmd() *cobra.Command {
-	var keepOnFail, noFirewall, noDaemon bool
+	var keepOnFail, noFirewall, noDaemon, fresh bool
 	c := &cobra.Command{
 		Use:   "up FILE|LAB",
 		Short: "Create the lab's network and start its processes; returns when everything is ready",
 		Long: "Create the lab's network and start its processes; returns when everything is ready.\n\n" +
 			"The lab is run by `parker daemon`, which is started in the background if needed and\n" +
 			"keeps supervising the processes (restart: policies) after up returns.\n\n" +
-			"Given a lab name instead of a file, up brings the lab back from the expanded topology\n" +
-			"its last up saved (kept by down, removed by down --purge and prune).",
+			"Given a lab name instead of a file, up starts that lab again where it left off: on its\n" +
+			"kept data, addresses and tokens, from the expanded topology its last up saved (kept by\n" +
+			"down, removed by down --purge and prune); --fresh rebuilds it from that copy with fresh\n" +
+			"data instead. Given a file, up always rebuilds the lab fresh.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
@@ -322,7 +326,8 @@ func upCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := bringUp(ctx, low, upOptions{keepOnFail: keepOnFail, noFirewall: noFirewall, noDaemon: noDaemon}); err != nil {
+			resume := savedLabArg(args[0]) && !fresh
+			if err := bringUp(ctx, low, upOptions{keepOnFail: keepOnFail, noFirewall: noFirewall, noDaemon: noDaemon, resume: resume}); err != nil {
 				return err
 			}
 			say("shell: parker exec %s %s -- consul members", args[0], firstNode(low))
@@ -337,6 +342,7 @@ func upCmd() *cobra.Command {
 	c.Flags().BoolVar(&keepOnFail, "keep-on-failure", false, "leave the lab running if a readiness check fails")
 	c.Flags().BoolVar(&noFirewall, "no-firewall", false, "don't add iptables ACCEPT rules for the lab bridges; print them instead")
 	c.Flags().BoolVar(&noDaemon, "no-daemon", false, "run in this process; nothing supervises the lab after up returns")
+	c.Flags().BoolVar(&fresh, "fresh", false, "with a lab name: rebuild the lab from its saved topology with fresh data instead of resuming it")
 	return c
 }
 

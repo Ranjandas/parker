@@ -22,6 +22,8 @@ type Move struct {
 func (m Move) String() string {
 	why := ""
 	switch h := m.Because.Host; {
+	case h.Stopped:
+		why = fmt.Sprintf("stopped lab %q holds it", h.Lab)
 	case h.Lab != "":
 		why = fmt.Sprintf("running lab %q uses it", h.Lab)
 	case h.Route:
@@ -58,6 +60,9 @@ func Relocate(lab string, f *spec.File, host []HostNet, prev map[string]netip.Pr
 	}
 	clashing := map[string]Clash{}
 	for _, c := range Clashes(lab, f, host) {
+		if !f.Networks[c.Network].Auto {
+			continue // a fixed subnet past clashError overlaps only a stopped lab
+		}
 		if _, ok := clashing[c.Network]; !ok {
 			clashing[c.Network] = c
 		}

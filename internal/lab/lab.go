@@ -57,6 +57,10 @@ type Options struct {
 	// (see license.Needed). It's written to the run dir, 0600, and nowhere
 	// else.
 	License []byte
+	// Resume brings the lab back on its kept run dir (Consul data, logs,
+	// peering tokens) instead of a fresh one, and fails rather than move
+	// it to another subnet.
+	Resume bool
 }
 
 // Up recreates the lab from its expanded topology and returns when every
@@ -96,14 +100,16 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 		}
 	}
 	defer release()
-	if err := relocate(name, low, say); err != nil {
+	if err := relocate(name, low, o.Resume, say); err != nil {
 		return nil, err
 	}
 	if err := netsetup.Down(name, func(f string, a ...any) { say("cleanup: "+f, a...) }); err != nil {
 		return nil, PrivHint(err)
 	}
 	dir := RunDir(name)
-	if err := os.RemoveAll(dir); err != nil {
+	if o.Resume {
+		say("resuming lab %q on its data in %s", name, dir)
+	} else if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
