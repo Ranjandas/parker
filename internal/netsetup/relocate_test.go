@@ -100,7 +100,7 @@ func TestRewriteStringsInterfaces(t *testing.T) {
 	v := map[string]any{"a": "10.1.0.5", "b": []any{"x 10.1.0.6", map[string]any{"c": "10.1.0.7:8500"}}, "n": 3}
 	type wrap struct{ V any }
 	w := &wrap{V: v}
-	f := func(s string) string { return moveAddrs(s, m) }
+	f := func(s string) string { return MoveAddrs(s, m) }
 	rewriteStrings(reflect.ValueOf(w), f)
 	got := w.V.(map[string]any)
 	if got["a"] != "10.7.0.5" || got["b"].([]any)[0] != "x 10.7.0.6" || got["b"].([]any)[1].(map[string]any)["c"] != "10.7.0.7:8500" || got["n"] != 3 {

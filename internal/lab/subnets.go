@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -32,7 +33,7 @@ func relocate(name string, low *spec.File, resume bool, say func(string, ...any)
 			}
 		}
 	}
-	moves, err := netsetup.Relocate(name, low, host, prev)
+	moves, err := move(name, low, host, prev)
 	if err != nil {
 		return err
 	}
@@ -78,6 +79,20 @@ func stoppedNets(host []netsetup.HostNet) []netsetup.HostNet {
 		}
 	}
 	return out
+}
+
+// move relocates the lab's auto networks and re-signs the server
+// certificates for their new addresses.
+func move(name string, low *spec.File, host []netsetup.HostNet, prev map[string]netip.Prefix) ([]netsetup.Move, error) {
+	moves, err := netsetup.Relocate(name, low, host, prev)
+	if err != nil || len(moves) == 0 {
+		return moves, err
+	}
+	fix := func(s string) string { return netsetup.MoveAddrs(s, moves) }
+	if err := expand.ReissueServerCerts(low, fix); err != nil {
+		return nil, fmt.Errorf("moving the lab's TLS certificates: %w", err)
+	}
+	return moves, nil
 }
 
 // lockSubnets serialises subnet picking across every parker on this host

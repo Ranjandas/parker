@@ -147,8 +147,8 @@ prints the end of its log. Look in this order:
 If labs in the VM stop answering, `parker exec` or `parker status LAB`
 fails with `input/output error`, and `parker machine ssh` gets
 "Connection refused", the VM's disk has failed under it. Parker 0.12.0
-could do this after a lab had been running for a while; later releases
-set the VM's disk up so it doesn't. Upgrade `parker` on your Mac first.
+could do this after a lab had been running for a while, often after the
+Mac had slept; later releases set the VM's disk up so it doesn't. Upgrade `parker` on your Mac first.
 
 To confirm, look for disk errors on the VM's console:
 
@@ -156,8 +156,8 @@ To confirm, look for disk errors on the VM's console:
 $ grep -E 'I/O error|EXT4-fs error' ~/.parker/machine/default/console.log | tail -5
 ```
 
-To recover, restart the machine. The VM checks and repairs its disk as it
-boots, and labs come back with `parker up`:
+To recover, try restarting the machine first. The VM checks its disk as
+it boots, and labs come back with `parker up`:
 
 ```console
 $ parker machine stop
@@ -165,8 +165,8 @@ $ parker machine start
 $ parker up examples/minimal.yaml
 ```
 
-If it still doesn't start, the disk is beyond repair. Create the machine
-again: the image is cached, so this takes a minute.
+If `start` stays at "still booting", the disk is beyond repair. Create
+the machine again. The image is cached, so this takes about a minute:
 
 ```console
 $ parker machine rm --force
