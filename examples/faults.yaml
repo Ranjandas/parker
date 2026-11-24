@@ -24,7 +24,10 @@ scenario:
     - assert: { consul: { leader: true }, within: 30s }
     - heal: all
     # Serf retries failed members every 30s, so a healed node can take up
-    # to that long to show alive again.
+    # to that long to show alive again. If the cut-off server was failed
+    # long enough for autopilot to drop it, it comes back as a non-voter;
+    # peers waits until it votes again, so killing the leader next still
+    # leaves a quorum.
     - assert: { consul: { members: ">=4", peers: ">=3" }, within: 60s }
 
     - kill: dc1/leader
@@ -32,7 +35,9 @@ scenario:
     - assert: { consul: { leader: true }, within: 30s }
     - name: bring the killed server back
       start: dc1/servers
-    - assert: { consul: { members: ">=4" }, within: 30s }
+    # peers counts voters: wait until the restarted server votes again, or
+    # pausing the leader next could leave the dc without a quorum.
+    - assert: { consul: { members: ">=4", peers: ">=3" }, within: 60s }
 
     - pause: dc1/leader
     - assert: { exec: { on: dc1/web, run: "consul members | grep -w failed" }, within: 30s }

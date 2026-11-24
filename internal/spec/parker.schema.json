@@ -158,7 +158,7 @@
         },
         "peers": {
           "type": "string",
-          "description": "Peers, e.g. \"\u003e=3\": raft peers (voters and non-voters)."
+          "description": "Peers, e.g. \"\u003e=3\": voting raft peers. A server that rejoined after a\nlong outage stays a non-voter for a few seconds and doesn't count."
         },
         "service_healthy": {
           "type": "string",
