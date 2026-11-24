@@ -191,8 +191,13 @@ a.btn{text-decoration:none;color:inherit}
 .appcard small{color:var(--muted);font:11.5px var(--f-mono);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .appcard .tx{min-width:0;flex:1}
 .logs{display:flex;flex-direction:column;min-height:520px}
-/* The log panel fills the window beside the node's cards and stays put while they scroll. */
-.ngrid>.logs{position:sticky;top:16px;height:calc(100dvh - var(--top-h,62px) - 32px)}
+/* On a wide screen the node page fits the window: the cards scroll in their
+   own column and the log panel fills the height beside them, so the log
+   scrolls inside its panel rather than the page. */
+.npage{height:100%;display:flex;flex-direction:column}
+.npage>.ngrid{flex:1;min-height:360px;grid-template-rows:minmax(0,1fr);align-items:stretch}
+.ncards{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow:auto;margin:-4px;padding:4px;overscroll-behavior:contain}
+.npage .logs{min-height:0}
 .lvsel{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:8px;padding:4px 8px;font-size:12.5px;font-weight:550;cursor:pointer}
 .logbar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .tabs{display:flex;gap:2px}
@@ -267,7 +272,12 @@ dialog label{display:flex;gap:8px;align-items:center;color:var(--ink-2)}
 @media (max-width: 1180px){
   .grid2{grid-template-columns:1fr}
   .ngrid{grid-template-columns:1fr}
-  .ngrid>.logs{position:static;height:75dvh}
+  .npage{height:auto;display:block}
+  .npage>.ngrid{grid-template-rows:none;align-items:start}
+  .ncards{overflow:visible}
+  /* Stacked: the page scrolls and the log panel is one screen tall. */
+  .view:has(>.npage){container-type:size}
+  .npage .logs{height:75dvh;height:calc(100cqh - 32px);min-height:360px}
   .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width: 760px){

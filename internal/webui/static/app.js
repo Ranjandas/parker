@@ -405,8 +405,12 @@ function renderNode() {
   const health = Object.entries(n.health || {});
   const keep = $("#logbody") && S.logs.key === st.lab + "/" + n.name + "/" + S.logs.proc;
   const logScroll = keep ? $("#logbody").scrollTop : 0;
+  // On a wide screen the cards scroll in their own column; keep its place
+  // across the re-render that each status poll does.
+  const nc = $(".ncards");
+  const cardScroll = nc && nc.dataset.node === st.lab + "/" + n.name ? nc.scrollTop : 0;
 
-  v.innerHTML = `<div class="pad">
+  v.innerHTML = `<div class="pad npage">
     <div class="nhead">
       <div class="big" style="${ns === "bad" ? "background:var(--bad-soft);color:var(--bad)" : kind === "server" ? "background:var(--accent-soft);color:var(--accent)" : ""}">${ICON[kind]}</div>
       <div style="flex:1;min-width:240px">
@@ -423,7 +427,7 @@ function renderNode() {
       </div>
     </div>
     <div class="ngrid">
-      <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="ncards" data-node="${esc(st.lab + "/" + n.name)}">
         <div class="card">
           <div class="hd"><h3>Processes</h3><div class="grow"></div><span class="chip">${ps.length}</span></div>
           <div class="plist" style="padding:12px">${ps.map((p) => {
@@ -456,8 +460,7 @@ function renderNode() {
         <div class="logfoot"><span class="live" ${S.logs.ctrl ? "" : 'style="color:var(--muted)"'}><i></i>${S.logs.ctrl ? "Streaming" : "Stopped"}</span><span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((ps.find((p) => p.name === S.logs.proc) || {}).logPath || "")}</span><span style="margin-left:auto" id="logcount"></span></div>
       </div>
     </div></div>`;
-  const top = $(".top");
-  if (top) document.documentElement.style.setProperty("--top-h", top.offsetHeight + "px");
+  if (cardScroll) $(".ncards").scrollTop = cardScroll;
   ensureLogs(st.lab, n.name, S.logs.proc);
   paintLogs(keep ? logScroll : null);
   const sl = $("#setlevel");
