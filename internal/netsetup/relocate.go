@@ -100,16 +100,16 @@ func Relocate(lab string, f *spec.File, host []HostNet, prev map[string]netip.Pr
 		taken = append(taken, to)
 		moves = append(moves, Move{Network: name, From: c.Subnet, To: to, Because: c})
 	}
-	rewriteStrings(reflect.ValueOf(f), func(s string) string { return moveAddrs(s, moves) })
+	rewriteStrings(reflect.ValueOf(f), func(s string) string { return MoveAddrs(s, moves) })
 	return moves, nil
 }
 
 // addrRun is a run of digits and dots: an IPv4 address when it parses as one.
 var addrRun = regexp.MustCompile(`[0-9][0-9.]*`)
 
-// moveAddrs rewrites each IPv4 address in s that falls in a moved subnet to
+// MoveAddrs rewrites each IPv4 address in s that falls in a moved subnet to
 // the same offset in its new subnet.
-func moveAddrs(s string, moves []Move) string {
+func MoveAddrs(s string, moves []Move) string {
 	if !strings.Contains(s, ".") {
 		return s
 	}

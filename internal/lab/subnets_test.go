@@ -1,6 +1,8 @@
 package lab
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"net/netip"
 	"regexp"
 	"testing"
@@ -35,7 +37,7 @@ func TestRelocateExpandedExamples(t *testing.T) {
 				old = append(old, p)
 				host = append(host, netsetup.HostNet{Prefix: p, Iface: "pk-x", Lab: "other"})
 			}
-			moves, err := netsetup.Relocate(low.Name, low, host, nil)
+			moves, err := move(low.Name, low, host, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -57,7 +59,35 @@ func TestRelocateExpandedExamples(t *testing.T) {
 					}
 				}
 			}
+			checkServerCerts(t, low)
 		})
+	}
+}
+
+// checkServerCerts fails unless every server certificate chains to the lab
+// CA, matches its key, and is valid for each of the node's addresses.
+func checkServerCerts(t *testing.T, low *spec.File) {
+	t.Helper()
+	for name, n := range low.Nodes {
+		if n.Files[expand.CertFile] == "" {
+			continue
+		}
+		pair, err := tls.X509KeyPair([]byte(n.Files[expand.CertFile]), []byte(n.Files[expand.CertKeyFile]))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		roots := x509.NewCertPool()
+		roots.AppendCertsFromPEM([]byte(n.Files[expand.CAFile]))
+		cert, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for net, a := range n.Networks {
+			if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, DNSName: a.IP}); err != nil {
+				t.Errorf("%s on %s: %v", name, net, err)
+			}
+		}
 	}
 }
 

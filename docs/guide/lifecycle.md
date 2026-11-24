@@ -44,7 +44,8 @@ a datacenter's default `10.<n>.0.0/24` or the `wan` network, is already
 in use by another running lab or by the host (a VPN, Docker, a cloud
 VPC), `parker up` moves that network to the next free `10.<n>.0.0` of
 the same size and says so. Every address in the lab moves with it, to
-the same offset: node IPs, the generated Consul configs, and full
+the same offset: node IPs, the generated Consul configs, the servers' TLS
+certificates (re-issued by the lab CA for the new addresses), and full
 addresses in your own commands and scenario steps.
 
 Two copies of the same one-datacenter lab, `a.yaml` and `b.yaml`:
