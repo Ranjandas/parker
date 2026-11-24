@@ -37,5 +37,6 @@ commands and scenario `exec` steps:
 | `PARKER_LAB`, `PARKER_NODE` | The lab and the node. |
 
 Processes the lab runs (services, [low-level](low-level.md#processes)
-processes) get `PATH`, `HOME` (the node's directory), `PARKER_LAB`,
-`PARKER_NODE` and their own `env:`, but not your shell's environment.
+processes) get `PATH`, `HOME` (the node's directory), `TMPDIR` (their
+own `tmp/<process>` directory under it), `PARKER_LAB`, `PARKER_NODE` and
+their own `env:`, but not your shell's environment.

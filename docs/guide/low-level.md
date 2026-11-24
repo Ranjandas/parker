@@ -84,8 +84,9 @@ nodes:
 
 A process runs in its node's directory, as the user the daemon runs as,
 with its output in `<process>.log` there. Its environment has `PATH`,
-`HOME` (the node's directory), `PARKER_LAB`, `PARKER_NODE` and what you
-set in `env:`.
+`HOME` (the node's directory), `TMPDIR` (`tmp/<process>` in the node's
+directory, so processes don't share `/tmp`), `PARKER_LAB`, `PARKER_NODE`
+and what you set in `env:`.
 
 ### Pinned binaries
 

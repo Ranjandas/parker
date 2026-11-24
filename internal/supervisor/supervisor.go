@@ -278,7 +278,15 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 		p.version = v
 		p.mu.Unlock()
 	}
-	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
+	// Each process gets its own TMPDIR. Nodes share the host's /tmp, and
+	// consul connect envoy names its bootstrap fifo there from the time plus
+	// its pid: two Envoys starting at once could pick the same name, and one
+	// failed with "file exists".
+	tmp := filepath.Join(dir, "tmp", p.name)
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return err
+	}
+	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
 	if o.LicensePath != "" {
 		env = append(env, "CONSUL_LICENSE_PATH="+o.LicensePath)
 	}
