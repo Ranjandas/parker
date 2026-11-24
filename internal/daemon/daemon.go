@@ -139,7 +139,7 @@ func (s *Server) Up(ctx context.Context, req *connect.Request[parkerv1.UpRequest
 	}
 	w := streamWriter(stream)
 	defer w.Flush()
-	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense}, w); err != nil {
+	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense, Resume: req.Msg.Resume}, w); err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return nil
@@ -245,6 +245,17 @@ func (s *Server) Describe(_ context.Context, req *connect.Request[parkerv1.Descr
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 	return connect.NewResponse(&parkerv1.DescribeResponse{Node: name, Yaml: text}), nil
+}
+
+func (s *Server) Topology(_ context.Context, req *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error) {
+	b, err := lab.SavedTopology(req.Msg.Lab)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&parkerv1.TopologyResponse{TopologyYaml: b}), nil
 }
 
 func (s *Server) Graph(_ context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {

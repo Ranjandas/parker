@@ -4,7 +4,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -102,5 +105,25 @@ func TestExplicitSubnetIsFixed(t *testing.T) {
 	}
 	if low.Networks["dc1-lan"].Auto || low.Networks["dc2-lan"].Auto {
 		t.Error("an explicit dc subnet must not be auto")
+	}
+}
+
+func TestStoppedNets(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("PARKER_RUN_DIR", base)
+	for name, subnet := range map[string]string{"down": "10.7.0.0/24", "up": "10.8.0.0/24"} {
+		dir := filepath.Join(base, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		topo := "parker: v1alpha1\nname: " + name + "\nnetworks:\n  lan: { subnet: " + subnet + ", auto: true }\nnodes:\n  a:\n    networks: { lan: { ip: " + strings.TrimSuffix(subnet, "0/24") + "10 } }\n"
+		if err := os.WriteFile(filepath.Join(dir, TopologyFile), []byte(topo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	running := []netsetup.HostNet{{Prefix: netip.MustParsePrefix("10.8.0.0/24"), Iface: "pk-x", Lab: "up"}}
+	got := stoppedNets(running)
+	if len(got) != 1 || got[0].Lab != "down" || got[0].Prefix.String() != "10.7.0.0/24" || !got[0].Stopped {
+		t.Fatalf("stopped nets: %+v", got)
 	}
 }

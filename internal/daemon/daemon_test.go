@@ -90,6 +90,17 @@ func TestServeOverSocket(t *testing.T) {
 	if _, err := c.Graph(ctx, connect.NewRequest(&parkerv1.GraphRequest{Lab: "nope"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("graph of a missing lab: %v", err)
 	}
+	tp, err := c.Topology(ctx, connect.NewRequest(&parkerv1.TopologyRequest{Lab: "t"}))
+	if err != nil || string(tp.Msg.TopologyYaml) != topo {
+		t.Fatalf("topology %q err %v", tp, err)
+	}
+	for _, name := range []string{"nope", "", "../t", "."} {
+		if _, err := c.Topology(ctx, connect.NewRequest(&parkerv1.TopologyRequest{Lab: name})); connect.CodeOf(err) != connect.CodeNotFound && connect.CodeOf(err) != connect.CodeInternal {
+			t.Fatalf("topology of %q: %v", name, err)
+		} else if err == nil {
+			t.Fatalf("topology of %q: no error", name)
+		}
+	}
 	if err := Serve(ctx, ServeOptions{Socket: sock}, os.Stderr); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("second daemon: %v", err)
 	}

@@ -47,6 +47,8 @@ const (
 	ParkerServiceDescribeProcedure = "/parker.v1.ParkerService/Describe"
 	// ParkerServiceGraphProcedure is the fully-qualified name of the ParkerService's Graph RPC.
 	ParkerServiceGraphProcedure = "/parker.v1.ParkerService/Graph"
+	// ParkerServiceTopologyProcedure is the fully-qualified name of the ParkerService's Topology RPC.
+	ParkerServiceTopologyProcedure = "/parker.v1.ParkerService/Topology"
 	// ParkerServiceValidateProcedure is the fully-qualified name of the ParkerService's Validate RPC.
 	ParkerServiceValidateProcedure = "/parker.v1.ParkerService/Validate"
 	// ParkerServiceLogsProcedure is the fully-qualified name of the ParkerService's Logs RPC.
@@ -83,6 +85,11 @@ type ParkerServiceClient interface {
 	// node's datacenter, partition and role, which services call which (and
 	// through which mesh gateways), and WAN federation and peering links.
 	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
+	// Topology returns the expanded topology a lab was last brought up
+	// with, as saved in its run dir (kept by down, removed by down --purge
+	// and prune). `parker up LAB` uses it to bring a lab back without its
+	// file. NOT_FOUND when the lab has no saved topology.
+	Topology(context.Context, *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error)
 	// Validate checks a topology given inline, as `parker validate` does
 	// (decode, expand, compatibility warnings), for the web UI's builder.
 	Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error)
@@ -160,6 +167,12 @@ func NewParkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(parkerServiceMethods.ByName("Graph")),
 			connect.WithClientOptions(opts...),
 		),
+		topology: connect.NewClient[parkerv1.TopologyRequest, parkerv1.TopologyResponse](
+			httpClient,
+			baseURL+ParkerServiceTopologyProcedure,
+			connect.WithSchema(parkerServiceMethods.ByName("Topology")),
+			connect.WithClientOptions(opts...),
+		),
 		validate: connect.NewClient[parkerv1.ValidateRequest, parkerv1.ValidateResponse](
 			httpClient,
 			baseURL+ParkerServiceValidateProcedure,
@@ -214,6 +227,7 @@ type parkerServiceClient struct {
 	status   *connect.Client[parkerv1.StatusRequest, parkerv1.StatusResponse]
 	describe *connect.Client[parkerv1.DescribeRequest, parkerv1.DescribeResponse]
 	graph    *connect.Client[parkerv1.GraphRequest, parkerv1.GraphResponse]
+	topology *connect.Client[parkerv1.TopologyRequest, parkerv1.TopologyResponse]
 	validate *connect.Client[parkerv1.ValidateRequest, parkerv1.ValidateResponse]
 	logs     *connect.Client[parkerv1.LogsRequest, parkerv1.LogChunk]
 	exec     *connect.Client[parkerv1.ExecRequest, parkerv1.ExecResponse]
@@ -256,6 +270,11 @@ func (c *parkerServiceClient) Describe(ctx context.Context, req *connect.Request
 // Graph calls parker.v1.ParkerService.Graph.
 func (c *parkerServiceClient) Graph(ctx context.Context, req *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
 	return c.graph.CallUnary(ctx, req)
+}
+
+// Topology calls parker.v1.ParkerService.Topology.
+func (c *parkerServiceClient) Topology(ctx context.Context, req *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error) {
+	return c.topology.CallUnary(ctx, req)
 }
 
 // Validate calls parker.v1.ParkerService.Validate.
@@ -313,6 +332,11 @@ type ParkerServiceHandler interface {
 	// node's datacenter, partition and role, which services call which (and
 	// through which mesh gateways), and WAN federation and peering links.
 	Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error)
+	// Topology returns the expanded topology a lab was last brought up
+	// with, as saved in its run dir (kept by down, removed by down --purge
+	// and prune). `parker up LAB` uses it to bring a lab back without its
+	// file. NOT_FOUND when the lab has no saved topology.
+	Topology(context.Context, *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error)
 	// Validate checks a topology given inline, as `parker validate` does
 	// (decode, expand, compatibility warnings), for the web UI's builder.
 	Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error)
@@ -386,6 +410,12 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(parkerServiceMethods.ByName("Graph")),
 		connect.WithHandlerOptions(opts...),
 	)
+	parkerServiceTopologyHandler := connect.NewUnaryHandler(
+		ParkerServiceTopologyProcedure,
+		svc.Topology,
+		connect.WithSchema(parkerServiceMethods.ByName("Topology")),
+		connect.WithHandlerOptions(opts...),
+	)
 	parkerServiceValidateHandler := connect.NewUnaryHandler(
 		ParkerServiceValidateProcedure,
 		svc.Validate,
@@ -444,6 +474,8 @@ func NewParkerServiceHandler(svc ParkerServiceHandler, opts ...connect.HandlerOp
 			parkerServiceDescribeHandler.ServeHTTP(w, r)
 		case ParkerServiceGraphProcedure:
 			parkerServiceGraphHandler.ServeHTTP(w, r)
+		case ParkerServiceTopologyProcedure:
+			parkerServiceTopologyHandler.ServeHTTP(w, r)
 		case ParkerServiceValidateProcedure:
 			parkerServiceValidateHandler.ServeHTTP(w, r)
 		case ParkerServiceLogsProcedure:
@@ -493,6 +525,10 @@ func (UnimplementedParkerServiceHandler) Describe(context.Context, *connect.Requ
 
 func (UnimplementedParkerServiceHandler) Graph(context.Context, *connect.Request[parkerv1.GraphRequest]) (*connect.Response[parkerv1.GraphResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Graph is not implemented"))
+}
+
+func (UnimplementedParkerServiceHandler) Topology(context.Context, *connect.Request[parkerv1.TopologyRequest]) (*connect.Response[parkerv1.TopologyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("parker.v1.ParkerService.Topology is not implemented"))
 }
 
 func (UnimplementedParkerServiceHandler) Validate(context.Context, *connect.Request[parkerv1.ValidateRequest]) (*connect.Response[parkerv1.ValidateResponse], error) {

@@ -17,6 +17,10 @@ type HostNet struct {
 	Iface  string // interface name, "" if unknown
 	Lab    string // set when the interface belongs to a Parker lab
 	Route  bool   // true for a route, false for an interface address
+	// Stopped marks a subnet held by a lab that is down but kept (it has
+	// a run dir), so it can come back on its addresses. Auto networks
+	// move off it; a fixed subnet doesn't clash with it.
+	Stopped bool
 }
 
 // Clash is a lab network that overlaps something on the host.
@@ -34,6 +38,10 @@ func (c Clash) String() string {
 	where := c.Host.Iface
 	if where == "" {
 		where = "the host"
+	}
+	if c.Host.Stopped {
+		return fmt.Sprintf("network %s (%s) overlaps %s held by stopped lab %q; `parker down %s --purge` releases it",
+			c.Network, c.Subnet, c.Host.Prefix, c.Host.Lab, c.Host.Lab)
 	}
 	if c.Host.Lab != "" {
 		return fmt.Sprintf("network %s (%s) overlaps %s used by running lab %q (%s); `parker down %s` or pick another subnet",
@@ -137,7 +145,7 @@ func CheckSubnets(lab string, f *spec.File) error {
 func clashError(lab string, f *spec.File, host []HostNet) error {
 	var clashes []Clash
 	for _, c := range Clashes(lab, f, host) {
-		if !f.Networks[c.Network].Auto {
+		if !f.Networks[c.Network].Auto && !c.Host.Stopped {
 			clashes = append(clashes, c)
 		}
 	}

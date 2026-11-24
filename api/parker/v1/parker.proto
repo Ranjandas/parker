@@ -35,6 +35,12 @@ service ParkerService {
   // through which mesh gateways), and WAN federation and peering links.
   rpc Graph(GraphRequest) returns (GraphResponse);
 
+  // Topology returns the expanded topology a lab was last brought up
+  // with, as saved in its run dir (kept by down, removed by down --purge
+  // and prune). `parker up LAB` uses it to bring a lab back without its
+  // file. NOT_FOUND when the lab has no saved topology.
+  rpc Topology(TopologyRequest) returns (TopologyResponse);
+
   // Validate checks a topology given inline, as `parker validate` does
   // (decode, expand, compatibility warnings), for the web UI's builder.
   rpc Validate(ValidateRequest) returns (ValidateResponse);
@@ -83,6 +89,9 @@ message UpRequest {
   // CONSUL_LICENSE_PATH or license.file). The daemon writes it to the lab's
   // run dir (0600) for the agents and never logs or stores it elsewhere.
   bytes consul_license = 4;
+  // Bring the lab back on its kept run dir (data, logs) instead of a
+  // fresh one, as `parker up LAB` does; fail rather than move its subnets.
+  bool resume = 5;
 }
 
 message LogLine {
@@ -179,6 +188,15 @@ message ValidateProblem {
   string message = 1;
   int32 line = 2; // 1-based, when the error names one; 0 otherwise
   string path = 3; // the YAML path it names (consul.datacenters.dc1...), if any
+}
+
+message TopologyRequest {
+  string lab = 1;
+}
+
+message TopologyResponse {
+  // Low-level topology, YAML, as `parker expand` prints it.
+  bytes topology_yaml = 1;
 }
 
 message GraphRequest {

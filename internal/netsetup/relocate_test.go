@@ -107,3 +107,29 @@ func TestRewriteStringsInterfaces(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// A stopped lab that is kept holds its subnets: auto networks move off
+// them, but a fixed subnet doesn't clash with it.
+func TestStoppedLabHoldsSubnets(t *testing.T) {
+	host := []HostNet{{Prefix: netip.MustParsePrefix("10.1.0.0/24"), Lab: "old", Stopped: true}}
+	f := autoLab()
+	moves, err := Relocate("me", f, host, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) != 1 || moves[0].To.String() != "10.3.0.0/24" {
+		t.Fatalf("moves: %v", moves)
+	}
+	if !strings.Contains(moves[0].String(), `10.1.0.0/24 is taken (stopped lab "old" holds it); using 10.3.0.0/24`) {
+		t.Errorf("message: %s", moves[0])
+	}
+	fixed := autoLab()
+	fixed.Networks["dc1-lan"].Auto = false
+	if moves, err := Relocate("me", fixed, host, nil); err != nil || len(moves) != 0 {
+		t.Errorf("fixed subnet against a stopped lab: %v %v", moves, err)
+	}
+	c := Clash{Network: "dc1-lan", Subnet: netip.MustParsePrefix("10.1.0.0/24"), Host: host[0]}
+	if !strings.Contains(c.String(), "held by stopped lab \"old\"; `parker down old --purge` releases it") {
+		t.Errorf("clash: %s", c)
+	}
+}

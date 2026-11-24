@@ -355,7 +355,10 @@ echo %[3]q
 // while the acceptor side isn't reachable yet, and waits until it is active.
 func (p peering) establishProc(deps map[string]*spec.Dep, env map[string]string) *spec.Process {
 	active := PeeringActiveLine(p.name)
-	script := fmt.Sprintf(`if ! consul peering read -name %[1]s 2>/dev/null | grep -q ACTIVE; then
+	// A peering the dialer already has (a restart, or a lab resumed on its
+	// data) reconnects by itself; establishing it again with the token,
+	// whose secret was used up, fails for good.
+	script := fmt.Sprintf(`if ! consul peering read -name %[1]s >/dev/null 2>&1; then
   # The acceptor's gateway can lag its servers: until it routes to them the
   # exchange fails (tls: unrecognized name), so retry until ready_when's
   # timeout.

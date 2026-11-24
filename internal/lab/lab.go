@@ -57,6 +57,10 @@ type Options struct {
 	// (see license.Needed). It's written to the run dir, 0600, and nowhere
 	// else.
 	License []byte
+	// Resume brings the lab back on its kept run dir (Consul data, logs,
+	// peering tokens) instead of a fresh one, and fails rather than move
+	// it to another subnet.
+	Resume bool
 }
 
 // Up recreates the lab from its expanded topology and returns when every
@@ -96,14 +100,16 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 		}
 	}
 	defer release()
-	if err := relocate(name, low, say); err != nil {
+	if err := relocate(name, low, o.Resume, say); err != nil {
 		return nil, err
 	}
 	if err := netsetup.Down(name, func(f string, a ...any) { say("cleanup: "+f, a...) }); err != nil {
 		return nil, PrivHint(err)
 	}
 	dir := RunDir(name)
-	if err := os.RemoveAll(dir); err != nil {
+	if o.Resume {
+		say("resuming lab %q on its data in %s", name, dir)
+	} else if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -169,6 +175,28 @@ func Down(name string, log io.Writer) error {
 func LoadTopology(name string) (*spec.File, error) {
 	return spec.Load(filepath.Join(RunDir(name), TopologyFile), nil)
 }
+
+// SavedTopology returns the expanded topology file saved by Up, as is.
+// The error wraps os.ErrNotExist when the lab has none (never up here, or
+// purged).
+func SavedTopology(name string) ([]byte, error) {
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+		return nil, fmt.Errorf("lab %q: not a lab name", name)
+	}
+	b, err := os.ReadFile(filepath.Join(RunDir(name), TopologyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, noSavedTopology{name}
+	}
+	return b, err
+}
+
+type noSavedTopology struct{ name string }
+
+func (e noSavedTopology) Error() string {
+	return fmt.Sprintf("lab %q has no saved topology in %s (never brought up here, or removed by down --purge or prune); `parker status` lists labs, or pass the lab's file", e.name, RunBase())
+}
+
+func (noSavedTopology) Unwrap() error { return os.ErrNotExist }
 
 // Labs lists the labs that have a run directory.
 func Labs() ([]string, error) {
