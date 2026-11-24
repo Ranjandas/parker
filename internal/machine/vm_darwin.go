@@ -131,12 +131,21 @@ func (m Machine) vmConfig(c Config) (*vz.VirtualMachineConfiguration, error) {
 	cfg.SetPlatformVirtualMachineConfiguration(plat)
 
 	// Disks: the root disk, then the cloud-init seed.
+	//
+	// The caching mode matters. With the default (automatic) mode, a Linux
+	// guest under steady write load, such as a lab's Consul servers, can
+	// see its root disk fail with I/O errors after a while: ext4 goes
+	// read-only, sshd and the daemon can't read their files, and the VM
+	// looks hung (issue #164). Cached with fsync is what Lima and vfkit
+	// moved to for the same corruption; it's safe across host crashes
+	// because guest flushes become fsync(2) on the image file.
 	var disks []vz.StorageDeviceConfiguration
 	for _, d := range []struct {
 		path string
 		ro   bool
 	}{{m.DiskPath(), false}, {m.SeedPath(), true}} {
-		att, err := vz.NewDiskImageStorageDeviceAttachment(d.path, d.ro)
+		att, err := vz.NewDiskImageStorageDeviceAttachmentWithCacheAndSync(
+			d.path, d.ro, vz.DiskImageCachingModeCached, vz.DiskImageSynchronizationModeFsync)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", d.path, err)
 		}

@@ -200,3 +200,6 @@ is running; `parker machine rm --force` stops it first.
   ways in [reaching the lab](#reaching-the-lab).
 - If `start` stays at "still booting", see
   [troubleshooting](troubleshooting.md#parker-machine-doesnt-start).
+- If the VM stops responding and commands fail with `input/output
+  error`, see
+  [troubleshooting](troubleshooting.md#parker-machine-stops-responding).
