@@ -141,8 +141,19 @@ func (l *ScenarioLab) Consul(ctx context.Context, a *spec.ConsulAssert) error {
 		if err != nil {
 			return err
 		}
-		if len(cfg.Servers) < want {
-			return fmt.Errorf("%s: %d raft peers, want %s", dc, len(cfg.Servers), a.Peers)
+		// Count voters only. Autopilot drops a server that was failed for
+		// long and adds it back as a non-voter until it has been healthy for
+		// a while; counting it would let the next fault start while the dc
+		// can't lose another server (killing the leader then leaves no
+		// quorum).
+		voters := 0
+		for _, s := range cfg.Servers {
+			if s.Voter {
+				voters++
+			}
+		}
+		if voters < want {
+			return fmt.Errorf("%s: %d voting raft peers of %d, want %s", dc, voters, len(cfg.Servers), a.Peers)
 		}
 	}
 	if svc := a.ServiceHealthy; svc != "" {

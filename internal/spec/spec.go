@@ -250,7 +250,8 @@ type ConsulAssert struct {
 	Leader bool `yaml:"leader,omitempty"`
 	// Members, e.g. ">=5": alive LAN members.
 	Members string `yaml:"members,omitempty"`
-	// Peers, e.g. ">=3": raft peers (voters and non-voters).
+	// Peers, e.g. ">=3": voting raft peers. A server that rejoined after a
+	// long outage stays a non-voter for a few seconds and doesn't count.
 	Peers string `yaml:"peers,omitempty"`
 	// ServiceHealthy: at least one instance of the service passes.
 	ServiceHealthy string `yaml:"service_healthy,omitempty"`

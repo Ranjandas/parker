@@ -107,7 +107,7 @@ holds or time runs out.
 |---|---|
 | `leader: true` | The datacenter has a raft leader. |
 | `members: ">=5"` | That many LAN members are alive. |
-| `peers: ">=3"` | That many raft peers. |
+| `peers: ">=3"` | That many voting raft peers. A server that comes back after a long outage rejoins as a non-voter for a few seconds and doesn't count, so this also waits for the dc to tolerate another failure. |
 | `service_healthy: api` | At least one instance of the service passes its checks. |
 | `dc: dc2` | Which datacenter; default the only one. |
 
