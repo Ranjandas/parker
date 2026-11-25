@@ -180,6 +180,16 @@ const ICON = {
   out: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.5" cy="6.5" r="5"/><path d="M1.5 6.5h10M6.5 1.5c-2.2 2.6-2.2 7.4 0 10M6.5 1.5c2.2 2.6 2.2 7.4 0 10"/><rect x="8.5" y="8.5" width="6.5" height="5.5" rx="1" fill="var(--panel,#fff)"/><path d="M8.5 10.2h6.5"/></svg>',
   gw: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8l5.4 3.1v6.2L8 14.2l-5.4-3.1V4.9z"/><path d="M5.5 8h5M8.5 6l2 2-2 2"/></svg>',
 };
+// The internet: a browser reaching in through a turning globe. The
+// meridians are ellipses squeezed and flipped in turn (app.css .mer), which
+// reads as the globe spinning.
+const GLOBE = `<svg class="gl" viewBox="-92 -34 184 68" width="184" height="68" aria-hidden="true">
+  <defs><marker id="gl-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="tip"/></marker></defs>
+  <g class="br"><rect x="-37" y="-15" width="40" height="30" rx="4.5" class="win"/><path d="M-37,-7h40" class="bar"/><circle cx="-32" cy="-11" r="1.4"/><circle cx="-27.5" cy="-11" r="1.4"/><circle cx="-23" cy="-11" r="1.4"/><rect x="-31" y="-2" width="22" height="3" rx="1.5" class="ln"/><rect x="-31" y="4.5" width="14" height="3" rx="1.5" class="ln"/><path d="M6,0h12" class="hop" marker-end="url(#gl-ah)"/></g>
+  <circle r="25" class="sea"/>
+  <g class="grid"><path d="M-25,0h50M-21.7,-12.5h43.4M-21.7,12.5h43.4"/>${[0, 1, 2, 3].map((i) => `<ellipse rx="25" ry="25" class="mer" style="animation-delay:${-i * 2.5}s"/>`).join("")}</g>
+  <circle r="25" class="rim"/>
+</svg>`;
 const LOGO = '<svg width="30" height="30" viewBox="0 0 60 60" aria-hidden="true"><defs><radialGradient id="sun" cx="35%" cy="35%" r="75%"><stop offset="0" stop-color="#FFC94A"/><stop offset=".7" stop-color="#FF7A1A"/><stop offset="1" stop-color="#FF4D2E"/></radialGradient></defs><circle cx="43" cy="24" r="17" fill="url(#sun)"/><rect x="23" y="7" width="10" height="50" rx="5" fill="var(--logo-ink,#F4F1EA)"/><rect x="3" y="12" width="15" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)"/><rect x="7" y="21.5" width="11" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)" opacity=".65"/><rect x="11" y="31" width="7" height="5" rx="2.5" fill="var(--logo-ink,#F4F1EA)" opacity=".35"/></svg>';
 
 function toast(m) {
@@ -775,7 +785,7 @@ async function fakeChange(node, svc, change, reset) {
 // The lab's architecture comes from the Graph call (fetched once per lab and
 // refreshed now and then); health comes from the Status poll, so a failing
 // sidecar turns its paths red within a poll.
-const { TW, TH, layout, anchors, route } = window.Topo;
+const { TW, TH, GR, layout, anchors, route, entryRoute } = window.Topo;
 const T = { layers: { upstream: true, failover: true, wan: true, peering: true }, sel: "", view: null, drag: null };
 
 async function loadGraph(lab) {
@@ -851,7 +861,8 @@ function renderTopology() {
   const ts = topoState();
   const L = layout(g);
   const kinds = new Set((g.edges || []).map((e) => (e.kind === "route" ? "upstream" : e.kind)));
-  if (!T.sel || !L.pos[T.sel]) {
+  const isEntry = (name) => (L.entries || []).some((en) => en.name === name);
+  if (!T.sel || !(L.pos[T.sel] || isEntry(T.sel))) {
     const bad = (g.nodes || []).find((n) => ts.state(n.name) === "bad");
     T.sel = (bad || (g.nodes || [])[0] || {}).name || "";
   }
@@ -933,6 +944,26 @@ function renderTopology() {
     boxes.push({ x: t.x, y: t.y, w: t.w, h: 18 });
     labels += `<div class="elbl ${esc(t.s.e.kind)} ${t.s.broken ? "broken" : ""}" style="left:${t.x}px;top:${t.y}px">${esc(t.s.e.label)}</div>`;
   }
+  // The internet: a globe beside each datacenter with ingress or API
+  // gateways, and a short line into each of their listeners.
+  let globes = "";
+  for (const en of L.entries || []) {
+    const into = (g.edges || []).filter((e) => e.from === en.name && en.gws.includes(e.to) && shown(e));
+    // One line per gateway, with a pill for each of its listeners.
+    for (const gw of [...new Set(into.map((e) => e.to))]) {
+      const ls = into.filter((e) => e.to === gw), e = ls[0];
+      const R = entryRoute(L.pos, en, gw, 0, lanes);
+      const { bad } = edgeHealth(e, ts), broken = bad >= 0;
+      const c = broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : "var(--accent)";
+      svg += `<path d="${R.d}" fill="none" stroke="${c}" stroke-opacity=".16" stroke-width="7.4" stroke-linecap="round"/>`;
+      svg += `<path d="${R.d}" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round" class="${!broken && !ts.labDown ? "flow" : ""}" marker-end="url(#ah-${broken ? "bad" : ts.labDown ? "line-2" : "accent"})"/>`;
+      ls.filter((l) => l.label).forEach((l, i, all) => {
+        labels += `<div class="elbl route ${broken ? "broken" : ""}" style="left:${R.mid[0]}px;top:${R.mid[1] + (i - (all.length - 1) / 2) * 21}px">${esc(l.label)}</div>`;
+      });
+      if (broken) badges.add(gw);
+    }
+    globes += `<div class="globe ${en.side} ${T.sel === en.name ? "sel" : ""}" data-tnode="${esc(en.name)}" style="left:${en.cx}px;top:${en.cy}px" tabindex="0" role="button" aria-label="internet: browsers and curl outside the lab">${GLOBE}<div class="cap">internet<span>browsers, curl</span></div></div>`;
+  }
   for (const name of badges) {
     const p = L.pos[name], why = problemOf(ts.byName.get(name)) || "failing";
     const w = 14 + why.length * 6.8;
@@ -947,6 +978,7 @@ function renderTopology() {
   let cards = "";
   for (const gn of g.nodes || []) {
     const p = L.pos[gn.name];
+    if (!p) continue;
     const n = ts.byName.get(gn.name);
     const s = ts.state(gn.name);
     const ico = graphRole(gn);
@@ -973,7 +1005,7 @@ function renderTopology() {
   v.innerHTML = `<div class="topo">
     <div class="stage" id="stage">
       <div class="tools">${layerBtns ? `<div class="seg">${layerBtns}</div>` : ""}</div>
-      <div class="world" id="world" style="width:${L.w}px;height:${H}px">${regions}${svg}${labels}${cards}</div>
+      <div class="world" id="world" style="width:${L.w}px;height:${H}px">${regions}${svg}${labels}${cards}${globes}</div>
       ${(g.nodes || []).length ? "" : '<div class="tempty"><div class="card empty"><b>No nodes</b>This lab has nothing to draw.</div></div>'}
       <div class="card legend">
         <span><i style="background:var(--ok)"></i>Healthy</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--accent)"></em>Upstream path</span>' : "<span></span>"}
@@ -1058,7 +1090,7 @@ function topoPanel(g, ts) {
 // Pan by dragging the background, zoom with the wheel or the buttons.
 document.addEventListener("pointerdown", (e) => {
   const st = e.target.closest("#stage");
-  if (!st || e.button !== 0 || e.target.closest(".nd,.tools,.zoom,.legend") || !T.view) return;
+  if (!st || e.button !== 0 || e.target.closest(".nd,.globe,.tools,.zoom,.legend") || !T.view) return;
   T.drag = { x: e.clientX, y: e.clientY, tx: T.view.tx, ty: T.view.ty, id: e.pointerId };
   st.setPointerCapture(e.pointerId);
   st.classList.add("drag");
@@ -1326,7 +1358,7 @@ document.addEventListener("click", (e) => {
   if (tn) {
     e.preventDefault();
     T.sel = tn.dataset.tnode;
-    $$("#world .nd").forEach((x) => x.classList.toggle("sel", x.dataset.tnode === T.sel));
+    $$("#world .nd, #world .globe").forEach((x) => x.classList.toggle("sel", x.dataset.tnode === T.sel));
     if (S.graph) $("#tpanel").innerHTML = topoPanel(S.graph, topoState());
     return;
   }
@@ -1346,7 +1378,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.matches(".prow")) e.target.click();
-  if ((e.key === "Enter" || e.key === " ") && e.target.matches(".nd[data-tnode]")) { e.preventDefault(); e.target.click(); }
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches(".nd[data-tnode], .globe[data-tnode]")) { e.preventDefault(); e.target.click(); }
 });
 document.addEventListener("dblclick", (e) => {
   const nd = e.target.closest(".nd[data-tnode]");

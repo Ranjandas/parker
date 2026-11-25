@@ -5,6 +5,10 @@
 
 (function (root) {
 const TW = 210, TH = 88, GX = 40, GY = 60, PAD = 28, DCGAP = 120;
+// The internet (clients outside the lab) isn't a card: a globe drawn in a
+// margin of EM beside each datacenter with an ingress or API gateway, right
+// next to those gateways. GR is the globe's radius.
+const EM = 236, GR = 25;
 
 // layout places datacenters side by side. Inside one, servers come first;
 // with partitions, the default partition (the control plane: its gateway
@@ -14,10 +18,17 @@ const TW = 210, TH = 88, GX = 40, GY = 60, PAD = 28, DCGAP = 120;
 // next datacenter (the first one's right, the others' left), so servers
 // and gateways face the datacenter they talk to and lines between them
 // don't cross other cards.
+//
+// Ingress and API gateways, which take traffic from the internet, sit on
+// the datacenter's outer side (away from the next one), so the globe
+// beside it feeds them with short lines.
 function layout(g) {
-  const nodes = g.nodes || [];
+  const outside = new Set((g.nodes || []).filter((n) => n.role === "outside").map((n) => n.name));
+  const nodes = (g.nodes || []).filter((n) => !outside.has(n.name));
+  const feeds = {}; // gateway -> the outside node that feeds it
+  for (const e of g.edges || []) if (outside.has(e.from)) feeds[e.to] = e.from;
   const dcs = [...new Set(nodes.map((n) => n.dc || "lab"))].sort();
-  const pos = {}, regions = [];
+  const pos = {}, regions = [], entries = [];
   let x = 0, maxH = 0;
   const part = (n) => (n.partition && n.partition !== "default" ? n.partition : "default");
   const plural = (k, s) => `${k} ${s}${k === 1 ? "" : "s"}`;
@@ -27,6 +38,11 @@ function layout(g) {
     const right = di === 0 && dcs.length > 1; // lean right, towards the next dc
     const firstRegion = regions.length;
     const dn = nodes.filter((n) => (n.dc || "lab") === dc);
+    // The internet comes in on the outer side: the left of the first dc
+    // (or of the only one), the right of the others.
+    const fed = dn.filter((n) => feeds[n.name]);
+    const side = fed.length ? (di === 0 ? "left" : "right") : "";
+    if (side === "left") x += EM;
     const servers = dn.filter((n) => n.role === "server");
     const rest = dn.filter((n) => n.role !== "server");
     const parts = [...new Set(rest.map(part))].sort((a, b) => (a === "default" ? -1 : b === "default" ? 1 : a.localeCompare(b)));
@@ -51,12 +67,37 @@ function layout(g) {
       });
       return list.length ? Math.ceil(list.length / cols) * (TH + GY) : 0;
     };
+    // placeGws is place for gateways: those the internet feeds fill each
+    // row from the outer side, so nothing sits between them and the globe.
+    const placeGws = (list, x0, cols, y0) => {
+      const ent = list.filter((n) => feeds[n.name]);
+      if (!ent.length) return place(list, x0, cols, y0);
+      const rest = list.filter((n) => !feeds[n.name]);
+      const taken = new Set();
+      const put = (n, row, col) => { taken.add(row * cols + col); pos[n.name] = { x: x0 + col * (TW + GX), y: y0 + row * (TH + GY) }; };
+      // fill puts each of list in the next free slot, rows from the top,
+      // each row from the side given.
+      const fill = (list, fromLeft) => {
+        let slot = 0;
+        for (const n of list) {
+          for (;; slot++) {
+            const row = Math.floor(slot / cols), c = slot % cols, col = fromLeft ? c : cols - 1 - c;
+            if (taken.has(row * cols + col)) continue;
+            put(n, row, col);
+            break;
+          }
+        }
+      };
+      fill(ent, side === "left");
+      fill(rest, !right);
+      return Math.ceil(list.length / cols) * (TH + GY);
+    };
     let y = PAD + 8;
     let w = span(scols);
     if (!boxed) {
       y += place(servers, x + PAD, scols, y);
       for (const gr of groups) {
-        y += place(gr.gws, x + PAD, scols, y);
+        y += placeGws(gr.gws, x + PAD, scols, y);
         y += place(gr.others, x + PAD, scols, y);
       }
     } else {
@@ -65,7 +106,7 @@ function layout(g) {
       // box draws a partition's box at (bx, by) and returns its height.
       const box = (gr, bx, by) => {
         let iy = by + 30;
-        iy += place(gr.gws, bx + inset, cols(gr), iy);
+        iy += placeGws(gr.gws, bx + inset, cols(gr), iy);
         iy += place(gr.others, bx + inset, cols(gr), iy);
         const h = iy - GY + 16 - by;
         regions.push({ part: true, x: bx, y: by, w: boxW(gr), h, label: gr.p, sub: plural(gr.gws.length + gr.others.length, "node") });
@@ -101,11 +142,46 @@ function layout(g) {
     const beyond = dn.length > 0 && dn.every((n) => n.role === "outside" || n.role === "external");
     regions.splice(firstRegion, 0, { x, y: 0, w: w + 2 * PAD, h, label: beyond ? "outside Consul" : dc, sub: beyond ? plural(dn.length, "node") : sub });
     maxH = Math.max(maxH, h);
-    x += w + 2 * PAD + DCGAP;
+    if (side) {
+      // One globe for the dc, level with its gateways.
+      const ys = fed.map((n) => pos[n.name].y + TH / 2);
+      const cx = side === "left" ? x - EM + 96 : x + w + 2 * PAD + EM - 96;
+      entries.push({ name: feeds[fed[0].name], dc, side, cx, cy: (Math.min(...ys) + Math.max(...ys)) / 2, edge: side === "left" ? x : x + w + 2 * PAD, gws: fed.map((n) => n.name) });
+    }
+    x += w + 2 * PAD + (side === "right" ? EM : 0) + DCGAP;
   });
   // Same height for every datacenter, so they read as peers.
   for (const r of regions) if (!r.part) r.h = maxH;
-  return { pos, regions, w: Math.max(0, x - DCGAP), h: maxH };
+  return { pos, regions, entries, w: Math.max(0, x - DCGAP), h: maxH };
+}
+
+// entryRoute draws a line from a globe (en, from layout) into one of the
+// gateways it feeds: across the margin and into the gateway's outer side,
+// or, when a card sits in between, along the gap above the gateway's row
+// and down into it. lanes is as for route.
+function entryRoute(pos, en, gw, off, lanes) {
+  const c = pos[gw], r = en.side === "left" ? 1 : -1;
+  const gy = c.y + TH / 2 + off, sx = en.cx + r * (GR + 6), sy = en.cy + off;
+  const gx = r > 0 ? c.x : c.x + TW;
+  const mx = (sx + en.edge) / 2 - r * off;
+  const inWay = Object.entries(pos).some(([n, p]) => n !== gw && Math.abs(p.y - c.y) < TH && (r > 0 ? p.x < c.x && p.x + TW > en.edge : p.x > c.x && p.x < en.edge));
+  let pts;
+  if (!inWay) {
+    pts = Math.abs(gy - sy) < 1 ? [[sx, sy], [gx, gy]] : [[sx, sy], [mx, sy], [mx, gy], [gx, gy]];
+  } else {
+    let y = c.y - GY / 2 + off;
+    while (lanes.some((l) => l.h && Math.abs(l.at - y) < 10)) y -= 14;
+    lanes.push({ h: true, at: y, lo: Math.min(mx, c.x), hi: Math.max(mx, c.x + TW) });
+    const tx = c.x + TW / 2 + off;
+    pts = [[sx, sy], [mx, sy], [mx, y], [tx, y], [tx, c.y]];
+  }
+  // The label goes on the longest level stretch.
+  let best = 0, mid = [sx, sy];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [[x0, y0], [x1, y1]] = [pts[i], pts[i + 1]];
+    if (y0 === y1 && Math.abs(x1 - x0) > best) { best = Math.abs(x1 - x0); mid = [(x0 + x1) / 2, y0]; }
+  }
+  return { d: ortho(pts, 12), pts, mid };
 }
 
 // Anchor points between two cards: sides when they sit apart horizontally,
@@ -200,7 +276,7 @@ function route(pos, a, b, A, off, lanes, regions) {
   return { d: `M${px},${py} C${px},${py + r * 30} ${x},${py + r * 10} ${x},${py + r * 40} L${x},${qy - r * 40} C${x},${qy - r * 10} ${qx},${qy - r * 30} ${qx},${qy}`, mid: [x, (py + qy) / 2], lane: true };
 }
 
-  const api = { TW, TH, GX, GY, PAD, DCGAP, layout, anchors, curve, blockers, between, route };
+  const api = { TW, TH, GX, GY, PAD, DCGAP, EM, GR, layout, anchors, curve, blockers, between, route, entryRoute };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Topo = api;
 })(typeof window === "object" ? window : globalThis);

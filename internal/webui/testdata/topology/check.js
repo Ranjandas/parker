@@ -1,7 +1,8 @@
 // check.js <graph.json>: lays out a lab's graph with topolayout.js and
 // prints, as JSON, where each card went and every drawn hop that would run
 // under a card it doesn't connect (before route() bends it round), and
-// the hops that run round a datacenter they don't go through. Run by
+// the hops that run round a datacenter they don't go through, and where
+// the internet's globes went. Run by
 // TestTopologyLayout (webui/topology_test.go).
 "use strict";
 const fs = require("fs");
@@ -41,4 +42,4 @@ for (let i = 0; i < names.length; i++) {
     if (Math.abs(p.x - q.x) < T.TW && Math.abs(p.y - q.y) < T.TH) overlaps.push(`${names[i]} ${names[j]}`);
   }
 }
-process.stdout.write(JSON.stringify({ pos: L.pos, crossings, overlaps, around }));
+process.stdout.write(JSON.stringify({ pos: L.pos, crossings, overlaps, around, entries: L.entries }));

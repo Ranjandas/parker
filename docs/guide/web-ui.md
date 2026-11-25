@@ -42,6 +42,11 @@ The link signs you in once, and only works while that `parker ui` runs.
   terminating gateway in
   [terminating-failover.yaml](https://github.com/Ranjandas/parker/blob/main/examples/terminating-failover.yaml))
   has only that dotted line.
+
+  Ingress and API gateways take traffic from outside the lab: a globe
+  (*internet*: browsers, curl) sits beside each datacenter that has
+  them, with one line into each gateway labelled with its listeners
+  (such as `:8081 http`).
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The header shows the node's IPs,

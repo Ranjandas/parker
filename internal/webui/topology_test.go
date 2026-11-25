@@ -20,6 +20,27 @@ import (
 // layoutOf lays out an example's topology with static/topolayout.js.
 func layoutOf(t *testing.T, node, example string) (pos map[string]struct{ X, Y float64 }, crossings, overlaps, around []string) {
 	t.Helper()
+	r := layoutResult(t, node, example)
+	return r.Pos, r.Crossings, r.Overlaps, r.Around
+}
+
+// entry is where layout put a globe for the internet.
+type entry struct {
+	Name, DC, Side string
+	Cx, Cy         float64
+	Gws            []string
+}
+
+type layoutOut struct {
+	Pos       map[string]struct{ X, Y float64 }
+	Crossings []string
+	Overlaps  []string
+	Around    []string
+	Entries   []entry
+}
+
+func layoutResult(t *testing.T, node, example string) layoutOut {
+	t.Helper()
 	f, err := spec.Load(filepath.Join("..", "..", "examples", example), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -41,16 +62,11 @@ func layoutOf(t *testing.T, node, example string) (pos map[string]struct{ X, Y f
 	if err != nil {
 		t.Fatalf("check.js: %v", err)
 	}
-	var r struct {
-		Pos       map[string]struct{ X, Y float64 }
-		Crossings []string
-		Overlaps  []string
-		Around    []string
-	}
+	var r layoutOut
 	if err := json.Unmarshal(out, &r); err != nil {
 		t.Fatal(err)
 	}
-	return r.Pos, r.Crossings, r.Overlaps, r.Around
+	return r
 }
 
 // TestTopologyLayout checks the topology view's layout of the examples:
@@ -105,5 +121,25 @@ func TestTopologyLayout(t *testing.T) {
 	}
 	if pos["dc1-team-a-mesh"].Y != pos["dc2-team-b-mesh"].Y || pos["dc1-team-a-mesh"].Y <= pos["dc1-mesh"].Y {
 		t.Errorf("partition gateways aren't on a row of their own: %v", pos)
+	}
+
+	// The internet: a globe on the outer side of dc1, level with the
+	// gateways it feeds, which sit at that end of their row.
+	r := layoutResult(t, node, "gateways.yaml")
+	if _, ok := r.Pos[graph.OutsideNode]; ok {
+		t.Errorf("the internet is drawn as a card")
+	}
+	if len(r.Entries) != 1 || r.Entries[0].Side != "left" || len(r.Entries[0].Gws) != 2 {
+		t.Fatalf("entries: %+v", r.Entries)
+	}
+	en := r.Entries[0]
+	for n, p := range r.Pos {
+		if p.X <= en.Cx {
+			t.Errorf("%s isn't right of the globe: %v, globe at %v", n, p, en.Cx)
+		}
+	}
+	edge, ingress, term := r.Pos["dc1-edge"], r.Pos["dc1-ingress"], r.Pos["dc1-terminating"]
+	if !(edge.Y == ingress.Y && edge.Y == term.Y && max(edge.X, ingress.X) < term.X) || en.Cy != edge.Y+44 {
+		t.Errorf("internet-facing gateways aren't next to the globe: %v", r.Pos)
 	}
 }
