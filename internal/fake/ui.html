@@ -368,7 +368,7 @@ const FakeUI = (() => {
     const lim = [l.max_header_bytes && "headers " + kb(l.max_header_bytes), l.max_header_line_bytes && "header line " + kb(l.max_header_line_bytes),
       l.max_header_count && l.max_header_count + " headers", l.max_url_bytes && "url " + kb(l.max_url_bytes),
       l.max_body_bytes && "body " + kb(l.max_body_bytes), l.max_form_params && l.max_form_params + " params"].filter(Boolean);
-    if (lim.length) out.push("limits " + lim.join(", "));
+    if (lim.length) out.push("limits " + (l.profile ? l.profile + ": " : "") + lim.join(", "));
     return out.join(" · ");
   }
   return { faultSummary, ms, fmtMs, hops, failed, label, below, header, brokeSummary, why, headline, factHop, stats, labelsOf, labFromHost };

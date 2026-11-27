@@ -934,6 +934,10 @@ type FakePadHeader struct {
 // FakeLimits are request size limits. Sizes are bytes, or a string like
 // 8KB or 1MB (KB is 1024 bytes). 0 turns a limit off.
 type FakeLimits struct {
+	// Profile starts from a server's stock limits and status codes:
+	// tomcat, nginx, apache, node, envoy, go, alb, kestrel or gunicorn.
+	// Keys set beside it win. none clears every limit.
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=tomcat,enum=nginx,enum=apache,enum=node,enum=envoy,enum=go,enum=alb,enum=kestrel,enum=gunicorn,enum=none"`
 	// MaxHeaderBytes bounds the request line and all headers together,
 	// as Tomcat's maxHttpHeaderSize and Node's max header size do.
 	MaxHeaderBytes *ByteSize `yaml:"max_header_bytes,omitempty" json:"max_header_bytes,omitempty"`

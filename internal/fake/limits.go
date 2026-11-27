@@ -22,16 +22,18 @@ const maxBodyRead = 16 << 20
 // Limits are request size limits, the way an app server refuses requests
 // (0 is off), and the codes they answer.
 type Limits struct {
-	HeaderBytes     int64 `json:"max_header_bytes,omitempty"`
-	HeaderLineBytes int64 `json:"max_header_line_bytes,omitempty"`
-	HeaderCount     int   `json:"max_header_count,omitempty"`
-	URLBytes        int64 `json:"max_url_bytes,omitempty"`
-	BodyBytes       int64 `json:"max_body_bytes,omitempty"`
-	FormParams      int   `json:"max_form_params,omitempty"`
-	HeaderCode      int   `json:"header_code"`
-	URLCode         int   `json:"url_code"`
-	BodyCode        int   `json:"body_code"`
-	FormCode        int   `json:"form_code"`
+	// Profile names the server whose defaults these started from.
+	Profile         string `json:"profile,omitempty"`
+	HeaderBytes     int64  `json:"max_header_bytes,omitempty"`
+	HeaderLineBytes int64  `json:"max_header_line_bytes,omitempty"`
+	HeaderCount     int    `json:"max_header_count,omitempty"`
+	URLBytes        int64  `json:"max_url_bytes,omitempty"`
+	BodyBytes       int64  `json:"max_body_bytes,omitempty"`
+	FormParams      int    `json:"max_form_params,omitempty"`
+	HeaderCode      int    `json:"header_code"`
+	URLCode         int    `json:"url_code"`
+	BodyCode        int    `json:"body_code"`
+	FormCode        int    `json:"form_code"`
 }
 
 // DefaultLimits is no limits, with the codes a limit answers once set.
@@ -42,10 +44,20 @@ func DefaultLimits() Limits {
 
 // On reports whether any limit is set.
 func (l Limits) On() bool {
-	return l.HeaderBytes > 0 || l.HeaderLineBytes > 0 || l.HeaderCount > 0 || l.URLBytes > 0 || l.BodyBytes > 0 || l.FormParams > 0
+	return l.Profile != "" || l.HeaderBytes > 0 || l.HeaderLineBytes > 0 || l.HeaderCount > 0 || l.URLBytes > 0 || l.BodyBytes > 0 || l.FormParams > 0
 }
 
 func (l *Limits) apply(sl *spec.FakeLimits) error {
+	switch p, ok := profiles[sl.Profile]; {
+	case sl.Profile == "":
+	case sl.Profile == "none":
+		*l = DefaultLimits()
+	case !ok:
+		return fmt.Errorf("limits.profile: want one of %s or none, got %q", strings.Join(ProfileNames(), ", "), sl.Profile)
+	default:
+		*l = p.limits
+		l.Profile = sl.Profile
+	}
 	for _, s := range []struct {
 		name string
 		v    *spec.ByteSize
@@ -112,6 +124,9 @@ func (l Limits) summary() string {
 	add(l.URLBytes > 0, "url "+spec.ByteSize(l.URLBytes).String(), l.URLCode)
 	add(l.BodyBytes > 0, "body "+spec.ByteSize(l.BodyBytes).String(), l.BodyCode)
 	add(l.FormParams > 0, fmt.Sprintf("%d params", l.FormParams), l.FormCode)
+	if l.Profile != "" {
+		return l.Profile + ": " + strings.Join(parts, ", ")
+	}
 	return strings.Join(parts, ", ")
 }
 
@@ -123,8 +138,20 @@ type refusal struct {
 	msg   string
 }
 
-// check measures r against the limits, reading the body when a body or
-// form limit needs it (the body is put back for whoever reads it next).
+// name is how a refusal names a limit: its key, or with a profile the
+// server's own setting ("tomcat maxHttpHeaderSize").
+func (l Limits) name(key string) string {
+	if p, ok := profiles[l.Profile]; ok {
+		if set := p.settings[key]; set != "" {
+			return l.Profile + " " + set
+		}
+	}
+	return key
+}
+
+// check measures r against the limits. It reads the body only when a
+// body or form limit needs it: a form body is put back for whoever reads
+// it next, any other is consumed.
 func (l Limits) check(r *http.Request) *refusal {
 	if !l.On() {
 		return nil
@@ -134,33 +161,44 @@ func (l Limits) check(r *http.Request) *refusal {
 		uri = r.URL.RequestURI()
 	}
 	if l.URLBytes > 0 && int64(len(uri)) > l.URLBytes {
-		return &refusal{l.URLCode, "max_url_bytes", fmt.Sprintf("request URI too long: %d bytes > max_url_bytes %s", len(uri), spec.ByteSize(l.URLBytes))}
+		return &refusal{l.URLCode, "max_url_bytes", fmt.Sprintf("request URI too long: %d bytes > %s %s", len(uri), l.name("max_url_bytes"), spec.ByteSize(l.URLBytes))}
 	}
 	h := measureHead(r, uri)
-	total, count, longest, longestLen := h.total, h.count, h.longest, h.longestLen
-	if l.HeaderLineBytes > 0 && longestLen > l.HeaderLineBytes {
-		return &refusal{l.HeaderCode, "max_header_line_bytes", fmt.Sprintf("request header %s too large: %d bytes > max_header_line_bytes %s", longest, longestLen, spec.ByteSize(l.HeaderLineBytes))}
+	if l.HeaderLineBytes > 0 && h.longestLen > l.HeaderLineBytes {
+		return &refusal{l.HeaderCode, "max_header_line_bytes", fmt.Sprintf("request header %s too large: %d bytes > %s %s", h.longest, h.longestLen, l.name("max_header_line_bytes"), spec.ByteSize(l.HeaderLineBytes))}
 	}
-	if l.HeaderCount > 0 && count > l.HeaderCount {
-		return &refusal{l.HeaderCode, "max_header_count", fmt.Sprintf("too many request headers: %d > max_header_count %d", count, l.HeaderCount)}
+	if l.HeaderCount > 0 && h.count > l.HeaderCount {
+		return &refusal{l.HeaderCode, "max_header_count", fmt.Sprintf("too many request headers: %d > %s %d", h.count, l.name("max_header_count"), l.HeaderCount)}
 	}
-	if l.HeaderBytes > 0 && total > l.HeaderBytes {
-		return &refusal{l.HeaderCode, "max_header_bytes", fmt.Sprintf("request headers too large: %d bytes > max_header_bytes %s", total, spec.ByteSize(l.HeaderBytes))}
+	if l.HeaderBytes > 0 && h.total > l.HeaderBytes {
+		return &refusal{l.HeaderCode, "max_header_bytes", fmt.Sprintf("request headers too large: %d bytes > %s %s", h.total, l.name("max_header_bytes"), spec.ByteSize(l.HeaderBytes))}
+	}
+	tooBig := func(n string) *refusal {
+		return &refusal{l.BodyCode, "max_body_bytes", fmt.Sprintf("request body too large: %s > %s %s", n, l.name("max_body_bytes"), spec.ByteSize(l.BodyBytes))}
 	}
 	if l.BodyBytes > 0 && r.ContentLength > l.BodyBytes {
-		return &refusal{l.BodyCode, "max_body_bytes", fmt.Sprintf("request body too large: %d bytes > max_body_bytes %s", r.ContentLength, spec.ByteSize(l.BodyBytes))}
+		return tooBig(fmt.Sprintf("%d bytes", r.ContentLength))
 	}
+	hasBody := r.Body != nil && r.Body != http.NoBody
 	form := l.FormParams > 0 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")
 	var body []byte
-	if r.Body != nil && r.Body != http.NoBody && (l.BodyBytes > 0 || form) {
+	switch {
+	case hasBody && form:
 		max := int64(maxBodyRead)
 		if l.BodyBytes > 0 {
-			max = l.BodyBytes
+			max = min(max, l.BodyBytes)
 		}
 		body, _ = io.ReadAll(io.LimitReader(r.Body, max+1))
 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 		if l.BodyBytes > 0 && int64(len(body)) > l.BodyBytes {
-			return &refusal{l.BodyCode, "max_body_bytes", fmt.Sprintf("request body too large: over max_body_bytes %s", spec.ByteSize(l.BodyBytes))}
+			return tooBig("over")
+		}
+	case hasBody && l.BodyBytes > 0 && r.ContentLength < 0:
+		// No length given (chunked): count it without keeping it.
+		n, _ := io.Copy(io.Discard, io.LimitReader(r.Body, l.BodyBytes+1))
+		r.Body = http.NoBody
+		if n > l.BodyBytes {
+			return tooBig("over")
 		}
 	}
 	if l.FormParams > 0 {
@@ -169,7 +207,7 @@ func (l Limits) check(r *http.Request) *refusal {
 			n += params(string(body))
 		}
 		if n > l.FormParams {
-			return &refusal{l.FormCode, "max_form_params", fmt.Sprintf("too many parameters: %d > max_form_params %d", n, l.FormParams)}
+			return &refusal{l.FormCode, "max_form_params", fmt.Sprintf("too many parameters: %d > %s %d", n, l.name("max_form_params"), l.FormParams)}
 		}
 	}
 	return nil
