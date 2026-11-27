@@ -70,11 +70,15 @@ func serviceOf(n *parkerv1.NodeStatus, proc string) string {
 	return ""
 }
 
-// consulText is a process's CONSUL column: the agent's members, else the
-// health of the service it runs ("" when Consul has nothing on it).
+// consulText is a process's HEALTH column: the agent's members, a Vault
+// server's raft voters, else the health of the service it runs (""
+// when nothing reports on it).
 func consulText(n *parkerv1.NodeStatus, proc string) string {
 	if proc == "consul" {
 		return membersText(n)
+	}
+	if proc == "vault" && n.Product == expand.ProductVault {
+		return n.Detail
 	}
 	if s := serviceOf(n, proc); s != "" {
 		return n.Health[s]
@@ -180,7 +184,7 @@ func hasDCLevel(st *parkerv1.StatusResponse) bool {
 	return len(ps) > 1
 }
 
-var dcColumns = []column{{title: "DATACENTER", flex: true}, {title: "NODES"}, {title: "UP"}, {title: "LEADER", flex: true},
+var dcColumns = []column{{title: "DC / CLUSTER", flex: true}, {title: "NODES"}, {title: "UP"}, {title: "LEADER", flex: true},
 	{title: "MEMBERS"}, {title: "SERVICES"}}
 
 // applyDCRows fills the datacenters table.
@@ -189,7 +193,7 @@ func (m *Model) applyDCRows() {
 	cells := make([][]cell, len(m.places))
 	for i, p := range m.places {
 		var nodes, up, total, alive, members int
-		leader, health := "-", map[string]int{}
+		leader, health, raft := "-", map[string]int{}, ""
 		for _, n := range m.status.GetNodes() {
 			if !p.has(n) {
 				continue
@@ -201,8 +205,11 @@ func (m *Model) applyDCRows() {
 					up++
 				}
 			}
-			if n.Role == "leader" && p.part == "" {
+			if (n.Role == "leader" || n.State == "active") && p.part == "" {
 				leader = n.Name
+			}
+			if n.State == "active" && n.Detail != "" {
+				raft = n.Detail
 			}
 			if n.Role == "leader" || n.Role == "follower" || n.Role == "no-leader" {
 				alive, members = max(alive, int(n.MembersAlive)), max(members, int(n.MembersTotal))
@@ -231,6 +238,8 @@ func (m *Model) applyDCRows() {
 		mem := cell{text: "-", style: mutedStyle}
 		if members > 0 && p.part == "" {
 			mem = consulCell(fmt.Sprintf("%d/%d members", alive, members))
+		} else if raft != "" {
+			mem = cell{text: raft, style: mutedStyle}
 		}
 		cells[i] = []cell{name, {text: fmt.Sprint(nodes), style: plain}, upCell, lead, mem, healthSummary(health)}
 	}

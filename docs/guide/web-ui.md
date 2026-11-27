@@ -24,8 +24,11 @@ The link signs you in once, and only works while that `parker ui` runs.
 ## What it shows
 
 - **Labs**: every lab, running or down.
-- **Overview**: a live table of nodes and processes by datacenter, with
-  Consul health and leaders, and problems called out at the top.
+- **Overview**: a live table of nodes and processes by datacenter and
+  Vault cluster, with Consul health and leaders, each Vault server's
+  active, standby or sealed state, and problems called out at the top.
+  The activity feed notes a new leader or active server, and a server
+  sealed or unsealed.
 - **Topology**: the lab drawn as an architecture diagram, with
   datacenters and partitions, each node with its processes, which
   services call which (and through which gateways), and federation and

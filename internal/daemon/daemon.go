@@ -287,7 +287,8 @@ func StatusToProto(st *lab.Status) *parkerv1.StatusResponse {
 	out := &parkerv1.StatusResponse{Lab: st.Lab, RunDir: st.RunDir, Supervised: st.Supervised}
 	for _, n := range st.Nodes {
 		pn := &parkerv1.NodeStatus{Name: n.Name, Ips: n.IPs, Namespace: n.Namespace, Role: n.Role, Dc: n.DC, Partition: n.Partition,
-			MembersAlive: int32(n.MembersAlive), MembersTotal: int32(n.MembersTotal), Health: n.Health}
+			MembersAlive: int32(n.MembersAlive), MembersTotal: int32(n.MembersTotal), Health: n.Health,
+			Product: n.Product, State: n.State, Detail: n.Detail}
 		for _, p := range n.Processes {
 			pn.Processes = append(pn.Processes, &parkerv1.ProcessStatus{
 				Name: p.Name, Pid: int32(p.Pid), Alive: p.Alive, Ready: p.Ready, Restarts: int32(p.Restarts), LogPath: p.LogPath,

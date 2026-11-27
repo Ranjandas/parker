@@ -114,6 +114,7 @@ function nodeState(n) {
   const crit = Object.values(n.health || {}).some((v) => v === "critical");
   if (!n.namespace) return "down";
   if (ps.some((s) => s === "down") || crit) return "bad";
+  if (n.product === "vault" && (n.state === "sealed" || n.state === "uninitialized")) return "warn";
   if (ps.some((s) => s !== "ready")) return "warn";
   return "ok";
 }
@@ -131,6 +132,11 @@ function roleOf(n, p) {
     if (n.role === "client") return { text: "client" };
     return { text: n.role || "agent" };
   }
+  if (p.name === "vault" && n.product === "vault") {
+    if (n.state === "active") return { text: "vault ★ active", lead: true };
+    return { text: n.state ? "vault " + n.state.replace("-", " ") : "vault" };
+  }
+  if (p.name === "vault-init") return { text: "setup" };
   if (/-sidecar$/.test(p.name)) return { text: "sidecar → " + p.name.replace(/-sidecar$/, "") };
   if (/gateway$/.test(p.name)) return { text: p.name.replace(/-/g, " ") };
   if (n.health && n.health[p.name]) return { text: "service" };
@@ -149,6 +155,11 @@ function diff(lab, a, b) {
     const o = prevNodes.get(n.name);
     if (!o) continue;
     if (n.role === "leader" && o.role !== "leader") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> became leader` });
+    if (n.product === "vault" && n.state !== o.state && n.state) {
+      if (n.state === "active") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> became the active Vault server` });
+      else if (n.state === "sealed") ev.unshift({ t, kind: "bad", html: `<b>${esc(n.name)}</b> is sealed` });
+      else if (o.state === "sealed") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> is unsealed` });
+    }
     const op = new Map((o.processes || []).map((p) => [p.name, p]));
     for (const p of n.processes || []) {
       const q = op.get(p.name);
@@ -336,7 +347,7 @@ function renderOverview() {
   let rows = "";
   for (const g of groups) {
     const gn = nodes.filter((n) => groupKey(n) === g);
-    const servers = gn.filter((n) => n.role === "leader" || n.role === "follower").length;
+    const servers = gn.filter((n) => n.role === "leader" || n.role === "follower" || n.product === "vault").length;
     rows += `<tr class="dc"><td colspan="8"><b>${esc(g)}</b> <span class="muted" style="margin-left:8px">${servers ? `${servers} server${servers > 1 ? "s" : ""} · ` : ""}${gn.length - servers} other node${gn.length - servers === 1 ? "" : "s"}</span></td></tr>`;
     for (const n of gn) {
       const ps = n.processes || [];
@@ -356,7 +367,7 @@ function renderOverview() {
           <td>${p ? `<span class="st ${s}"><i></i>${s}</span>` : ""}${hh && hh !== "passing" ? ` <span class="chip ${hh === "critical" ? "bad" : "warn"}">${esc(hh)}</span>` : ""}</td>
           <td class="num mono ${p && p.restarts ? "" : "muted"}" ${p && p.restarts ? 'style="color:var(--bad);font-weight:600"' : ""}>${p ? p.restarts || 0 : ""}</td>
           <td class="role ${role.lead ? "lead" : ""}">${esc(role.text)}</td>
-          <td>${first && hv.length ? `<span class="chip ${pass === hv.length ? "ok" : "bad"}" title="Catalog health of this node's services">${pass}/${hv.length}</span>` : first && n.membersTotal ? `<span class="chip" title="LAN members alive / known">${n.membersAlive}/${n.membersTotal}</span>` : ""}</td></tr>`;
+          <td>${first && hv.length ? `<span class="chip ${pass === hv.length ? "ok" : "bad"}" title="Catalog health of this node's services">${pass}/${hv.length}</span>` : first && n.membersTotal ? `<span class="chip" title="LAN members alive / known">${n.membersAlive}/${n.membersTotal}</span>` : first && n.product === "vault" && n.state ? `<span class="chip ${n.state === "sealed" || n.state === "uninitialized" ? "bad" : "ok"}" title="Vault seal state and raft voters">${esc(n.state === "sealed" || n.state === "uninitialized" ? n.state : "unsealed" + (n.detail ? " · " + n.detail : ""))}</span>` : ""}</td></tr>`;
       });
     }
   }

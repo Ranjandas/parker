@@ -226,3 +226,46 @@ func VaultRaftPeers(ctx context.Context, low *spec.File, node string) (int, erro
 	}
 	return n, nil
 }
+
+// Vault states in the status summary.
+const (
+	VaultStateActive        = "active"
+	VaultStateStandby       = "standby"
+	VaultStatePerfStandby   = "perf-standby"
+	VaultStateSealed        = "sealed"
+	VaultStateUninitialized = "uninitialized"
+)
+
+// State is the one-word state of the status summary.
+func (s VaultState) State() string {
+	switch {
+	case !s.Initialized:
+		return VaultStateUninitialized
+	case s.Sealed:
+		return VaultStateSealed
+	case s.PerfStandby:
+		return VaultStatePerfStandby
+	case s.Standby:
+		return VaultStateStandby
+	}
+	return VaultStateActive
+}
+
+// vaultSummary is node's state and detail for status: ("", "") when the
+// server doesn't answer.
+func vaultSummary(low *spec.File, node string) [2]string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s, err := VaultStatus(ctx, low, node)
+	if err != nil {
+		return [2]string{}
+	}
+	out := [2]string{s.State(), ""}
+	if !s.Initialized || s.Sealed || VaultToken(low, low.Nodes[node].Labels.DC) == "" {
+		return out
+	}
+	if n, err := VaultRaftPeers(ctx, low, node); err == nil && n > 0 {
+		out[1] = fmt.Sprintf("raft %d voters", n)
+	}
+	return out
+}

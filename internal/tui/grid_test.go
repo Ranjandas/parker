@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -355,5 +356,46 @@ func TestLogoPulse(t *testing.T) {
 	}
 	if m.logo() != New(Options{}).logo() {
 		t.Error("pulse doesn't repeat")
+	}
+}
+
+// Vault servers rank and group as their cluster's servers, the vault
+// process carries the seal and HA state, and raft voters show in HEALTH.
+func TestVaultRows(t *testing.T) {
+	vault := func(name, state, detail string) *parkerv1.NodeStatus {
+		return &parkerv1.NodeStatus{Name: name, Dc: "east", Product: "vault", State: state, Detail: detail,
+			Processes: []*parkerv1.ProcessStatus{{Name: "vault-init"}, {Name: "vault"}}}
+	}
+	nodes := []*parkerv1.NodeStatus{
+		vault("east-vault-2", "sealed", ""), vault("east-vault-1", "active", "raft 3 voters"),
+		vault("east-vault-3", "standby", "raft 3 voters"), {Name: "toolbox"},
+	}
+	var got []string
+	for _, g := range groupNodes(nodes) {
+		got = append(got, fmt.Sprintf("%s %d", g.dc, g.servers))
+	}
+	if strings.Join(got, ",") != "east 3, 0" {
+		t.Errorf("groups %q", got)
+	}
+	for _, c := range []struct {
+		n          *parkerv1.NodeStatus
+		proc, want string
+	}{
+		{nodes[1], "vault", roleActive}, {nodes[0], "vault", "sealed"}, {nodes[2], "vault", "standby"},
+		{vault("x", "perf-standby", ""), "vault", "perf standby"}, {vault("x", "", ""), "vault", "server"},
+		{nodes[1], "vault-init", "setup"},
+	} {
+		if got := procRole(c.n, c.proc, nil); got != c.want {
+			t.Errorf("%s %s: role %q, want %q", c.n.Name, c.proc, got, c.want)
+		}
+	}
+	if consulText(nodes[1], "vault") != "raft 3 voters" || consulText(nodes[1], "vault-init") != "" {
+		t.Error("HEALTH of a Vault server")
+	}
+	if roleCell("sealed").style.GetForeground() != errStyle.GetForeground() || roleCell(roleActive).style.GetForeground() != leadStyle.GetForeground() {
+		t.Error("sealed or active don't stand out")
+	}
+	if procOrder("vault").rank != 0 || procOrder("vault-init").rank != 3 {
+		t.Error("vault first, vault-init with the setup jobs")
 	}
 }

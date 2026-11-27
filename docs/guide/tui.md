@@ -11,12 +11,19 @@ $ parker tui                       # every lab
 $ parker tui examples/mesh.yaml    # straight to one lab
 ```
 
-The main table lists the lab's nodes, grouped by datacenter and
-partition, servers first, with each process's state, raft role, and a
-CONSUL column: each agent's alive and known LAN members, and each
-service's health in the catalog. A lab with several datacenters or
-partitions opens on a datacenter list (nodes, processes up, leader,
-members, service health); `enter` opens one.
+The main table lists the lab's nodes, grouped by datacenter, partition
+and [Vault cluster](vault.md), servers first, with each process's state
+and role, and a HEALTH column:
+
+- A Consul agent's ROLE is its raft role (`server ★` leads), and its
+  HEALTH its alive and known LAN members. A service shows its health in
+  the catalog.
+- A Vault server's ROLE is `active ★`, `standby`, `perf standby`,
+  `sealed` or `uninitialized`, and its HEALTH the cluster's raft voters.
+
+A lab with several datacenters, partitions or clusters opens on a list of
+them (nodes, processes up, leader or active server, members or raft
+voters, service health); `enter` opens one.
 
 ## Keys
 
