@@ -982,6 +982,10 @@
         "status": {
           "type": "integer",
           "description": "Status expected; default 200."
+        },
+        "ca_file": {
+          "type": "string",
+          "description": "CAFile verifies an https:// URL's server with this CA; a relative\npath is in the node's directory."
         }
       },
       "additionalProperties": false,
@@ -1812,6 +1816,10 @@
           ],
           "description": "LogLevel of the servers: trace, debug, info, warn or error."
         },
+        "tls": {
+          "type": "boolean",
+          "description": "TLS serves the Vault API over HTTPS with a certificate from the lab\nCA (the one Consul's TLS uses too); default off."
+        },
         "config": {
           "type": "object",
           "description": "Config is merged into every server's configuration as is, in\nVault's JSON form (e.g. {default_lease_ttl: 1h})."
@@ -1865,6 +1873,10 @@
             "error"
           ],
           "description": "LogLevel of the servers: trace, debug, info, warn or error."
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "TLS serves the Vault API over HTTPS with a certificate from the lab\nCA (the one Consul's TLS uses too); default off."
         },
         "config": {
           "type": "object",

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +45,11 @@ func vaultInitCmd() *cobra.Command {
 			run := os.Getenv("PARKER_RUN")
 			done := filepath.Join(filepath.Dir(s.KeysFile), expand.VaultInitDone)
 			if b, err := os.ReadFile(done); err != nil || run == "" || string(b) != run {
-				v := vaultHTTP{c: &http.Client{Timeout: 5 * time.Second}}
+				tr, err := vaultTransport(s.CAFile)
+				if err != nil {
+					return err
+				}
+				v := vaultHTTP{c: &http.Client{Timeout: 5 * time.Second, Transport: tr}}
 				if err := vaultInit(ctx, v, s, 90*time.Second, os.Stderr); err != nil {
 					return err
 				}
@@ -166,6 +172,25 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 	return nil
 }
 
+// vaultTransport trusts the CA in caFile for https:// servers; nil (the
+// default transport) without one.
+func vaultTransport(caFile string) (http.RoundTripper, error) {
+	if caFile == "" {
+		return nil, nil
+	}
+	b, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(b) {
+		return nil, fmt.Errorf("vault-init: no certificates in %s", caFile)
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return t, nil
+}
+
 // vaultHTTP talks to Vault's HTTP API.
 type vaultHTTP struct{ c *http.Client }
 
@@ -214,7 +239,7 @@ func (v vaultHTTP) Init(ctx context.Context, addr string) (string, string, error
 	}
 	// Init writes the keyring to storage and can take a while; a timeout
 	// here would lose the keys of a cluster that did initialise.
-	long := vaultHTTP{c: &http.Client{Timeout: 60 * time.Second}}
+	long := vaultHTTP{c: &http.Client{Timeout: 60 * time.Second, Transport: v.c.Transport}}
 	if _, err := long.do(ctx, http.MethodPut, addr+"/v1/sys/init", "", map[string]any{"secret_shares": 1, "secret_threshold": 1}, &r); err != nil {
 		return "", "", err
 	}

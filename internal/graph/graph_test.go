@@ -188,6 +188,11 @@ func TestLinks(t *testing.T) {
 	want(t, "tls server", linksOf(t, build(t, "tls.yaml"), "dc1-server-1"), "Consul UI https:8501/ui/ token")
 	// With ACLs the UI link carries the management token to sign in with.
 	want(t, "acl server", linksOf(t, build(t, "acl.yaml"), "dc1-server-1"), "Consul UI http:8500/ui/ token")
+	// Vault servers link to the Vault UI with the root token, over HTTPS
+	// when the cluster has TLS.
+	v := build(t, "vault.yaml")
+	want(t, "vault tls", linksOf(t, v, "east-vault-1"), "Vault UI https:8200/ui/ token")
+	want(t, "vault", linksOf(t, v, "west-vault-1"), "Vault UI http:8200/ui/ token")
 	// Gateways register no service ports of their own here.
 	if l := linksOf(t, build(t, "gateways.yaml"), "dc1-ingress"); len(l) != 0 {
 		t.Errorf("gateway links %q", l)

@@ -551,7 +551,7 @@ function openSection(nodeName, wrap) {
   const rows = links.map((l) => `<div class="app-row">
       <button class="app-l" data-act="open" data-sel="${esc(nodeName)}" data-port="${l.port}" data-scheme="${esc(l.scheme || "http")}" data-path="${esc(l.path || "/")}">
         <span><b>${esc(l.name)}</b><small>${esc(nodeName)}:${l.port}${esc(l.path || "/")}${l.scheme === "https" ? " · TLS" : ""}</small></span><span class="go" aria-hidden="true">↗</span></button>
-      ${l.token ? `<button class="btn sm ghost" data-act="copytoken" data-token="${esc(l.token)}" title="Copy the ACL token to sign in to the Consul UI">Copy token</button>` : ""}</div>`).join("");
+      ${l.token ? `<button class="btn sm ghost" data-act="copytoken" data-token="${esc(l.token)}" title="Copy the token to sign in to the UI">Copy token</button>` : ""}</div>`).join("");
   return wrap(`<div class="apps">${rows}</div>`);
 }
 

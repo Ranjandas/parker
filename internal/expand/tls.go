@@ -20,7 +20,10 @@ const (
 	CAFile      = "ca.pem"
 	CertFile    = "server.pem"
 	CertKeyFile = "server-key.pem"
-	HTTPSPort   = 8501
+	// CAKeyFile is the lab CA's key, on nodes with no Consul config to keep
+	// it in (Vault servers), so a moved lab can re-sign their certificates.
+	CAKeyFile = "ca-key.pem"
+	HTTPSPort = 8501
 )
 
 // certValidity is long enough for any lab and short enough to look odd if
@@ -100,10 +103,26 @@ func newCA(lab string) (*ca, error) {
 		certPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}, nil
 }
 
-// serverCert issues a certificate for a server of dc: server.<dc>.consul
-// (what verify_server_hostname checks), its names under `parker proxy`,
-// localhost, and the given IPs.
-func (c *ca) serverCert(node, dc string, ips []string) (certPEM, keyPEMStr string, err error) {
+// factCA is the Facts key of the lab CA, so every product's TLS chains to
+// one root.
+const factCA = "tls.ca"
+
+// labCAOf is the lab's CA, made by the first product that needs one.
+func labCAOf(facts Facts, lab string) (*ca, error) {
+	if c, ok := facts[factCA].(*ca); ok {
+		return c, nil
+	}
+	c, err := newCA(lab)
+	if err != nil {
+		return nil, err
+	}
+	facts[factCA] = c
+	return c, nil
+}
+
+// leafCert issues a server and client certificate for the names and IPs
+// (127.0.0.1 always), signed by the CA.
+func (c *ca) leafCert(cn string, dns, ips []string) (certPEM, keyPEMStr string, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), Rand)
 	if err != nil {
 		return "", "", err
@@ -121,16 +140,13 @@ func (c *ca) serverCert(node, dc string, ips []string) (certPEM, keyPEMStr strin
 	now := time.Now().Add(-time.Hour)
 	tmpl := &x509.Certificate{
 		SerialNumber: sn,
-		Subject:      pkix.Name{CommonName: "server." + dc + ".consul", Organization: []string{"Parker"}},
-		DNSNames: []string{
-			"server." + dc + ".consul", node + ".server." + dc + ".consul", "localhost",
-			node + "." + dc + "." + c.lab + ".parker", dc + "-" + node + "." + c.lab + ".parker",
-		},
-		IPAddresses: ipAddrs,
-		NotBefore:   now,
-		NotAfter:    now.Add(certValidity),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		Subject:      pkix.Name{CommonName: cn, Organization: []string{"Parker"}},
+		DNSNames:     dns,
+		IPAddresses:  ipAddrs,
+		NotBefore:    now,
+		NotAfter:     now.Add(certValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
 	der, err := x509.CreateCertificate(Rand, tmpl, c.cert, &key.PublicKey, c.key)
 	if err != nil {
@@ -141,6 +157,16 @@ func (c *ca) serverCert(node, dc string, ips []string) (certPEM, keyPEMStr strin
 		return "", "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), kp, nil
+}
+
+// serverCert issues a certificate for a server of dc: server.<dc>.consul
+// (what verify_server_hostname checks), its names under `parker proxy`,
+// localhost, and the given IPs.
+func (c *ca) serverCert(node, dc string, ips []string) (certPEM, keyPEMStr string, err error) {
+	return c.leafCert("server."+dc+".consul", []string{
+		"server." + dc + ".consul", node + ".server." + dc + ".consul", "localhost",
+		node + "." + dc + "." + c.lab + ".parker", dc + "-" + node + "." + c.lab + ".parker",
+	}, ips)
 }
 
 // serverTLS is the server agent's TLS config: mutual TLS for RPC, HTTPS
@@ -222,7 +248,7 @@ func ReissueServerCerts(f *spec.File, fix func(string) string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %s: %w", name, CAFile, err)
 		}
-		caKey, err := caKeyOf(n.Files["consul.json"])
+		caKey, err := caKeyOf(n.Files["consul.json"], n.Files[CAKeyFile])
 		if err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
@@ -259,7 +285,14 @@ func parseCertPEM(s string) (*x509.Certificate, error) {
 
 // caKeyOf reads the lab CA's key from a server's agent config, where it is
 // the Connect root (see serverTLS).
-func caKeyOf(consulJSON string) (*ecdsa.PrivateKey, error) {
+func caKeyOf(consulJSON, keyFile string) (*ecdsa.PrivateKey, error) {
+	if keyFile != "" {
+		b, _ := pem.Decode([]byte(keyFile))
+		if b == nil {
+			return nil, fmt.Errorf("%s: no key", CAKeyFile)
+		}
+		return x509.ParseECPrivateKey(b.Bytes)
+	}
 	var cfg struct {
 		Connect struct {
 			CAConfig struct {

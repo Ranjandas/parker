@@ -1,11 +1,13 @@
 package expand
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -39,6 +41,8 @@ type VaultInitSpec struct {
 	// Addrs are the API addresses of the cluster's servers, first server
 	// first.
 	Addrs []string `json:"addrs"`
+	// CAFile verifies https:// addresses.
+	CAFile string `json:"ca_file,omitempty"`
 	// RootToken is the root token id Parker generated; vault-init creates
 	// it with the initial root token.
 	RootToken string `json:"root_token"`
@@ -97,12 +101,21 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 			return err
 		}
 		n := c.ServerCount()
+		tlsOn := s.TLSOn() && !c.Dev
+		scheme := "http"
+		var labCA *ca
+		if tlsOn {
+			scheme = "https"
+			if labCA, err = labCAOf(facts, out.Name); err != nil {
+				return err
+			}
+		}
 		ips := make([]string, n)
 		addrs := make([]string, n)
 		keys := make([]string, n)
 		for k := range n {
 			ips[k] = addrAt(base, 10+k)
-			addrs[k] = "http://" + ips[k] + ":" + strconv.Itoa(VaultPort)
+			addrs[k] = scheme + "://" + ips[k] + ":" + strconv.Itoa(VaultPort)
 			keys[k] = spec.VaultNodeKey(name, k+1)
 		}
 		for k := range n {
@@ -116,7 +129,7 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 			// A sealed server is up too: it is sealed after every restart,
 			// and vault-init or the user unseals it.
 			ready := &spec.Ready{
-				HTTP:    &spec.HTTPCheck{URL: fmt.Sprintf("http://127.0.0.1:%d/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200", VaultPort)},
+				HTTP:    &spec.HTTPCheck{URL: fmt.Sprintf("%s://127.0.0.1:%d/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200", scheme, VaultPort)},
 				Timeout: "90s",
 			}
 			if c.Dev {
@@ -129,7 +142,24 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				out.Nodes[keys[k]] = node
 				continue
 			}
-			node.Files[VaultConfigFile] = mustJSON(vaultConfig(s, ips[k], node.Labels.Name, addrs, k))
+			cfg := vaultConfig(s, ips[k], node.Labels.Name, addrs, k)
+			if tlsOn {
+				short := node.Labels.Name
+				cert, key, err := labCA.leafCert(keys[k], []string{
+					"localhost", short, keys[k],
+					short + "." + name + "." + out.Name + ".parker", keys[k] + "." + out.Name + ".parker",
+				}, []string{ips[k]})
+				if err != nil {
+					return fmt.Errorf("%s: %w", keys[k], err)
+				}
+				node.Files[CAFile] = labCA.certPEM
+				node.Files[CAKeyFile] = labCA.keyPEM
+				node.Files[CertFile] = cert
+				node.Files[CertKeyFile] = key
+				ready.HTTP.CAFile = CAFile
+				vaultTLS(cfg)
+			}
+			node.Files[VaultConfigFile] = mustJSON(cfg)
 			// Vault wants its storage directory to exist.
 			node.Files["data/.keep"] = ""
 			node.Processes["vault"] = &spec.Process{
@@ -141,7 +171,11 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				for _, key := range keys {
 					deps[key+"/vault"] = &spec.Dep{Condition: "started"}
 				}
-				node.Files[VaultInitManifest] = mustJSON(VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys})
+				is := VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys}
+				if tlsOn {
+					is.CAFile = VarNodeDir + "/" + CAFile
+				}
+				node.Files[VaultInitManifest] = mustJSON(is)
 				node.Processes[VaultInit] = &spec.Process{
 					Run:       spec.Command{VarParker, VaultInit, VarNodeDir + "/" + VaultInitManifest},
 					DependsOn: deps,
@@ -154,6 +188,30 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 	}
 	facts[ProductVault] = vf
 	return nil
+}
+
+// vaultTLS turns on TLS in a server's config: the API listener serves the
+// node's certificate, and retry_join trusts the lab CA. deepMerge of the
+// user's config ran already, so this sets only what TLS needs.
+func vaultTLS(cfg map[string]any) {
+	if l, ok := cfg["listener"].(map[string]any); ok {
+		if t, ok := l["tcp"].(map[string]any); ok {
+			t["tls_disable"] = false
+			t["tls_cert_file"] = VarNodeDir + "/" + CertFile
+			t["tls_key_file"] = VarNodeDir + "/" + CertKeyFile
+		}
+	}
+	if st, ok := cfg["storage"].(map[string]any); ok {
+		if r, ok := st["raft"].(map[string]any); ok {
+			if js, ok := r["retry_join"].([]any); ok {
+				for _, j := range js {
+					if m, ok := j.(map[string]any); ok {
+						m["leader_ca_cert_file"] = VarNodeDir + "/" + CAFile
+					}
+				}
+			}
+		}
+	}
 }
 
 // vaultConfig is server k's configuration, in Vault's JSON form.
@@ -191,4 +249,29 @@ func vaultConfig(s spec.VaultSettings, ip, nodeID string, addrs []string, k int)
 	}
 	deepMerge(cfg, s.Config)
 	return cfg
+}
+
+// VaultRootToken is the root token of a Vault cluster in an expanded lab:
+// from vault-init's manifest, or a dev server's flag; "" when it has none.
+func VaultRootToken(f *spec.File, cluster string) string {
+	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
+		rn := f.Nodes[name]
+		if l := rn.Labels; l == nil || l.Product != ProductVault || l.DC != cluster {
+			continue
+		}
+		if m, ok := rn.Files[VaultInitManifest]; ok {
+			var s VaultInitSpec
+			if json.Unmarshal([]byte(m), &s) == nil {
+				return s.RootToken
+			}
+		}
+		if p := rn.Processes["vault"]; p != nil {
+			for _, a := range p.Run {
+				if t, ok := strings.CutPrefix(a, "-dev-root-token-id="); ok {
+					return t
+				}
+			}
+		}
+	}
+	return ""
 }

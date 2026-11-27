@@ -175,7 +175,7 @@ func checkScenarios(low *spec.File) error {
 	return errors.Join(errs...)
 }
 
-func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
+func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File, facts Facts) error {
 	dcNames := slices.Sorted(maps.Keys(c.Datacenters))
 	primary := ""
 	for _, n := range dcNames {
@@ -246,7 +246,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	for _, dcName := range dcNames {
 		if tlsOn(defaults, c.Datacenters[dcName]) {
 			var err error
-			if labCA, err = newCA(out.Name); err != nil {
+			if labCA, err = labCAOf(facts, out.Name); err != nil {
 				return err
 			}
 			break

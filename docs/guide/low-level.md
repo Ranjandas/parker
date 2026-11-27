@@ -132,7 +132,7 @@ times out.
 | Check | Ready when |
 |---|---|
 | `port: 8080` | The TCP port accepts connections. |
-| `http: { url, status }` | The URL answers with `status` (default 200), from inside the node. |
+| `http: { url, status, ca_file }` | The URL answers with `status` (default 200), from inside the node. For an `https://` URL, `ca_file` is the CA that verifies the server (relative to the node's directory). |
 | `log: TEXT` | The process's log contains TEXT. |
 | `consul: { ... }` | The local Consul agent reports a state: `leader: true`, `members: ">=4"`, `wan_members: ">=6"`, `service_healthy: web`, `reaches: dc2`. |
 | `timeout: 30s` | How long to wait. |

@@ -16,12 +16,12 @@ func (consulProduct) Name() string { return ProductConsul }
 
 func (consulProduct) In(in *spec.File) bool { return in.Consul != nil }
 
-func (consulProduct) Expand(in, out *spec.File, _ Facts) error {
+func (consulProduct) Expand(in, out *spec.File, facts Facts) error {
 	wanSubnet, wanAuto := WANSubnet, true
 	if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
 		wanSubnet, wanAuto = w.Subnet, false
 	}
-	if err := expandConsul(in.Consul, wanSubnet, out); err != nil {
+	if err := expandConsul(in.Consul, wanSubnet, out, facts); err != nil {
 		return err
 	}
 	if w := out.Networks[WANNetwork]; w != nil && wanAuto {
