@@ -180,6 +180,10 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 			return nil, err
 		}
 		for name, content := range n.Files {
+			// A file may sit in a subdirectory (data/.keep makes data/).
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+				return nil, err
+			}
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(vars.Replace(content)), 0o644); err != nil {
 				return nil, err
 			}

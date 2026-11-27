@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/selector"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -61,6 +63,15 @@ func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path st
 	}
 	if tok := ManagementToken(low); tok != "" {
 		env = append(env, "CONSUL_HTTP_TOKEN="+tok)
+	}
+	if n := low.Nodes[node]; n != nil && n.Labels != nil && n.Labels.Product == expand.ProductVault {
+		env = append(env, fmt.Sprintf("VAULT_ADDR=http://127.0.0.1:%d", expand.VaultPort))
+		if tok := VaultToken(low, n.Labels.DC); tok != "" {
+			env = append(env, "VAULT_TOKEN="+tok)
+		}
+		if key := VaultUnsealKey(low, n.Labels.DC); key != "" {
+			env = append(env, "PARKER_VAULT_UNSEAL_KEY="+key)
+		}
 	}
 	if cc := AgentCheck(low, node); cc.CAFile != "" {
 		ca := cc.CAFile
@@ -211,4 +222,56 @@ func sq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 // promptEscape keeps a name literal inside PS1 (\ and $ are special).
 func promptEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, "$", `\$`, "`", "\\`").Replace(s)
+}
+
+// VaultToken is the root token Parker made for a Vault cluster, from
+// its first server's vault-init manifest, or a dev server's command line;
+// "" when the lab has no such cluster.
+func VaultToken(low *spec.File, cluster string) string {
+	for _, name := range slices.Sorted(maps.Keys(low.Nodes)) {
+		n := low.Nodes[name]
+		if l := n.Labels; l == nil || l.Product != expand.ProductVault || l.DC != cluster {
+			continue
+		}
+		if m, ok := n.Files[expand.VaultInitManifest]; ok {
+			var s expand.VaultInitSpec
+			if json.Unmarshal([]byte(m), &s) == nil {
+				return s.RootToken
+			}
+		}
+		if p := n.Processes["vault"]; p != nil {
+			for _, a := range p.Run {
+				if tok, ok := strings.CutPrefix(a, "-dev-root-token-id="); ok {
+					return tok
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// VaultUnsealKey is a Vault cluster's unseal key, from the keys file
+// vault-init keeps in its first server's directory; "" before init or
+// for a dev server.
+func VaultUnsealKey(low *spec.File, cluster string) string {
+	for _, name := range slices.Sorted(maps.Keys(low.Nodes)) {
+		n := low.Nodes[name]
+		if l := n.Labels; l == nil || l.Product != expand.ProductVault || l.DC != cluster {
+			continue
+		}
+		if _, ok := n.Files[expand.VaultInitManifest]; !ok {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(supervisor.NodeDir(RunDir(low.Name), name), expand.VaultInitKeys))
+		if err != nil {
+			return ""
+		}
+		var k struct {
+			Key string `json:"key"`
+		}
+		if json.Unmarshal(b, &k) == nil {
+			return k.Key
+		}
+	}
+	return ""
 }

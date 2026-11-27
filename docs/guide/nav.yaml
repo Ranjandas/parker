@@ -16,6 +16,7 @@ sections:
       - acl-and-tls
       - dataplanes
       - enterprise
+      - vault
       - reuse
       - low-level
   - title: Running labs

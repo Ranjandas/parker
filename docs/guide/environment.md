@@ -33,6 +33,8 @@ commands and scenario `exec` steps:
 | `CONSUL_HTTP_ADDR` | The node's Consul agent over HTTPS, `https://127.0.0.1:8501`, when TLS is on. |
 | `CONSUL_HTTP_TOKEN` | The management token, when ACLs are on. |
 | `CONSUL_CACERT` | The lab's CA, when TLS is on. |
+| `VAULT_ADDR`, `VAULT_TOKEN` | On a [Vault](vault.md) server: its API, `http://127.0.0.1:8200`, and the cluster's root token. |
+| `PARKER_VAULT_UNSEAL_KEY` | On a Vault server: the cluster's unseal key, once it's initialised. |
 | `PARKER_IP` | The node's LAN address. |
 | `PARKER_LAB`, `PARKER_NODE` | The lab and the node. |
 

@@ -1,0 +1,39 @@
+package spec
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestVaultValidate(t *testing.T) {
+	for text, want := range map[string]string{
+		"vault:\n  clusters:\n    east: {}\n":                                                                                                 "versions.vault: required",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters: {}\n":                                                                               "at least one cluster",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { dev: true, servers: 3 }\n":                                                "dev: true runs one server",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: file, servers: 2 }\n":                                            "storage: file has no HA",
+		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 3 }\n":                                                           "needs Vault 1.4 or later",
+		"versions: { vault: 1.21.1, consul: 1.22.7 }\nconsul:\n  datacenters:\n    east: { servers: 1 }\nvault:\n  clusters:\n    east: {}\n": "names must be unique",
+	} {
+		p := filepath.Join(t.TempDir(), "lab.yaml")
+		if err := os.WriteFile(p, []byte("parker: v1alpha1\n"+text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(p, nil)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", text, err, want)
+		}
+	}
+}
+
+func TestVaultAtLeast(t *testing.T) {
+	for v, want := range map[string]bool{
+		"1.4.0": true, "1.3.10": false, "1.21.1+ent": true, "0.11.6": false, "2.0.0": true,
+		"path:/usr/bin/vault": true, "v1.5.0": true, "1.4.0-rc1": true,
+	} {
+		if got := VaultAtLeast(v, 1, 4); got != want {
+			t.Errorf("%s: %v, want %v", v, got, want)
+		}
+	}
+}
