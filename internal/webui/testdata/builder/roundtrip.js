@@ -2,7 +2,8 @@
 // [{name, tree, source}] (each example checked, its merged and own
 // trees); OUT gets, for each, the ops an untouched canvas makes (none,
 // or the test fails), and the ops and resulting doc for a few edits made
-// as on the canvas (servers, a new service, a call to it, a rename). With a third argument (verify), IN is
+// as on the canvas (servers, a new service, a call to it, a rename; a Vault
+// cluster's servers and name). With a third argument (verify), IN is
 // [{name, tree, want}] and OUT says whether the patched file reads back
 // as the edited canvas.
 "use strict";
@@ -35,6 +36,15 @@ for (const it of items) {
           // A rename too, where no scenario names the node.
           if (!it.tree.scenario) B.rename(e, caller.id, B.uniqueName(d, caller.name + "-renamed"));
         }
+        r.ops = B.diffOps(m, e, it.source);
+        r.want = B.toDoc(e);
+      }
+      // A Vault cluster: more servers (none for a dev one), and a rename
+      // where no scenario names it.
+      const v = (e.vaults || []).find((x) => B.origin(e, x.id, it.source) === "");
+      if (v) {
+        if (!v.dev && v.storage !== "file") v.servers = v.servers === 3 ? 5 : 3;
+        if (!it.tree.scenario) B.rename(e, v.id, v.name + "-renamed");
         r.ops = B.diffOps(m, e, it.source);
         r.want = B.toDoc(e);
       }

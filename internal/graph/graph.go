@@ -8,6 +8,7 @@ package graph
 import (
 	"encoding/json"
 	"maps"
+	"net/url"
 	"path"
 	"slices"
 	"sort"
@@ -22,6 +23,8 @@ type Node struct {
 	Name      string
 	DC        string
 	Partition string // "" outside partitions:
+	// Product the node runs: consul, vault; "" for a low-level node.
+	Product string
 	// Role: server, client, gateway, dataplane or none.
 	Role string
 	// Services registered for the node (not sidecars).
@@ -63,6 +66,11 @@ const (
 	// Failover: where a service-resolver sends a caller's upstream when
 	// its own instances are down (another dc, partition or peer).
 	Failover = "failover"
+	// Integration: one product using another, from the user to the one
+	// it uses: a Consul dc's Connect CA in Vault, Vault's storage or
+	// service registration in Consul, its Consul secrets engine, a Vault
+	// cluster's transit seal in another. The label says which.
+	Integration = "integration"
 )
 
 // Edge connects two nodes.
@@ -201,7 +209,7 @@ func Build(f *spec.File) *Graph {
 		if l := rn.Labels; l != nil {
 			n.DC, n.Partition = l.DC, l.Partition
 			if l.Role != "" {
-				n.Role = l.Role
+				n.Role, n.Product = l.Role, l.Product
 			}
 			n.Services = append(n.Services, l.Services...)
 		}
@@ -264,6 +272,9 @@ func Build(f *spec.File) *Graph {
 					}
 				}
 			}
+		}
+		if l, ok := vaultLink(f, rn); ok {
+			n.Links = append(n.Links, l)
 		}
 		// The manifest says which partition each entry is written into.
 		entryPart := map[string]string{}
@@ -645,8 +656,99 @@ func Build(f *spec.File) *Graph {
 			g.Edges = append(g.Edges, e)
 		}
 	}
+	g.Edges = append(g.Edges, integrations(f, g, firstServer)...)
 	sort.SliceStable(g.Edges, func(i, j int) bool { return g.Edges[i].Kind < g.Edges[j].Kind })
 	return g
+}
+
+// integrations are the links between products, read from the agents'
+// configs: a Consul dc whose servers use a Vault cluster as their Connect
+// CA, a Vault cluster that keeps its data in a Consul dc or registers in
+// one, a Vault cluster that auto-unseals with another's Transit engine,
+// and a Vault cluster that mints a dc's ACL tokens. One edge
+// per pair, between their first servers.
+func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edge {
+	byIP := map[string]string{}
+	for _, n := range g.Nodes {
+		for _, ip := range n.IPs {
+			byIP[ip] = n.Name
+		}
+	}
+	var out []Edge
+	seen := map[string]bool{}
+	add := func(from, to, label string) {
+		if from == "" || to == "" || seen[from+"|"+to+"|"+label] {
+			return
+		}
+		seen[from+"|"+to+"|"+label] = true
+		out = append(out, Edge{Kind: Integration, From: from, To: to, Label: label})
+	}
+	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
+		rn := f.Nodes[name]
+		l := rn.Labels
+		if l == nil {
+			continue
+		}
+		if l.Product == expand.ProductConsul && l.Role == "server" {
+			var cfg struct {
+				Connect struct {
+					Provider string `json:"ca_provider"`
+					Config   struct {
+						Address string `json:"address"`
+					} `json:"ca_config"`
+				} `json:"connect"`
+			}
+			if json.Unmarshal([]byte(rn.Files["consul.json"]), &cfg) == nil && cfg.Connect.Provider == "vault" {
+				if u, err := url.Parse(cfg.Connect.Config.Address); err == nil {
+					if v := byIP[u.Hostname()]; v != "" {
+						add(firstServer(l.DC), firstServer(f.Nodes[v].Labels.DC), "Connect CA")
+					}
+				}
+			}
+		}
+		if l.Product == expand.ProductVault {
+			var vc struct {
+				Storage struct {
+					Consul *struct{} `json:"consul"`
+				} `json:"storage"`
+				Registration struct {
+					Consul *struct{} `json:"consul"`
+				} `json:"service_registration"`
+				Seal struct {
+					Transit *struct {
+						Address string `json:"address"`
+					} `json:"transit"`
+				} `json:"seal"`
+			}
+			var cc struct {
+				Datacenter string `json:"datacenter"`
+			}
+			var is expand.VaultInitSpec
+			if m, ok := rn.Files[expand.VaultInitManifest]; ok && json.Unmarshal([]byte(m), &is) == nil && is.ConsulEngine != nil {
+				host, _, _ := strings.Cut(is.ConsulEngine.Address, ":")
+				if c := byIP[host]; c != "" {
+					add(firstServer(l.DC), firstServer(f.Nodes[c].Labels.DC), "secrets engine")
+				}
+			}
+			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil && vc.Seal.Transit != nil {
+				if u, err := url.Parse(vc.Seal.Transit.Address); err == nil {
+					if t := byIP[u.Hostname()]; t != "" {
+						add(firstServer(l.DC), firstServer(f.Nodes[t].Labels.DC), "auto-unseal")
+					}
+				}
+			}
+			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil &&
+				json.Unmarshal([]byte(rn.Files["consul.json"]), &cc) == nil && cc.Datacenter != "" {
+				if vc.Storage.Consul != nil {
+					add(firstServer(l.DC), firstServer(cc.Datacenter), "Consul storage")
+				}
+				if vc.Registration.Consul != nil {
+					add(firstServer(l.DC), firstServer(cc.Datacenter), "registered")
+				}
+			}
+		}
+	}
+	return out
 }
 
 // links are the web UIs an agent's config says the node serves: the Consul
@@ -672,6 +774,34 @@ func links(cfg agentConfig) []Link {
 		}
 	}
 	return out
+}
+
+// vaultLink is the Vault UI a Vault server serves, signed in with the
+// cluster's root token.
+func vaultLink(f *spec.File, rn *spec.RawNode) (Link, bool) {
+	if rn.Labels == nil || rn.Labels.Product != expand.ProductVault {
+		return Link{}, false
+	}
+	l := Link{Name: "Vault UI", Port: expand.VaultPort, Scheme: "http", Path: "/ui/", Token: expand.VaultRootToken(f, rn.Labels.DC)}
+	raw, ok := rn.Files[expand.VaultConfigFile]
+	if !ok {
+		return l, true // dev mode: the UI is on, over HTTP
+	}
+	var cfg struct {
+		UI       bool `json:"ui"`
+		Listener struct {
+			TCP struct {
+				TLSDisable bool `json:"tls_disable"`
+			} `json:"tcp"`
+		} `json:"listener"`
+	}
+	if json.Unmarshal([]byte(raw), &cfg) != nil || !cfg.UI {
+		return Link{}, false
+	}
+	if !cfg.Listener.TCP.TLSDisable {
+		l.Scheme = "https"
+	}
+	return l, true
 }
 
 // setNS records the namespace of a node's service or gateway, keeping the

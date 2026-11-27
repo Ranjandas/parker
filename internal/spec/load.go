@@ -237,6 +237,7 @@ func (f *File) Validate() error {
 	if !nameRe.MatchString(f.Name) || len(f.Name) > 24 {
 		add("name: %q must be lowercase letters, digits and '-', at most 24 chars", f.Name)
 	}
+	f.validateVault(add)
 	if f.Consul != nil {
 		if f.Versions["consul"] == "" {
 			add("versions.consul: required when a consul: section is present")

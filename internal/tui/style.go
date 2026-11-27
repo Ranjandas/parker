@@ -66,9 +66,9 @@ func stateCell(s string) cell {
 // out; helpers (clients, sidecars, setup jobs) recede.
 func roleCell(r string) cell {
 	switch {
-	case r == roleLeader:
+	case r == roleLeader, r == roleActive:
 		return cell{text: r, style: leadStyle}
-	case r == roleNoLeader:
+	case r == roleNoLeader, r == "sealed", r == "uninitialized":
 		return cell{text: r, style: errStyle}
 	case r == "", r == "-":
 		return cell{text: "-", style: mutedStyle}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -168,11 +169,12 @@ func (l *ScenarioLab) Consul(ctx context.Context, a *spec.ConsulAssert) error {
 	return nil
 }
 
-// dc is the named datacenter, or the only one.
+// dc is the named Consul datacenter, or the only one. Other products'
+// clusters (Vault's) share the name space but aren't datacenters.
 func (l *ScenarioLab) dc(name string) (string, error) {
 	dcs := map[string]bool{}
 	for _, n := range l.Low.Nodes {
-		if n.Labels != nil && n.Labels.DC != "" {
+		if n.Labels != nil && n.Labels.DC != "" && (n.Labels.Product == "" || n.Labels.Product == expand.ProductConsul) {
 			dcs[n.Labels.DC] = true
 		}
 	}
@@ -384,6 +386,47 @@ func healthyOn(h *api.OperatorHealthReply, server, version string) error {
 	}
 	if len(bad) > 0 || !h.Healthy {
 		return fmt.Errorf("unhealthy: %s", strings.Join(bad, ", "))
+	}
+	return nil
+}
+
+// Vault runs a vault: step's action on one Vault server.
+func (l *ScenarioLab) Vault(ctx context.Context, action, node string) error {
+	switch action {
+	case "seal":
+		return VaultSeal(ctx, l.Low, node, func() error { return l.Proc(ctx, "restart", node) })
+	case "unseal":
+		return VaultUnseal(ctx, l.Low, node, func() error { return l.Proc(ctx, "restart", node) })
+	case "step_down":
+		return VaultStepDown(ctx, l.Low, node)
+	}
+	return fmt.Errorf("unknown vault action %q", action)
+}
+
+// VaultCheck checks one Vault server against an assert.vault.
+func (l *ScenarioLab) VaultCheck(ctx context.Context, node string, a *spec.VaultAssert) error {
+	s, err := VaultStatus(ctx, l.Low, node)
+	if err != nil {
+		return err
+	}
+	if a.Sealed != nil && s.Sealed != *a.Sealed {
+		return fmt.Errorf("%s: sealed is %t, want %t", node, s.Sealed, *a.Sealed)
+	}
+	if a.Active != nil && s.Active != *a.Active {
+		return fmt.Errorf("%s: active is %t, want %t", node, s.Active, *a.Active)
+	}
+	if a.RaftPeers != "" {
+		want, err := spec.ParseMembers(a.RaftPeers)
+		if err != nil {
+			return fmt.Errorf("raft_peers: %w", err)
+		}
+		n, err := VaultRaftPeers(ctx, l.Low, node)
+		if err != nil {
+			return err
+		}
+		if n < want {
+			return fmt.Errorf("%s: %d voting raft peers, want %s", node, n, a.RaftPeers)
+		}
 	}
 	return nil
 }

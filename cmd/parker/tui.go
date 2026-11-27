@@ -27,7 +27,9 @@ func tuiCmd() *cobra.Command {
 			"Faults on the selected node: K kill · R restart · S stop/start · P pause/resume\n" +
 			"· x partition it from the rest · H heal all (disruptive ones ask y/n first).\n\n" +
 			"Labs with several datacenters (or admin partitions) open on them: enter one for its nodes.\n" +
-			"The CONSUL column shows each agent's members (alive/known) and each service's catalog health.\n\n" +
+			"The HEALTH column shows each Consul agent's members (alive/known), each service's catalog\n" +
+			"health and each Vault server's raft voters; ROLE shows raft roles and Vault's active, standby\n" +
+			"or sealed.\n\n" +
 			"Commands: :labs · :lab NAME · :dc [NAME[/PARTITION]] · :svc (services and their instances)\n" +
 			"· :run [SCENARIO] (watch it live; esc stops it)\n" +
 			"· :kill|:stop|:start|:restart|:pause|:resume [SELECTOR] · :partition GROUP... · :heal [SELECTOR]\n" +

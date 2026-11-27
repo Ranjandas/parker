@@ -43,7 +43,7 @@ type fake struct {
 }
 
 // labExamples are the examples the demo labs are expanded from.
-var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml", "tgw-failover-ent": "terminating-failover-partitions.yaml", "peering-partitions": "peering-partitions.yaml", "fake-chain": "fake-chain.yaml"}
+var labExamples = map[string]string{"tgw-failover": "terminating-failover.yaml", "tgw-failover-down": "terminating-failover.yaml", "meshfed": "mesh-federation.yaml", "minimal": "minimal.yaml", "partitions": "partitions.yaml", "gateways": "gateways.yaml", "tgw-failover-ent": "terminating-failover-partitions.yaml", "peering-partitions": "peering-partitions.yaml", "fake-chain": "fake-chain.yaml", "vault-connect-ca": "vault-connect-ca.yaml", "vault-consul": "vault-consul.yaml"}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -86,7 +86,7 @@ func (f *fake) Version(context.Context, *connect.Request[parkerv1.VersionRequest
 
 func (f *fake) ListLabs(context.Context, *connect.Request[parkerv1.ListLabsRequest]) (*connect.Response[parkerv1.ListLabsResponse], error) {
 	return connect.NewResponse(&parkerv1.ListLabsResponse{Labs: []*parkerv1.LabSummary{
-		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}, {Name: "tgw-failover-ent", Namespaces: 14, Supervised: true}, {Name: "peering-partitions", Namespaces: 8, Supervised: true}, {Name: "fake-chain", Namespaces: 9, Supervised: true}}}), nil
+		{Name: "meshfed", Namespaces: 6, Supervised: true}, {Name: "tgw-failover", Namespaces: 12, Supervised: true}, {Name: "tgw-failover-down", Namespaces: 12, Supervised: true}, {Name: "gateways"}, {Name: "minimal", Namespaces: 3, Supervised: true}, {Name: "partitions"}, {Name: "tgw-failover-ent", Namespaces: 14, Supervised: true}, {Name: "peering-partitions", Namespaces: 8, Supervised: true}, {Name: "fake-chain", Namespaces: 9, Supervised: true}, {Name: "vault-connect-ca", Namespaces: 8, Supervised: true}, {Name: "vault-consul", Namespaces: 5, Supervised: true}}}), nil
 }
 
 func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusRequest]) (*connect.Response[parkerv1.StatusResponse], error) {
@@ -100,7 +100,7 @@ func (f *fake) Status(_ context.Context, r *connect.Request[parkerv1.StatusReque
 				Namespace: true, Role: role, Dc: "dc1", MembersAlive: 3, MembersTotal: 3, Processes: []*parkerv1.ProcessStatus{proc("consul", int32(3100+i), true, 0)}})
 		}
 		return connect.NewResponse(st), nil
-	case "tgw-failover", "tgw-failover-ent", "peering-partitions", "fake-chain":
+	case "tgw-failover", "tgw-failover-ent", "peering-partitions", "fake-chain", "vault-connect-ca", "vault-consul":
 		return f.allUp(r.Msg.Lab, "")
 	case "tgw-failover-down":
 		// dc1's terminating gateway is stopped: web's calls fail over.
@@ -173,7 +173,16 @@ func (f *fake) allUp(lab, down string) (*connect.Response[parkerv1.StatusRespons
 		for _, net := range slices.Sorted(maps.Keys(rn.Networks)) {
 			ns.Ips = append(ns.Ips, rn.Networks[net].IP)
 		}
-		if rn.Labels != nil {
+		if l := rn.Labels; l != nil && l.Product == expand.ProductVault {
+			// Vault servers: the first is active, the others standbys.
+			ns.Dc, ns.Product, ns.State, ns.Detail = l.DC, l.Product, "standby", "raft 3 voters"
+			if l.Name == "vault-1" {
+				ns.State = "active"
+			}
+			if _, ok := rn.Processes["consul"]; ok {
+				ns.Role, ns.Detail = "client", ""
+			}
+		} else if rn.Labels != nil {
 			ns.Dc, ns.Role = rn.Labels.DC, rn.Labels.Role
 			if ns.Role == "server" {
 				ns.Role = "follower"

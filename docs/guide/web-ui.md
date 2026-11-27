@@ -24,8 +24,11 @@ The link signs you in once, and only works while that `parker ui` runs.
 ## What it shows
 
 - **Labs**: every lab, running or down.
-- **Overview**: a live table of nodes and processes by datacenter, with
-  Consul health and leaders, and problems called out at the top.
+- **Overview**: a live table of nodes and processes by datacenter and
+  Vault cluster, with Consul health and leaders, each Vault server's
+  active, standby or sealed state, and problems called out at the top.
+  The activity feed notes a new leader or active server, and a server
+  sealed or unsealed.
 - **Topology**: the lab drawn as an architecture diagram, with
   datacenters and partitions, each node with its processes, which
   services call which (and through which gateways), and federation and
@@ -47,6 +50,20 @@ The link signs you in once, and only works while that `parker ui` runs.
   (*internet*: browsers, curl) sits beside each datacenter that has
   them, with one line into each gateway labelled with its listeners
   (such as `:8081 http`).
+
+  [Vault](vault.md) clusters are drawn like datacenters, each server
+  with its active, standby or sealed state. When products use each
+  other, a dashed *product link* joins them, from the user to the one
+  it uses: `Connect CA` from a Consul datacenter to the Vault cluster
+  that is its [Connect CA](vault.md#vault-as-the-connect-ca), and
+  `Consul storage` from a Vault cluster to the datacenter that holds
+  its data, `registered` from a Vault cluster to the datacenter it
+  [registers in](vault.md#registering-in-consul), `secrets engine` from
+  a Vault cluster to the datacenter whose
+  [ACL tokens it mints](vault.md#consul-secrets-engine), and
+  `auto-unseal` from a Vault cluster to the one it
+  [auto-unseals with](vault.md#transit-auto-unseal). The **Product links**
+  button hides them.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The header shows the node's IPs,
@@ -66,12 +83,16 @@ down. The [lab builder](lab-builder.md) writes and edits lab files.
 ## Open links
 
 Nodes that serve a web UI get **Open** links: the Consul UI on each
-server, and each service's port. The daemon proxies them from inside the
+server, the Vault UI on each [Vault server](vault.md), and each
+service's port. The daemon proxies them from inside the
 lab, so they work with a rootless or remote daemon too.
 
 - With [TLS](acl-and-tls.md#tls), the Consul UI opens over HTTPS with
   the lab's CA. With ACLs, a *Copy token* button copies the management
   token to paste into its login.
+- The Vault UI opens over HTTPS when its cluster has `tls: true`. Its
+  *Copy token* button copies the cluster's root token, for the UI's
+  Token login.
 - Each app opens on an address of its own,
   `<node>-<port>--<lab>.parker.localhost`, which browsers send to your
   own machine. That keeps apps apart from each other and from Parker's

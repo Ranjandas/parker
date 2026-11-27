@@ -128,6 +128,9 @@ func ServerClients(low *spec.File, dc string) (map[string]*api.Client, error) {
 // node most of them name: during a partition a cut-off server may still
 // report the old leader.
 func RaftLeader(low *spec.File, dc string) (string, error) {
+	if IsVaultCluster(low, dc) {
+		return VaultActive(low, dc)
+	}
 	clients, err := ServerClients(low, dc)
 	if err != nil {
 		return "", err

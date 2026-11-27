@@ -25,3 +25,9 @@ hack/e2e/dataplane-secure.yaml
 hack/e2e/fake-chain.yaml
 examples/fake-chain.yaml
 examples/terminating-failover.yaml
+examples/vault.yaml
+examples/vault-consul.yaml
+examples/vault-connect-ca.yaml
+examples/vault-register.yaml
+examples/vault-transit.yaml
+examples/vault-consul-secrets.yaml

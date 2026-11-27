@@ -1,0 +1,370 @@
+parker: v1alpha1
+name: vault-register
+versions:
+  consul: 1.22.7
+  vault: 1.21.1
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+    auto: true
+  east-lan:
+    subnet: 10.64.0.0/24
+    gateway: 10.64.0.1
+    auto: true
+nodes:
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.10",
+          "bind_addr": "10.1.0.10",
+          "bootstrap_expect": 1,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": null,
+          "server": true,
+          "ui_config": {
+            "enabled": true
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      product: consul
+      dc: dc1
+      name: server-1
+      role: server
+  east-vault-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.100
+      east-lan:
+        ip: 10.64.0.10
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.100",
+          "bind_addr": "10.1.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "east-vault-1",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false
+        }
+      data/.keep: ""
+      vault-init.json: |
+        {
+          "addrs": [
+            "http://10.64.0.10:8200",
+            "http://10.64.0.11:8200",
+            "http://10.64.0.12:8200"
+          ],
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json"
+        }
+      vault.json: |
+        {
+          "api_addr": "http://10.64.0.10:8200",
+          "cluster_addr": "https://10.64.0.10:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.10:8201",
+              "tls_disable": true
+            }
+          },
+          "service_registration": {
+            "consul": {
+              "address": "127.0.0.1:8500"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.11:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.12:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+          timeout: 60s
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          east-vault-1/vault:
+            condition: started
+          east-vault-2/vault:
+            condition: started
+          east-vault-3/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-1
+      role: server
+      group: vault
+  east-vault-2:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.101
+      east-lan:
+        ip: 10.64.0.11
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.101",
+          "bind_addr": "10.1.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "east-vault-2",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false
+        }
+      data/.keep: ""
+      vault.json: |
+        {
+          "api_addr": "http://10.64.0.11:8200",
+          "cluster_addr": "https://10.64.0.11:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.11:8201",
+              "tls_disable": true
+            }
+          },
+          "service_registration": {
+            "consul": {
+              "address": "127.0.0.1:8500"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-2",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.10:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.12:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+          timeout: 60s
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-2
+      role: server
+      group: vault
+  east-vault-3:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.102
+      east-lan:
+        ip: 10.64.0.12
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.102",
+          "bind_addr": "10.1.0.102",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "east-vault-3",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false
+        }
+      data/.keep: ""
+      vault.json: |
+        {
+          "api_addr": "http://10.64.0.12:8200",
+          "cluster_addr": "https://10.64.0.12:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.12:8201",
+              "tls_disable": true
+            }
+          },
+          "service_registration": {
+            "consul": {
+              "address": "127.0.0.1:8500"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-3",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.10:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.11:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+          timeout: 60s
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-3
+      role: server
+      group: vault
+scenario:
+  steps:
+    - wait: east ready
+    - assert:
+        vault:
+          "on": east/active
+          sealed: false
+        within: 30s
+    - assert:
+        exec:
+          "on": dc1/server-1
+          run: curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=active
+          output: east-vault-1
+        within: 30s
+    - assert:
+        exec:
+          "on": dc1/server-1
+          run: curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=standby
+          output: east-vault-3
+        within: 30s
+    - vault:
+        step_down: east/active
+    - assert:
+        vault:
+          "on": east/vault-1
+          sealed: false
+        within: 30s
+    - assert:
+        exec:
+          "on": dc1/server-1
+          run: curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=standby
+          output: east-vault-1
+        within: 30s

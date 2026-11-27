@@ -105,6 +105,7 @@ many services short. See [services](nodes-and-services.md#service-template).
 | `ui` | `true` | Serves the Consul web UI on the servers. |
 | `meta` | | Metadata for every node of the datacenter (below). |
 | `acl`, `tls` | off | Turn on ACLs and TLS. See [ACLs and TLS](acl-and-tls.md). |
+| `connect` | | `connect: { ca: { vault: CLUSTER } }` makes a Vault cluster of the lab the mesh's CA. See [Vault as the Connect CA](vault.md#vault-as-the-connect-ca). |
 | `service_template` | | Settings merged into every service in this datacenter. |
 | `nodes` | | Client nodes and services. See [nodes and services](nodes-and-services.md). |
 | `gateways` | | Mesh, ingress, terminating and API gateways. See [gateways](gateways.md). |

@@ -1,0 +1,347 @@
+parker: v1alpha1
+name: vault
+versions:
+  vault: 1.21.1
+networks:
+  east-lan:
+    subnet: 10.64.0.0/24
+    gateway: 10.64.0.1
+    auto: true
+  west-lan:
+    subnet: 10.65.0.0/24
+    gateway: 10.65.0.1
+    auto: true
+nodes:
+  east-vault-1:
+    networks:
+      east-lan:
+        ip: 10.64.0.10
+    files:
+      ca-key.pem: |
+        <generated EC PRIVATE KEY>
+      ca.pem: |
+        <generated CERTIFICATE>
+      data/.keep: ""
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+      vault-init.json: |
+        {
+          "addrs": [
+            "https://10.64.0.10:8200",
+            "https://10.64.0.11:8200",
+            "https://10.64.0.12:8200"
+          ],
+          "ca_file": "${node_dir}/ca.pem",
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json"
+        }
+      vault.json: |
+        {
+          "api_addr": "https://10.64.0.10:8200",
+          "cluster_addr": "https://10.64.0.10:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.10:8201",
+              "tls_cert_file": "${node_dir}/server.pem",
+              "tls_disable": false,
+              "tls_key_file": "${node_dir}/server-key.pem"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "https://10.64.0.11:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                },
+                {
+                  "leader_api_addr": "https://10.64.0.12:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: https://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+            ca_file: ca.pem
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          east-vault-1/vault:
+            condition: started
+          east-vault-2/vault:
+            condition: started
+          east-vault-3/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-1
+      role: server
+      group: vault
+  east-vault-2:
+    networks:
+      east-lan:
+        ip: 10.64.0.11
+    files:
+      ca-key.pem: |
+        <generated EC PRIVATE KEY>
+      ca.pem: |
+        <generated CERTIFICATE>
+      data/.keep: ""
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+      vault.json: |
+        {
+          "api_addr": "https://10.64.0.11:8200",
+          "cluster_addr": "https://10.64.0.11:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.11:8201",
+              "tls_cert_file": "${node_dir}/server.pem",
+              "tls_disable": false,
+              "tls_key_file": "${node_dir}/server-key.pem"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-2",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "https://10.64.0.10:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                },
+                {
+                  "leader_api_addr": "https://10.64.0.12:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: https://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-2
+      role: server
+      group: vault
+  east-vault-3:
+    networks:
+      east-lan:
+        ip: 10.64.0.12
+    files:
+      ca-key.pem: |
+        <generated EC PRIVATE KEY>
+      ca.pem: |
+        <generated CERTIFICATE>
+      data/.keep: ""
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+      vault.json: |
+        {
+          "api_addr": "https://10.64.0.12:8200",
+          "cluster_addr": "https://10.64.0.12:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.64.0.12:8201",
+              "tls_cert_file": "${node_dir}/server.pem",
+              "tls_disable": false,
+              "tls_key_file": "${node_dir}/server-key.pem"
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-3",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "https://10.64.0.10:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                },
+                {
+                  "leader_api_addr": "https://10.64.0.11:8200",
+                  "leader_ca_cert_file": "${node_dir}/ca.pem"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: https://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-3
+      role: server
+      group: vault
+  west-vault-1:
+    networks:
+      west-lan:
+        ip: 10.65.0.10
+    files:
+      data/.keep: ""
+      vault-init.json: |
+        {
+          "addrs": [
+            "http://10.65.0.10:8200"
+          ],
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json"
+        }
+      vault.json: |
+        {
+          "api_addr": "http://10.65.0.10:8200",
+          "cluster_addr": "https://10.65.0.10:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.65.0.10:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data"
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          west-vault-1/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+    labels:
+      product: vault
+      dc: west
+      name: vault-1
+      role: server
+      group: vault
+scenario:
+  steps:
+    - wait: east ready
+    - assert:
+        exec:
+          "on": west/vault-1
+          run: vault status -format=json
+          output: "\"sealed\": false"
+        within: 30s
+    - exec:
+        "on": east/vault-1
+        run: vault operator raft list-peers
+    - exec:
+        "on": east/vault-2
+        run: vault secrets enable -path=secret kv-v2
+    - exec:
+        "on": east/vault-3
+        run: vault kv put secret/hello who=parker
+    - assert:
+        exec:
+          "on": east/vault-1
+          run: vault kv get -field=who secret/hello
+          output: parker
+        within: 10s
+    - assert:
+        vault:
+          "on": east/active
+          raft_peers: ">=3"
+        within: 60s
+    - vault:
+        step_down: east/active
+    - assert:
+        vault:
+          "on": east/active
+          sealed: false
+        within: 30s
+    - vault:
+        seal: east/standbys
+    - assert:
+        vault:
+          "on": east/standbys
+          sealed: true
+        within: 30s
+    - vault:
+        unseal: east
+    - assert:
+        vault:
+          "on": east
+          sealed: false
+          raft_peers: ">=3"
+        within: 60s
+    - assert:
+        exec:
+          "on": east/active
+          run: vault kv get -field=who secret/hello
+          output: parker
+        within: 30s

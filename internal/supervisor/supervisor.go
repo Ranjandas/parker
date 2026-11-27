@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -44,6 +45,11 @@ type Options struct {
 	// Life bounds supervision after Run returns: restart policies apply
 	// until it is done or Handle.Stop is called. Nil means Background.
 	Life context.Context
+
+	// runID tells one supervision run from the next: every process gets it
+	// as PARKER_RUN, so a one-shot setup process restarted by a fault can
+	// tell it already ran in this run.
+	runID string
 }
 
 type proc struct {
@@ -148,6 +154,7 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
+	o.runID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
 	// Resolve binaries up front so downloads don't count against timeouts.
 	bins := map[string]string{}
@@ -180,6 +187,10 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 			return nil, err
 		}
 		for name, content := range n.Files {
+			// A file may sit in a subdirectory (data/.keep makes data/).
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+				return nil, err
+			}
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(vars.Replace(content)), 0o644); err != nil {
 				return nil, err
 			}
@@ -286,7 +297,7 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return err
 	}
-	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
+	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node, "PARKER_RUN=" + o.runID}
 	if o.LicensePath != "" {
 		env = append(env, "CONSUL_LICENSE_PATH="+o.LicensePath)
 	}
@@ -480,7 +491,11 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 		c.Close()
 	}
 	if r.HTTP != nil {
-		resp, err := httpc.Get(r.HTTP.URL)
+		hc, err := withCA(httpc, r.HTTP.CAFile, filepath.Dir(logPath))
+		if err != nil {
+			return err
+		}
+		resp, err := hc.Get(r.HTTP.URL)
 		if err != nil {
 			return err
 		}
@@ -704,13 +719,31 @@ func ConsulConfig(cc *spec.ConsulCheck, httpc *http.Client, nodeDir string) (*ap
 	if !filepath.IsAbs(ca) {
 		ca = filepath.Join(nodeDir, ca)
 	}
-	pemBytes, err := os.ReadFile(ca)
+	hc, err := withCA(httpc, ca, nodeDir)
 	if err != nil {
 		return nil, fmt.Errorf("consul check: %w", err)
 	}
+	cfg.HttpClient = hc
+	cfg.Scheme = "https"
+	return cfg, nil
+}
+
+// withCA is httpc trusting the CA in caFile (relative to nodeDir), or
+// httpc itself when caFile is empty.
+func withCA(httpc *http.Client, caFile, nodeDir string) (*http.Client, error) {
+	if caFile == "" {
+		return httpc, nil
+	}
+	if !filepath.IsAbs(caFile) {
+		caFile = filepath.Join(nodeDir, caFile)
+	}
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("consul check: no certificates in %s", ca)
+		return nil, fmt.Errorf("no certificates in %s", caFile)
 	}
 	t, ok := httpc.Transport.(*http.Transport)
 	if !ok {
@@ -720,7 +753,5 @@ func ConsulConfig(cc *spec.ConsulCheck, httpc *http.Client, nodeDir string) (*ap
 	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	hc := *httpc
 	hc.Transport = t
-	cfg.HttpClient = &hc
-	cfg.Scheme = "https"
-	return cfg, nil
+	return &hc, nil
 }

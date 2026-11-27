@@ -54,6 +54,8 @@ func TestResolve(t *testing.T) {
 		"svc:metrics":       "dc1-api",
 		"dc1/leader":        "dc1-server-2",
 		"dc1/followers":     "dc1-server-1 dc1-server-3",
+		"dc1/active":        "dc1-server-2",
+		"dc1/standbys":      "dc1-server-1 dc1-server-3",
 		"toxiproxy":         "toxiproxy",
 		"dc1-server-3":      "dc1-server-3",
 		" dc1/bare ":        "dc1-bare",

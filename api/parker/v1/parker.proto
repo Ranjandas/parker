@@ -146,6 +146,15 @@ message NodeStatus {
   // Catalog health of the node's service instances, by service name
   // (web, web-sidecar-proxy, mesh-gateway): passing, warning or critical.
   map<string, string> health = 10;
+  // The product the node runs (consul, vault; "" for a low-level node),
+  // and what that product says about the node, the same way for every
+  // product. state is one word: Consul's role (leader, follower,
+  // no-leader, client), or Vault's active, standby, perf-standby, sealed
+  // or uninitialized; "" when the product can't be asked. detail is a short
+  // note beside it: "3/3 members", "raft 3 voters".
+  string product = 11;
+  string state = 12;
+  string detail = 13;
 }
 
 message ProcessStatus {
@@ -223,6 +232,7 @@ message GraphNode {
   // Consul namespace of each service and gateway ("<kind>-gateway"), when
   // its partition has namespaces other than default.
   map<string, string> namespaces = 9;
+  string product = 10; // consul, vault; "" for a low-level node
 }
 
 // GraphLink is a web UI on a node, opened through the daemon's app proxy.

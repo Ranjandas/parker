@@ -64,6 +64,13 @@ func mapper(t reflect.Type) *jsonschema.Schema {
 				{Type: "string", Pattern: `^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$`},
 			},
 		}
+	case reflect.TypeOf(spec.VaultStorage{}):
+		obj := &jsonschema.Schema{Type: "object", AdditionalProperties: jsonschema.FalseSchema, Properties: jsonschema.NewProperties(), Required: []string{"consul"}}
+		obj.Properties.Set("consul", &jsonschema.Schema{Type: "string", Description: "The Consul datacenter that keeps the data."})
+		return &jsonschema.Schema{
+			Description: "raft (integrated storage, the default), file (one server), or {consul: DC}.",
+			OneOf:       []*jsonschema.Schema{{Type: "string", Enum: []any{"raft", "file"}}, obj},
+		}
 	case reflect.TypeOf(spec.Command{}):
 		return &jsonschema.Schema{
 			Description: "A command: a string split on whitespace, or an argv list.",

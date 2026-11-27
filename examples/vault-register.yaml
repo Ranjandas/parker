@@ -1,0 +1,33 @@
+# Vault registered in Consul: the east cluster keeps its data in raft and
+# registers in dc1 as the vault service, tagged active or standby, through
+# a dc1 client agent beside each server. Clients find the active server
+# at active.vault.service.consul.
+parker: v1alpha1
+name: vault-register
+versions: { consul: 1.22.7, vault: 1.21.1 }
+consul:
+  datacenters:
+    dc1: { servers: 1 }
+vault:
+  clusters:
+    east:
+      servers: 3
+      register: dc1
+
+scenario:
+  steps:
+    - wait: east ready
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    # One active and two standby instances of the vault service.
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=active", output: east-vault-1 }
+        within: 30s
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=standby", output: east-vault-3 }
+        within: 30s
+    # Fail over: the active tag moves to the new active server.
+    - vault: { step_down: east/active }
+    - assert: { vault: { on: east/vault-1, sealed: false }, within: 30s }
+    - assert:
+        exec: { on: dc1/server-1, run: "curl -s 127.0.0.1:8500/v1/catalog/service/vault?tag=standby", output: east-vault-1 }
+        within: 30s

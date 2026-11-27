@@ -175,7 +175,7 @@ func checkScenarios(low *spec.File) error {
 	return errors.Join(errs...)
 }
 
-func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
+func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File, facts Facts, vaultAgents map[string][]string) error {
 	dcNames := slices.Sorted(maps.Keys(c.Datacenters))
 	primary := ""
 	for _, n := range dcNames {
@@ -246,7 +246,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 	for _, dcName := range dcNames {
 		if tlsOn(defaults, c.Datacenters[dcName]) {
 			var err error
-			if labCA, err = newCA(out.Name); err != nil {
+			if labCA, err = labCAOf(facts, out.Name); err != nil {
 				return err
 			}
 			break
@@ -607,6 +607,12 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 		slices.SortFunc(nodes, func(a, b spec.PlacedNode) int {
 			return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
 		})
+		// Client agents for the Vault servers that keep their data in this
+		// dc or register in it, after the dc's own nodes so their addresses
+		// don't move.
+		for _, vk := range vaultAgents[dcName] {
+			nodes = append(nodes, spec.PlacedNode{Name: vk, Node: &spec.Node{}})
+		}
 		for _, placed := range nodes {
 			nodeName, node, part := placed.Name, placed.Node, partitionName(placed.Partition)
 			gw, isGW := gwOf[placed.Partition+"/"+nodeName]

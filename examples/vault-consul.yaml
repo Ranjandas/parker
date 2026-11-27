@@ -1,0 +1,31 @@
+# Vault on Consul storage: an old Vault release (no integrated storage)
+# with HA, its data kept in dc1. Each Vault server runs a Consul client
+# agent of dc1 beside it, the way production did before raft.
+parker: v1alpha1
+name: vault-consul
+versions: { consul: 1.22.7, vault: 1.3.10 }
+consul:
+  datacenters:
+    dc1: { servers: 3 }
+vault:
+  clusters:
+    east:
+      servers: 2
+      storage: { consul: dc1 }
+
+scenario:
+  steps:
+    - wait: east ready
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - exec: { on: east/vault-1, run: "vault secrets enable -path=secret kv" }
+    - exec: { on: east/vault-2, run: "vault kv put secret/hello who=parker" }
+    # The data is in Consul's KV, under the cluster's path.
+    - assert:
+        exec: { on: dc1/server-1, run: "consul kv get -keys vault-east/", output: "vault-east/core/" }
+        within: 10s
+    # Fail over: the active server steps down and the standby takes over.
+    - vault: { step_down: east/active }
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - assert:
+        exec: { on: east/active, run: "vault kv get -field=who secret/hello", output: parker }
+        within: 30s

@@ -563,7 +563,16 @@ type NodeStatus struct {
 	MembersTotal int32 `protobuf:"varint,9,opt,name=members_total,json=membersTotal,proto3" json:"members_total,omitempty"`
 	// Catalog health of the node's service instances, by service name
 	// (web, web-sidecar-proxy, mesh-gateway): passing, warning or critical.
-	Health        map[string]string `protobuf:"bytes,10,rep,name=health,proto3" json:"health,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Health map[string]string `protobuf:"bytes,10,rep,name=health,proto3" json:"health,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// The product the node runs (consul, vault; "" for a low-level node),
+	// and what that product says about the node, the same way for every
+	// product. state is one word: Consul's role (leader, follower,
+	// no-leader, client), or Vault's active, standby, perf-standby, sealed
+	// or uninitialized; "" when the product can't be asked. detail is a short
+	// note beside it: "3/3 members", "raft 3 voters".
+	Product       string `protobuf:"bytes,11,opt,name=product,proto3" json:"product,omitempty"`
+	State         string `protobuf:"bytes,12,opt,name=state,proto3" json:"state,omitempty"`
+	Detail        string `protobuf:"bytes,13,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -666,6 +675,27 @@ func (x *NodeStatus) GetHealth() map[string]string {
 		return x.Health
 	}
 	return nil
+}
+
+func (x *NodeStatus) GetProduct() string {
+	if x != nil {
+		return x.Product
+	}
+	return ""
+}
+
+func (x *NodeStatus) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *NodeStatus) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
 }
 
 type ProcessStatus struct {
@@ -1270,6 +1300,7 @@ type GraphNode struct {
 	// Consul namespace of each service and gateway ("<kind>-gateway"), when
 	// its partition has namespaces other than default.
 	Namespaces    map[string]string `protobuf:"bytes,9,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Product       string            `protobuf:"bytes,10,opt,name=product,proto3" json:"product,omitempty"` // consul, vault; "" for a low-level node
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1365,6 +1396,13 @@ func (x *GraphNode) GetNamespaces() map[string]string {
 		return x.Namespaces
 	}
 	return nil
+}
+
+func (x *GraphNode) GetProduct() string {
+	if x != nil {
+		return x.Product
+	}
+	return ""
 }
 
 // GraphLink is a web UI on a node, opened through the daemon's app proxy.
@@ -2691,7 +2729,7 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\n" +
 	"supervised\x18\x03 \x01(\bR\n" +
 	"supervised\x12+\n" +
-	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\x8a\x03\n" +
+	"\x05nodes\x18\x04 \x03(\v2\x15.parker.v1.NodeStatusR\x05nodes\"\xd2\x03\n" +
 	"\n" +
 	"NodeStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
@@ -2704,7 +2742,10 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\rmembers_alive\x18\b \x01(\x05R\fmembersAlive\x12#\n" +
 	"\rmembers_total\x18\t \x01(\x05R\fmembersTotal\x129\n" +
 	"\x06health\x18\n" +
-	" \x03(\v2!.parker.v1.NodeStatus.HealthEntryR\x06health\x1a9\n" +
+	" \x03(\v2!.parker.v1.NodeStatus.HealthEntryR\x06health\x12\x18\n" +
+	"\aproduct\x18\v \x01(\tR\aproduct\x12\x14\n" +
+	"\x05state\x18\f \x01(\tR\x05state\x12\x16\n" +
+	"\x06detail\x18\r \x01(\tR\x06detail\x1a9\n" +
 	"\vHealthEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd9\x01\n" +
@@ -2748,7 +2789,7 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x05edges\x18\x03 \x03(\v2\x14.parker.v1.GraphEdgeR\x05edges\x12\x1e\n" +
 	"\n" +
 	"federation\x18\x04 \x01(\tR\n" +
-	"federation\"\xdc\x02\n" +
+	"federation\"\xf6\x02\n" +
 	"\tGraphNode\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02dc\x18\x02 \x01(\tR\x02dc\x12\x1c\n" +
@@ -2760,7 +2801,9 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x05links\x18\b \x03(\v2\x14.parker.v1.GraphLinkR\x05links\x12D\n" +
 	"\n" +
 	"namespaces\x18\t \x03(\v2$.parker.v1.GraphNode.NamespacesEntryR\n" +
-	"namespaces\x1a=\n" +
+	"namespaces\x12\x18\n" +
+	"\aproduct\x18\n" +
+	" \x01(\tR\aproduct\x1a=\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"u\n" +

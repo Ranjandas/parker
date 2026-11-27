@@ -255,7 +255,7 @@ func New(o Options) Model {
 
 // nodeColumns: NODE and IP give way on a narrow terminal.
 var nodeColumns = []column{{title: "NODE", flex: true}, {title: "IP", flex: true}, {title: "PROCESS"},
-	{title: "PID"}, {title: "STATE"}, {title: "CONSUL"}, {title: "RESTARTS"}, {title: "ROLE"}}
+	{title: "PID"}, {title: "STATE"}, {title: "HEALTH"}, {title: "RESTARTS"}, {title: "ROLE"}}
 
 func (m Model) Init() tea.Cmd {
 	if m.o.Static {
@@ -665,7 +665,22 @@ func (m *Model) toggleAll() {
 const (
 	roleLeader   = "server ★"
 	roleNoLeader = "server (no leader)"
+	roleActive   = "active ★"
 )
+
+// vaultRole is what a Vault server is: active, a standby, sealed; plain
+// "server" when it doesn't answer.
+func vaultRole(n *parkerv1.NodeStatus) string {
+	switch n.State {
+	case "active":
+		return roleActive
+	case "perf-standby":
+		return "perf standby"
+	case "":
+		return "server"
+	}
+	return n.State
+}
 
 // nodeRole is what a node's agent is: server (and whether it leads),
 // client, or "-" with no agent.
@@ -694,6 +709,10 @@ func procRole(n *parkerv1.NodeStatus, name string, names map[string]bool) string
 	switch {
 	case name == "consul":
 		return nodeRole(n)
+	case name == "vault" && n.Product == expand.ProductVault:
+		return vaultRole(n)
+	case name == expand.VaultInit:
+		return "setup"
 	case name == expand.ConfigEntries || name == expand.ACLSetup || strings.HasPrefix(name, "peering-"):
 		return "setup"
 	case strings.HasSuffix(name, expand.SidecarSuffix):
@@ -716,8 +735,10 @@ type procKey struct {
 // followed by its sidecar, then setup jobs.
 func procOrder(name string) procKey {
 	switch {
-	case name == "consul":
+	case name == "consul", name == "vault":
 		return procKey{rank: 0}
+	case name == expand.VaultInit:
+		return procKey{rank: 3, base: name}
 	case strings.HasSuffix(name, "-gateway"):
 		return procKey{rank: 1, base: name}
 	case name == expand.ConfigEntries || name == expand.ACLSetup || strings.HasPrefix(name, "peering-"):
@@ -796,7 +817,7 @@ var serverName = regexp.MustCompile(`^([^-]+)-server-\d+$`)
 // agent is down still ranks (and groups) as a server by its name.
 func kind(n *parkerv1.NodeStatus) int {
 	switch {
-	case isServer(n.Role) || serverName.MatchString(n.Name):
+	case isServer(n.Role) || serverName.MatchString(n.Name) || n.Product == expand.ProductVault:
 		return 0
 	case n.Role == "client" || slices.ContainsFunc(n.Processes, func(p *parkerv1.ProcessStatus) bool { return p.Name == "consul" }):
 		return 1
@@ -1760,7 +1781,7 @@ func summary(st *parkerv1.StatusResponse) []string {
 				dead++
 			}
 		}
-		if n.Role == "leader" {
+		if n.Role == "leader" || n.State == "active" {
 			leaders = append(leaders, n.Name)
 		}
 	}

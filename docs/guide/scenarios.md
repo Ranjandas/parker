@@ -133,6 +133,20 @@ check that something fails:
 | `reaches` | A service the request must pass through: `api`, `dc2/api`, or a node name. |
 | `body` | Text the answer must contain. |
 
+`vault:` checks every Vault server a [selector](selectors.md) matches;
+each must match every key set:
+
+| Key | Holds when |
+|---|---|
+| `on` | Which servers: `east`, `east/vault-2`, `east/active`, `east/standbys`. |
+| `sealed` | The servers are sealed (`true`) or unsealed (`false`). |
+| `active` | The servers are the active one (`true`) or standbys (`false`). |
+| `raft_peers: ">=3"` | That many voting raft peers, asked of each server. |
+
+```yaml
+- assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 30s }
+```
+
 ### Timing with at
 
 `at:` delays a step: `+30s` after the previous step finished, or
@@ -160,6 +174,15 @@ Fault steps are the same as [`parker fault`](faults.md):
 - resume: dc1/servers
 - fake: { on: dc1/api, errors: { rate: 0.5, code: 503 } }
 - fake: { on: dc1/api, reset: true }
+```
+
+A `vault:` step [seals, unseals or steps down](vault.md#seal-unseal-and-step-down)
+Vault servers:
+
+```yaml
+- vault: { seal: east/active }
+- vault: { unseal: east }
+- vault: { step_down: east/active }
 ```
 
 A `fake:` step takes `on`, `service`, `health`, `latency`, `errors`,

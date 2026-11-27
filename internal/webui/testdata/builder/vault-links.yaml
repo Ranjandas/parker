@@ -1,0 +1,40 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up vault-links.yaml
+parker: v1alpha1
+name: vault-links
+versions: { consul: 2.1.0, envoy: 1.39.1, vault: 1.21.1 }
+consul:
+  defaults:
+    acl: true
+    service_template: { run: fake-service, connect: sidecar }
+  datacenters:
+    dc1:
+      servers: 1
+      connect: { ca: { vault: east } }
+      nodes:
+        web:
+          service: { port: 8080, upstreams: { api: 9091 } }
+        api:
+          service: { port: 9090 }
+      config_entries:
+        - Kind: service-intentions
+          Name: api
+          Sources: [{ Name: web, Action: allow }]
+    dc2:
+      servers: 1
+vault:
+  clusters:
+    east:
+      servers: 3
+      register: dc1
+      seal: { transit: unsealer }
+      secrets: { consul: dc1 }
+    unsealer: {}
+    old: { servers: 2, storage: { consul: dc2 } }
+scenario:
+  steps:
+    - wait: east ready
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - vault: { step_down: east/active }
+    - vault: { seal: unsealer/active }
+    - vault: { unseal: unsealer }

@@ -270,7 +270,7 @@ func (s *Server) Graph(_ context.Context, req *connect.Request[parkerv1.GraphReq
 func GraphToProto(name string, g *graph.Graph) *parkerv1.GraphResponse {
 	out := &parkerv1.GraphResponse{Lab: name, Federation: g.Federation}
 	for _, n := range g.Nodes {
-		pn := &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role,
+		pn := &parkerv1.GraphNode{Name: n.Name, Dc: n.DC, Partition: n.Partition, Role: n.Role, Product: n.Product,
 			Services: n.Services, Gateways: n.Gateways, Ips: n.IPs, Namespaces: n.Namespaces}
 		for _, l := range n.Links {
 			pn.Links = append(pn.Links, &parkerv1.GraphLink{Name: l.Name, Port: int32(l.Port), Scheme: l.Scheme, Path: l.Path, Token: l.Token})
@@ -287,7 +287,8 @@ func StatusToProto(st *lab.Status) *parkerv1.StatusResponse {
 	out := &parkerv1.StatusResponse{Lab: st.Lab, RunDir: st.RunDir, Supervised: st.Supervised}
 	for _, n := range st.Nodes {
 		pn := &parkerv1.NodeStatus{Name: n.Name, Ips: n.IPs, Namespace: n.Namespace, Role: n.Role, Dc: n.DC, Partition: n.Partition,
-			MembersAlive: int32(n.MembersAlive), MembersTotal: int32(n.MembersTotal), Health: n.Health}
+			MembersAlive: int32(n.MembersAlive), MembersTotal: int32(n.MembersTotal), Health: n.Health,
+			Product: n.Product, State: n.State, Detail: n.Detail}
 		for _, p := range n.Processes {
 			pn.Processes = append(pn.Processes, &parkerv1.ProcessStatus{
 				Name: p.Name, Pid: int32(p.Pid), Alive: p.Alive, Ready: p.Ready, Restarts: int32(p.Restarts), LogPath: p.LogPath,

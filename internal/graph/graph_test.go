@@ -188,6 +188,11 @@ func TestLinks(t *testing.T) {
 	want(t, "tls server", linksOf(t, build(t, "tls.yaml"), "dc1-server-1"), "Consul UI https:8501/ui/ token")
 	// With ACLs the UI link carries the management token to sign in with.
 	want(t, "acl server", linksOf(t, build(t, "acl.yaml"), "dc1-server-1"), "Consul UI http:8500/ui/ token")
+	// Vault servers link to the Vault UI with the root token, over HTTPS
+	// when the cluster has TLS.
+	v := build(t, "vault.yaml")
+	want(t, "vault tls", linksOf(t, v, "east-vault-1"), "Vault UI https:8200/ui/ token")
+	want(t, "vault", linksOf(t, v, "west-vault-1"), "Vault UI http:8200/ui/ token")
 	// Gateways register no service ports of their own here.
 	if l := linksOf(t, build(t, "gateways.yaml"), "dc1-ingress"); len(l) != 0 {
 		t.Errorf("gateway links %q", l)
@@ -239,4 +244,22 @@ func TestPeeringDirect(t *testing.T) {
 	if len(edges(g, Peering)) == 0 {
 		t.Error("no peering edge")
 	}
+}
+
+// Products that use each other are linked, from the user to the one it
+// uses, between their first servers.
+func TestIntegrations(t *testing.T) {
+	g := build(t, "vault-connect-ca.yaml")
+	want(t, "connect ca", edges(g, Integration), "dc1-server-1>east-vault-1 Connect CA")
+	if p := node(t, g, "east-vault-1").Product; p != expand.ProductVault {
+		t.Errorf("vault product %q", p)
+	}
+	if p := node(t, g, "dc1-server-1").Product; p != expand.ProductConsul {
+		t.Errorf("consul product %q", p)
+	}
+	want(t, "consul storage", edges(build(t, "vault-consul.yaml"), Integration), "east-vault-1>dc1-server-1 Consul storage")
+	want(t, "registered", edges(build(t, "vault-register.yaml"), Integration), "east-vault-1>dc1-server-1 registered")
+	want(t, "auto-unseal", edges(build(t, "vault-transit.yaml"), Integration), "east-vault-1>unsealer-vault-1 auto-unseal")
+	want(t, "secrets engine", edges(build(t, "vault-consul-secrets.yaml"), Integration), "east-vault-1>dc1-server-1 secrets engine")
+	want(t, "none", edges(build(t, "vault.yaml"), Integration))
 }

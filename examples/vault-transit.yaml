@@ -1,0 +1,31 @@
+# Transit auto-unseal: the east cluster unseals itself with a key in the
+# Transit secrets engine of the unsealer cluster, so a restarted east
+# server comes back unsealed.
+parker: v1alpha1
+name: vault-transit
+versions: { vault: 1.21.1 }
+vault:
+  clusters:
+    unsealer: {}
+    east:
+      servers: 3
+      seal: { transit: unsealer }
+
+scenario:
+  steps:
+    - wait: east ready
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - exec: { on: east/vault-1, run: "vault secrets enable -path=secret kv" }
+    - exec: { on: east/vault-1, run: "vault kv put secret/hello who=parker" }
+    # A restarted server unseals itself.
+    - restart: east/vault-2
+    - assert: { vault: { on: east/vault-2, sealed: false }, within: 60s }
+    # With the transit cluster sealed, running servers carry on...
+    - vault: { seal: unsealer/active }
+    - assert:
+        exec: { on: east/active, run: "vault kv get -field=who secret/hello", output: parker }
+        within: 30s
+    # ...and once it's unsealed, restarted servers unseal themselves again.
+    - vault: { unseal: unsealer/vault-1 }
+    - restart: east/vault-3
+    - assert: { vault: { on: east/vault-3, sealed: false }, within: 60s }

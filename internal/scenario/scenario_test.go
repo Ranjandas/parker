@@ -108,6 +108,26 @@ func (f *fakeLab) Proc(_ context.Context, action, node string) error {
 	return nil
 }
 
+func (f *fakeLab) Vault(_ context.Context, action, node string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log = append(f.log, "vault "+action+" "+node)
+	if node == f.procFail {
+		return errors.New("vault refused")
+	}
+	return nil
+}
+
+func (f *fakeLab) VaultCheck(_ context.Context, node string, a *spec.VaultAssert) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log = append(f.log, "vault check "+node)
+	if node == f.procFail {
+		return errors.New("sealed")
+	}
+	return nil
+}
+
 func (f *fakeLab) UpgradeOrder(nodes []string) ([]string, error) {
 	out := slices.Clone(nodes)
 	slices.Reverse(out)
@@ -272,10 +292,15 @@ func TestValidate(t *testing.T) {
 		`[{at: "+3x", sleep: 1s}]`:        "at:",
 		`[{sleep: soon}]`:                 "sleep:",
 		`[{exec: {on: dc1}}]`:             "exec: needs on: and run:",
-		`[{assert: {within: 3s}}]`:        "exactly one of consul:, exec: or call:",
+		`[{assert: {within: 3s}}]`:        "exactly one of consul:, vault:, exec: or call:",
 		`[{assert: {consul: {dc: dc1}}}]`: "nothing to check",
-		`[{assert: {consul: {leader: true}, within: x}}]`: "assert.within",
-		`[{snapshot: everything}]`:                        "want logs",
+		`[{assert: {consul: {leader: true}, within: x}}]`:   "assert.within",
+		`[{snapshot: everything}]`:                          "want logs",
+		`[{vault: {}}]`:                                     "vault:",
+		`[{vault: {seal: east, unseal: east}}]`:             "vault:",
+		`[{assert: {vault: {sealed: true}}}]`:               "assert.vault",
+		`[{assert: {vault: {on: east}}}]`:                   "nothing to check",
+		`[{assert: {vault: {on: east, raft_peers: lots}}}]`: "raft_peers",
 	} {
 		err := Validate(parse(t, "steps: "+steps))
 		if err == nil || !strings.Contains(err.Error(), want) {
@@ -287,6 +312,30 @@ func TestValidate(t *testing.T) {
 	}
 	sc := parse(t, `steps: [{wait: dc1 ready}, {exec: {on: dc1/web, run: x}}, {assert: {exec: {on: svc:api, run: x}}}, {sleep: 1s}]`)
 	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/web svc:api" {
+		t.Errorf("selectors %q", got)
+	}
+}
+
+func TestVaultSteps(t *testing.T) {
+	sc := parse(t, `
+steps:
+  - vault: { seal: dc1 }
+  - vault: { step_down: dc1/leader }
+  - assert: { vault: { on: dc1/web, sealed: false } }
+`)
+	if err := Validate(sc); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeLab{clk: &fakeClock{}}
+	out, err := run(t, sc, f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := []string{"vault seal dc1-server-1", "vault seal dc1-web-1", "vault step_down dc1-server-1", "vault check dc1-web-1", "vault check dc1-web-2"}
+	if !slices.Equal(f.log, want) {
+		t.Errorf("log:\n%s\nwant:\n%s", strings.Join(f.log, "\n"), strings.Join(want, "\n"))
+	}
+	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/leader dc1/web" {
 		t.Errorf("selectors %q", got)
 	}
 }

@@ -114,6 +114,7 @@ function nodeState(n) {
   const crit = Object.values(n.health || {}).some((v) => v === "critical");
   if (!n.namespace) return "down";
   if (ps.some((s) => s === "down") || crit) return "bad";
+  if (n.product === "vault" && (n.state === "sealed" || n.state === "uninitialized")) return "warn";
   if (ps.some((s) => s !== "ready")) return "warn";
   return "ok";
 }
@@ -131,6 +132,11 @@ function roleOf(n, p) {
     if (n.role === "client") return { text: "client" };
     return { text: n.role || "agent" };
   }
+  if (p.name === "vault" && n.product === "vault") {
+    if (n.state === "active") return { text: "vault ★ active", lead: true };
+    return { text: n.state ? "vault " + n.state.replace("-", " ") : "vault" };
+  }
+  if (p.name === "vault-init") return { text: "setup" };
   if (/-sidecar$/.test(p.name)) return { text: "sidecar → " + p.name.replace(/-sidecar$/, "") };
   if (/gateway$/.test(p.name)) return { text: p.name.replace(/-/g, " ") };
   if (n.health && n.health[p.name]) return { text: "service" };
@@ -149,6 +155,11 @@ function diff(lab, a, b) {
     const o = prevNodes.get(n.name);
     if (!o) continue;
     if (n.role === "leader" && o.role !== "leader") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> became leader` });
+    if (n.product === "vault" && n.state !== o.state && n.state) {
+      if (n.state === "active") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> became the active Vault server` });
+      else if (n.state === "sealed") ev.unshift({ t, kind: "bad", html: `<b>${esc(n.name)}</b> is sealed` });
+      else if (o.state === "sealed") ev.unshift({ t, kind: "ok", html: `<b>${esc(n.name)}</b> is unsealed` });
+    }
     const op = new Map((o.processes || []).map((p) => [p.name, p]));
     for (const p of n.processes || []) {
       const q = op.get(p.name);
@@ -316,7 +327,10 @@ function renderOverview() {
   const ready = procs.filter((x) => x.s === "ready").length;
   const groups = [...new Set(nodes.map(groupKey))];
   const dcs = [...new Set(nodes.map(dcOf))];
-  const leaders = nodes.filter((n) => n.role === "leader").map((n) => n.name);
+  // A Consul dc's raft leader, or a Vault cluster's active server.
+  const leaders = nodes.filter((n) => n.role === "leader" || (n.product === "vault" && n.state === "active")).map((n) => n.name);
+  const vaultDCs = new Set(nodes.filter((n) => n.product === "vault").map(dcOf));
+  const place = (k) => vaultDCs.size ? (k === 1 ? "datacenter or cluster" : "datacenters and clusters") : k === 1 ? "datacenter" : "datacenters";
   const crit = nodes.flatMap((n) => Object.entries(n.health || {}).filter(([, h]) => h === "critical").map(([svc]) => ({ n, svc })));
   const downs = procs.filter((x) => x.s === "down");
   const restarts = procs.reduce((a, x) => a + (x.p.restarts || 0), 0);
@@ -336,7 +350,7 @@ function renderOverview() {
   let rows = "";
   for (const g of groups) {
     const gn = nodes.filter((n) => groupKey(n) === g);
-    const servers = gn.filter((n) => n.role === "leader" || n.role === "follower").length;
+    const servers = gn.filter((n) => n.role === "leader" || n.role === "follower" || n.product === "vault").length;
     rows += `<tr class="dc"><td colspan="8"><b>${esc(g)}</b> <span class="muted" style="margin-left:8px">${servers ? `${servers} server${servers > 1 ? "s" : ""} · ` : ""}${gn.length - servers} other node${gn.length - servers === 1 ? "" : "s"}</span></td></tr>`;
     for (const n of gn) {
       const ps = n.processes || [];
@@ -356,7 +370,7 @@ function renderOverview() {
           <td>${p ? `<span class="st ${s}"><i></i>${s}</span>` : ""}${hh && hh !== "passing" ? ` <span class="chip ${hh === "critical" ? "bad" : "warn"}">${esc(hh)}</span>` : ""}</td>
           <td class="num mono ${p && p.restarts ? "" : "muted"}" ${p && p.restarts ? 'style="color:var(--bad);font-weight:600"' : ""}>${p ? p.restarts || 0 : ""}</td>
           <td class="role ${role.lead ? "lead" : ""}">${esc(role.text)}</td>
-          <td>${first && hv.length ? `<span class="chip ${pass === hv.length ? "ok" : "bad"}" title="Catalog health of this node's services">${pass}/${hv.length}</span>` : first && n.membersTotal ? `<span class="chip" title="LAN members alive / known">${n.membersAlive}/${n.membersTotal}</span>` : ""}</td></tr>`;
+          <td>${first && hv.length ? `<span class="chip ${pass === hv.length ? "ok" : "bad"}" title="Catalog health of this node's services">${pass}/${hv.length}</span>` : first && n.membersTotal ? `<span class="chip" title="LAN members alive / known">${n.membersAlive}/${n.membersTotal}</span>` : first && n.product === "vault" && n.state ? `<span class="chip ${n.state === "sealed" || n.state === "uninitialized" ? "bad" : "ok"}" title="Vault seal state and raft voters">${esc(n.state === "sealed" || n.state === "uninitialized" ? n.state : "unsealed" + (n.detail ? " · " + n.detail : ""))}</span>` : ""}</td></tr>`;
       });
     }
   }
@@ -367,10 +381,10 @@ function renderOverview() {
       <div class="card stat"><div class="k">Processes</div><div class="v">${ready}<small> / ${procs.length} ready</small></div>
         <div class="bar"><span style="width:${pct}%;background:var(--ok)"></span><span style="width:${100 - pct}%;background:${procs.length - ready ? "var(--bad)" : "transparent"}"></span></div>
         <div class="s">${procs.length - ready ? `${procs.length - ready} not ready` : "Everything is ready"}</div></div>
-      <div class="card stat"><div class="k">Nodes</div><div class="v">${nodes.length}<small> in ${dcs.length} datacenter${dcs.length === 1 ? "" : "s"}</small></div>
+      <div class="card stat"><div class="k">Nodes</div><div class="v">${nodes.length}<small> in ${dcs.length} ${place(dcs.length)}</small></div>
         <div class="s">${dcs.map((d) => `<span class="tag">${esc(d)} · ${nodes.filter((n) => dcOf(n) === d).length}</span>`).join("")}</div></div>
       <div class="card stat"><div class="k">Leader${leaders.length === 1 ? "" : "s"}</div><div class="v" style="font-size:16px;padding:4px 0 2px;line-height:1.35">${leaders.length ? leaders.map((l) => `<span class="mono" style="color:var(--accent)">${esc(l)}</span>`).join("<br>") : '<span class="muted">none yet</span>'}</div>
-        <div class="s">${leaders.length === dcs.length ? "Every datacenter has a leader" : `${dcs.length - leaders.length} datacenter${dcs.length - leaders.length === 1 ? "" : "s"} without a leader`}</div></div>
+        <div class="s">${leaders.length === dcs.length ? (vaultDCs.size ? "Every datacenter and cluster has a leader" : "Every datacenter has a leader") : `${dcs.length - leaders.length} ${place(dcs.length - leaders.length)} without a leader`}</div></div>
       <div class="card stat"><div class="k">Restarts</div><div class="v">${restarts}</div>
         <div class="s">${st.supervised ? "Restart policies are on" : "This daemon isn't supervising the lab"}</div></div>
     </div>
@@ -378,7 +392,7 @@ function renderOverview() {
     <div class="grid2">
       <div class="card">
         <div class="hd"><h3>Nodes and processes</h3><span class="chip">${procs.length} processes</span><div class="grow"></div></div>
-        <div class="tblwrap"><table class="tbl"><thead><tr><th>Node</th><th>IP</th><th>Process</th><th class="num">PID</th><th>State</th><th class="num">Restarts</th><th>Role</th><th>Consul</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="tblwrap"><table class="tbl"><thead><tr><th>Node</th><th>IP</th><th>Process</th><th class="num">PID</th><th>State</th><th class="num">Restarts</th><th>Role</th><th>Health</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
         <div class="card">
@@ -551,7 +565,7 @@ function openSection(nodeName, wrap) {
   const rows = links.map((l) => `<div class="app-row">
       <button class="app-l" data-act="open" data-sel="${esc(nodeName)}" data-port="${l.port}" data-scheme="${esc(l.scheme || "http")}" data-path="${esc(l.path || "/")}">
         <span><b>${esc(l.name)}</b><small>${esc(nodeName)}:${l.port}${esc(l.path || "/")}${l.scheme === "https" ? " · TLS" : ""}</small></span><span class="go" aria-hidden="true">↗</span></button>
-      ${l.token ? `<button class="btn sm ghost" data-act="copytoken" data-token="${esc(l.token)}" title="Copy the ACL token to sign in to the Consul UI">Copy token</button>` : ""}</div>`).join("");
+      ${l.token ? `<button class="btn sm ghost" data-act="copytoken" data-token="${esc(l.token)}" title="Copy the token to sign in to the UI">Copy token</button>` : ""}</div>`).join("");
   return wrap(`<div class="apps">${rows}</div>`);
 }
 
@@ -893,14 +907,14 @@ function renderTopology() {
     for (let i = 0; i + 1 < hops.length; i++) {
       // The segment into the first broken hop and everything after it are broken.
       const broken = bad >= 0 && i + 1 >= bad;
-      segs.push({ e, a: hops[i], b: hops[i + 1], broken, last: i + 2 === hops.length, mid: i === longest || (e.kind !== "wan" && e.kind !== "peering" && len(i) > 0), main: i === longest, badNode: bad >= 0 ? hops[bad] : "" });
+      segs.push({ e, a: hops[i], b: hops[i + 1], broken, last: i + 2 === hops.length, mid: i === longest || (e.kind !== "wan" && e.kind !== "peering" && e.kind !== "integration" && len(i) > 0), main: i === longest, badNode: bad >= 0 ? hops[bad] : "" });
     }
   }
   const pairN = {}, pairI = {};
   const pk = (s) => [s.a, s.b].sort().join("|");
   for (const s of segs) pairN[pk(s)] = (pairN[pk(s)] || 0) + 1;
 
-  const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
+  const color = (s) => (s.broken ? "var(--bad)" : ts.labDown ? "var(--line-2)" : s.e.kind === "wan" ? "var(--fed)" : s.e.kind === "peering" ? "var(--peer)" : s.e.kind === "integration" ? "var(--net)" : s.e.kind === "failover" ? "var(--fo)" : "var(--accent)");
   let svg = `<defs>${["accent", "bad", "line-2", "fo"].map((c) => `<marker id="ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join("")}</defs>`;
   let labels = "";
   const badges = new Set(), labelled = new Set(), lanes = [];
@@ -917,7 +931,7 @@ function renderTopology() {
     const fo = s.e.kind === "failover", live = fo && active(s.e);
     // A standby failover path is a quiet dashed line; it flows once it's live.
     const traffic = s.e.kind === "upstream" || s.e.kind === "route" || live;
-    const dash = s.e.kind === "wan" ? "5 5" : s.e.kind === "peering" ? "2 5" : fo && !live ? "1 5" : "";
+    const dash = s.e.kind === "wan" ? "5 5" : s.e.kind === "peering" ? "2 5" : s.e.kind === "integration" ? "8 4" : fo && !live ? "1 5" : "";
     if (traffic) svg += `<path d="${d}" fill="none" stroke="${c}" stroke-opacity=".16" stroke-width="7.4" stroke-linecap="round"/>`;
     const marker = (traffic || fo) && s.last ? `marker-end="url(#ah-${s.broken ? "bad" : ts.labDown ? "line-2" : fo ? "fo" : "accent"})"` : "";
     svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${traffic ? 2.4 : 1.8}" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ""} class="${traffic && !s.broken && !ts.labDown ? "flow" : ""}" ${marker}/>`;
@@ -984,7 +998,7 @@ function renderTopology() {
     const ico = graphRole(gn);
     const icon = ico === "srv" ? ICON.server : ico === "gw" ? ICON.gw : ico === "out" ? ICON.out : ICON.svc;
     const hs = { ok: "var(--ok)", warn: "var(--warn)", bad: "var(--bad)", down: "var(--line-2)" }[s];
-    const what = gn.role === "outside" ? "browsers, curl" : gn.role === "server" ? (n && n.role === "leader" ? "leader" : n && n.role === "follower" ? "follower" : "server")
+    const what = gn.role === "outside" ? "browsers, curl" : gn.product === "vault" ? (n && n.state ? n.state.replace("-", " ") : "vault") : gn.role === "server" ? (n && n.role === "leader" ? "leader" : n && n.role === "follower" ? "follower" : "server")
       : (gn.gateways || []).length ? gn.gateways.join(", ") : (gn.services || []).join(", ") || gn.role;
     const procs = (n && n.processes) || [];
     const pills = procs.slice(0, 4).map((pr) => {
@@ -1000,7 +1014,7 @@ function renderTopology() {
   }
 
   const layerBtn = (k, label, sw) => kinds.has(k) ? `<button data-layer="${k}" class="${T.layers[k] !== false ? "on" : ""}" aria-pressed="${T.layers[k] !== false}"><span class="sw" style="background:var(${sw})"></span>${label}</button>` : "";
-  const layerBtns = layerBtn("upstream", "Upstreams", "--accent") + layerBtn("failover", "Failover", "--fo") + layerBtn("wan", g.federation === "mesh-gateways" ? "WAN federation (mesh gateways)" : "WAN federation", "--fed") + layerBtn("peering", "Peering", "--peer");
+  const layerBtns = layerBtn("upstream", "Upstreams", "--accent") + layerBtn("failover", "Failover", "--fo") + layerBtn("wan", g.federation === "mesh-gateways" ? "WAN federation (mesh gateways)" : "WAN federation", "--fed") + layerBtn("peering", "Peering", "--peer") + layerBtn("integration", "Product links", "--net");
   const keep = $("#stage");
   v.innerHTML = `<div class="topo">
     <div class="stage" id="stage">
@@ -1013,6 +1027,7 @@ function renderTopology() {
         <span><i style="background:var(--bad)"></i>Failing</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--bad)"></em>Path broken</span>' : "<span></span>"}
         ${kinds.has("wan") && kinds.has("peering") ? '<span></span><span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : ""}
         ${kinds.has("failover") ? '<span></span><span><em style="border-color:var(--fo);border-top-style:dotted"></em>Failover (flows when used)</span>' : ""}
+        ${kinds.has("integration") ? '<span></span><span><em style="border-color:var(--net);border-top-style:dashed"></em>Product link</span>' : ""}
       </div>
       <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
     </div>
@@ -1052,16 +1067,16 @@ function topoPanel(g, ts) {
   const ico = graphRole(gn);
   const lab = encodeURIComponent(S.route.lab);
   const nodeHref = `#/lab/${lab}/node/${encodeURIComponent(gn.name)}`;
-  const kind = gn.role === "outside" ? "Clients outside the lab" : gn.role === "external" ? "External service" : gn.role === "server" ? "Consul server" : (gn.gateways || []).length ? gn.gateways.map((x) => x[0].toUpperCase() + x.slice(1)).join(", ") + " gateway"
+  const kind = gn.role === "outside" ? "Clients outside the lab" : gn.role === "external" ? "External service" : gn.product === "vault" ? "Vault server" : gn.role === "server" ? "Consul server" : (gn.gateways || []).length ? gn.gateways.map((x) => x[0].toUpperCase() + x.slice(1)).join(", ") + " gateway"
     : gn.role === "dataplane" ? "Dataplane node" : (gn.services || []).length ? "Service node" : gn.role === "client" ? "Client agent" : "Node";
   const ps = (n && n.processes) || [];
   const health = Object.entries((n && n.health) || {}).sort();
   const conn = (e, dir) => {
     const { bad } = edgeHealth(e, ts);
     const other = dir === "out" ? e.to : e.from;
-    const k = { upstream: dir === "out" ? "calls" : "called by", route: dir === "out" ? "routes to" : "routed from", failover: dir === "out" ? "fails over to" : "failover from", wan: "wan", peering: dir === "out" ? "peers with" : "peered from" }[e.kind] || e.kind;
+    const k = { upstream: dir === "out" ? "calls" : "called by", route: dir === "out" ? "routes to" : "routed from", failover: dir === "out" ? "fails over to" : "failover from", wan: "wan", peering: dir === "out" ? "peers with" : "peered from", integration: dir === "out" ? "uses" : "used by" }[e.kind] || e.kind;
     const via = (e.via || []).length ? `via ${e.via.join(" → ")}` : "";
-    return `<a href="#" data-tnode="${esc(other)}" class="${bad >= 0 ? "bad" : ""}"><span class="k" style="color:var(--${e.kind === "wan" ? "fed" : e.kind === "peering" ? "peer" : bad >= 0 ? "bad" : e.kind === "failover" ? "fo" : "accent"})">${esc(k)}</span><span class="mono">${esc(other)}${e.label && e.kind !== "wan" ? " · " + esc(e.label) : ""}</span>${via || bad >= 0 ? `<small>${esc(via)}${bad >= 0 ? `${via ? " · " : ""}<span style="color:var(--bad)">broken at ${esc(edgeHealth(e, ts).hops[bad])}: ${esc(problemOf(ts.byName.get(edgeHealth(e, ts).hops[bad])) || "failing")}</span>` : ""}</small>` : ""}</a>`;
+    return `<a href="#" data-tnode="${esc(other)}" class="${bad >= 0 ? "bad" : ""}"><span class="k" style="color:var(--${e.kind === "wan" ? "fed" : e.kind === "peering" ? "peer" : e.kind === "integration" ? "net" : bad >= 0 ? "bad" : e.kind === "failover" ? "fo" : "accent"})">${esc(k)}</span><span class="mono">${esc(other)}${e.label && e.kind !== "wan" ? " · " + esc(e.label) : ""}</span>${via || bad >= 0 ? `<small>${esc(via)}${bad >= 0 ? `${via ? " · " : ""}<span style="color:var(--bad)">broken at ${esc(edgeHealth(e, ts).hops[bad])}: ${esc(problemOf(ts.byName.get(edgeHealth(e, ts).hops[bad])) || "failing")}</span>` : ""}</small>` : ""}</a>`;
   };
   const outs = (g.edges || []).filter((e) => e.from === gn.name), ins = (g.edges || []).filter((e) => e.to === gn.name);
   const through = (g.edges || []).filter((e) => (e.via || []).includes(gn.name));

@@ -39,7 +39,7 @@ consul:
       servers: 1
       nodes:
         web: {servers: 3}
-`, []string{"consul.datacenters.dc1.nodes.web.servers: unknown key (servers belongs under consul.datacenters.<dc>)"}},
+`, []string{"consul.datacenters.dc1.nodes.web.servers: unknown key (servers belongs under consul.datacenters.<dc> or vault.clusters.<name>)"}},
 		{"old service_defaults name", `
 parker: v1alpha1
 consul:

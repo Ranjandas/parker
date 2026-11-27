@@ -43,6 +43,8 @@ type File struct {
 
 	// Consul is the high-level description: datacenters, nodes, services.
 	Consul *Consul `yaml:"consul,omitempty"`
+	// Vault describes Vault clusters, each on its own network.
+	Vault *Vault `yaml:"vault,omitempty"`
 
 	// Networks are extra low-level bridges, keyed by name.
 	Networks map[string]*Network `yaml:"networks,omitempty"`
@@ -125,6 +127,9 @@ type Step struct {
 	// LogLevel changes the log level of the Consul agents, Envoys and
 	// fake services on the nodes a selector matches, without a restart.
 	LogLevel *LogLevelStep `yaml:"log_level,omitempty"`
+	// Vault acts on Vault servers: seal, unseal or step_down, each a
+	// selector.
+	Vault *VaultStep `yaml:"vault,omitempty"`
 }
 
 // LogLevelStep changes running processes' log levels. With no level,
@@ -241,6 +246,8 @@ type Assert struct {
 	// Call sends one request to a fake service (run: fake-service) and
 	// checks the answer and the hops it went through.
 	Call *CallAssert `yaml:"call,omitempty"`
+	// Vault checks the state of Vault servers.
+	Vault *VaultAssert `yaml:"vault,omitempty"`
 	// Within is how long to keep retrying, e.g. 20s; default once.
 	Within string `yaml:"within,omitempty"`
 }
@@ -494,6 +501,8 @@ type Datacenter struct {
 	Meta map[string]string `yaml:"meta,omitempty"`
 	// Servers is the number of Consul servers, or {count, overrides}.
 	Servers Servers `yaml:"servers"`
+	// Connect sets up the service mesh's certificate authority.
+	Connect *DCConnect `yaml:"connect,omitempty"`
 
 	// Nodes besides the servers, keyed by name. A node runs a client agent
 	// by default, plus its services and processes.
@@ -513,6 +522,20 @@ type Datacenter struct {
 
 	// EntrySources say where each config entry came from; Load fills it.
 	EntrySources []EntrySource `yaml:"-" json:"-"`
+}
+
+// DCConnect is a datacenter's Connect (service mesh) settings.
+type DCConnect struct {
+	// CA is the certificate authority that signs the mesh's certificates.
+	CA *ConnectCA `yaml:"ca,omitempty"`
+}
+
+// ConnectCA picks the Connect CA provider.
+type ConnectCA struct {
+	// Vault makes a Vault cluster of the lab the CA (Vault's PKI secrets
+	// engine): Consul's servers join the cluster's network and mount
+	// their root and intermediate PKI paths in it.
+	Vault string `yaml:"vault,omitempty"`
 }
 
 // Partition is an Admin Partition (Consul Enterprise): Parker creates
@@ -1173,6 +1196,9 @@ type HTTPCheck struct {
 	URL string `yaml:"url"`
 	// Status expected; default 200.
 	Status int `yaml:"status,omitempty"`
+	// CAFile verifies an https:// URL's server with this CA; a relative
+	// path is in the node's directory.
+	CAFile string `yaml:"ca_file,omitempty"`
 }
 
 type ConsulCheck struct {
