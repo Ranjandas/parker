@@ -57,6 +57,7 @@ cluster both called `east`. That keeps [selectors](selectors.md) short:
 | `config` | | Merged into every server's configuration as is, in Vault's JSON form. |
 | `subnet` | `10.<64+n>.0.0/24`, or a free subnet when that one is in use | The cluster's LAN. An explicit subnet never moves. |
 | `seal` | | `{transit: CLUSTER}` auto-unseals the servers with another Vault cluster of the lab; see [Transit auto-unseal](#transit-auto-unseal). Leave it out to unseal with keys. |
+| `secrets` | | Secrets engines Parker sets up: `{consul: DC}` mints ACL tokens of a Consul datacenter; see [Consul secrets engine](#consul-secrets-engine). |
 | `meta` | | Metadata for the cluster's nodes, matched by [`meta:` selectors](selectors.md#every-selector). |
 
 `defaults:` takes `storage`, `register`, `ui`, `tls`, `log_level` and `config` for every
@@ -395,6 +396,58 @@ sys/                         system       system_34d9b279       system endpoints
 - Vault faults reach the mesh: seal or stop the cluster and Consul can't
   sign new certificates or rotate them.
 
+## Consul secrets engine
+
+`secrets: {consul: DC}` mounts the Consul secrets engine at `consul/`,
+configured with the management token of the lab's Consul datacenter
+`DC`, so Vault mints Consul ACL tokens. Parker adds one role,
+`management`, for tokens with the `global-management` policy; write
+your own roles for anything narrower. The datacenter needs
+`acl: true`.
+
+```yaml
+parker: v1alpha1
+name: vault-consul-secrets
+versions: { consul: 1.22.7, vault: 1.21.1 }
+consul:
+  datacenters:
+    dc1: { servers: 1, acl: true }
+vault:
+  clusters:
+    east:
+      secrets: { consul: dc1 }
+```
+
+```console
+$ parker exec vault-consul-secrets east/vault-1 -- vault read consul/creds/management
+Key                 Value
+---                 -----
+lease_id            consul/creds/management/BxHKPz2Z9SvMNV3EjU4pUDVv
+lease_duration      768h
+lease_renewable     true
+accessor            d7cad9c9-f065-f791-c986-1939a037626f
+consul_namespace    n/a
+local               false
+partition           n/a
+token               e79b9171-f734-5c3b-9b94-dbf6d9f772cd
+$ parker exec vault-consul-secrets east/vault-1 -- vault read consul/roles/management
+Key                 Value
+---                 -----
+consul_namespace    n/a
+consul_policies     [global-management]
+lease               0
+local               false
+max_ttl             0s
+partition           n/a
+token_type          client
+ttl                 0s
+```
+
+- The Vault servers join `DC`'s network to reach its first server,
+  over HTTPS with the lab CA when the datacenter has TLS.
+- Before Vault 1.11 the role is written with `policies` instead of
+  `consul_policies`.
+
 ## Old Vault releases
 
 Integrated storage needs Vault 1.4 or later, and `parker validate` refuses
@@ -412,4 +465,4 @@ vault:
 
 ## Limits
 
-- Replication, Enterprise builds, and the Consul secrets engine are planned.
+- Replication and Enterprise builds are planned.

@@ -68,8 +68,8 @@ const (
 	Failover = "failover"
 	// Integration: one product using another, from the user to the one
 	// it uses: a Consul dc's Connect CA in Vault, Vault's storage or
-	// service registration in Consul, a Vault cluster's transit seal in
-	// another. The label says which.
+	// service registration in Consul, its Consul secrets engine, a Vault
+	// cluster's transit seal in another. The label says which.
 	Integration = "integration"
 )
 
@@ -664,8 +664,8 @@ func Build(f *spec.File) *Graph {
 // integrations are the links between products, read from the agents'
 // configs: a Consul dc whose servers use a Vault cluster as their Connect
 // CA, a Vault cluster that keeps its data in a Consul dc or registers in
-// one, and a Vault cluster that auto-unseals with another's Transit
-// engine. One edge
+// one, a Vault cluster that auto-unseals with another's Transit engine,
+// and a Vault cluster that mints a dc's ACL tokens. One edge
 // per pair, between their first servers.
 func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edge {
 	byIP := map[string]string{}
@@ -722,6 +722,13 @@ func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edg
 			}
 			var cc struct {
 				Datacenter string `json:"datacenter"`
+			}
+			var is expand.VaultInitSpec
+			if m, ok := rn.Files[expand.VaultInitManifest]; ok && json.Unmarshal([]byte(m), &is) == nil && is.ConsulEngine != nil {
+				host, _, _ := strings.Cut(is.ConsulEngine.Address, ":")
+				if c := byIP[host]; c != "" {
+					add(firstServer(l.DC), firstServer(f.Nodes[c].Labels.DC), "secrets engine")
+				}
 			}
 			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil && vc.Seal.Transit != nil {
 				if u, err := url.Parse(vc.Seal.Transit.Address); err == nil {
