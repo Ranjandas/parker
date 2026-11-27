@@ -24,6 +24,7 @@ const BI = {
   up: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 11.5C5 11.5 5 4.5 8 4.5h5.5M11 2l2.5 2.5L11 7"/></svg>',
   peer: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="4.5" cy="8" r="2.5"/><circle cx="11.5" cy="8" r="2.5"/><path d="M7 8h2"/></svg>',
   ext: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.8" y="4.5" width="8.5" height="9" rx="1.5" stroke-dasharray="2 1.6"/><path d="M8 8.5l6-6M10.5 2.5h3.5V6"/></svg>',
+  vault: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="8" r="3"/><path d="M8 8h6.5M12 8v2.5M14.5 8v2"/></svg>',
   fed: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg>',
 };
 
@@ -31,7 +32,8 @@ const PALETTE = [
   ["Structure", [["dc", "Datacenter", "A Consul datacenter", "dc"], ["part", "Admin partition", "Groups nodes in a dc", "part", true]]],
   ["Consul", [["servers", "Server group", "servers: 1, 3 or 5", "server"], ["client", "Client node", "A client agent, no service", "client"], ["dp", "Dataplane node", "Agentless, consul-dataplane", "dp"]]],
   ["Services and mesh", [["svc", "Service", "fake-service with a sidecar", "svc"], ["mesh", "Mesh gateway", "Cross-dc, peering, partitions", "mesh"], ["ingress", "Ingress gateway", "North-south entry point", "ingress"], ["terminating", "Terminating gateway", "Reach services outside the mesh", "terminating"], ["api", "API gateway", "HTTP routes into the mesh", "api"], ["ext", "External service", "Outside Consul, in the catalog", "ext"]]],
-  ["Connections", [["up", "Upstream", "A service calls a service", "up"], ["peer", "Cluster peering", "Peer two datacenters or partitions", "peer"], ["fed", "WAN federation", "Federate the datacenters", "fed"]]],
+  ["Vault", [["vault", "Vault cluster", "Three servers on raft, unsealed for you", "vault"]]],
+  ["Connections", [["up", "Upstream", "A service calls a service", "up"], ["peer", "Cluster peering", "Peer two datacenters or partitions", "peer"], ["fed", "WAN federation", "Federate the datacenters", "fed"], ["vlink", "Vault link", "Connect CA, storage, registration, auto-unseal", "vault"]]],
 ];
 
 const SVC_NAMES = ["web", "api", "billing", "orders", "cart", "search", "auth", "ledger", "inventory", "payments"];
@@ -101,7 +103,7 @@ function bEdit(fn) {
   let msg;
   try { msg = fn(BL.m); } catch (e) { BL.m = JSON.parse(before); toast(e.message); return false; }
   if (JSON.stringify(BL.m) !== before) { BL.undo.push(before); if (BL.undo.length > 100) BL.undo.shift(); BL.redo = []; bSave(); }
-  if (msg && msg !== "pick") toast(msg);
+  if (msg && msg !== "pick" && msg !== "vpick") toast(msg);
   bRender();
   return msg;
 }
@@ -112,7 +114,7 @@ function bEditFile(fn) {
   const before = JSON.stringify(BL.m);
   let msg, ops;
   try { msg = fn(BL.m); ops = Build.diffOps(JSON.parse(before), BL.m, src); } catch (e) { BL.m = JSON.parse(before); toast(e.message); bRender(); return false; }
-  if (msg && msg !== "pick") toast(msg);
+  if (msg && msg !== "pick" && msg !== "vpick") toast(msg);
   bRender();
   if (!ops.length) return msg;
   const text = BL.file.text;
@@ -213,7 +215,7 @@ function bRender() {
   if (sb) { sb.innerHTML = `Scenario${n ? ` <span class="faint mono">${n}</span>` : ""}`; sb.classList.toggle("on", BL.sel === "scenario"); }
 }
 
-const bLabel = (id) => { const f = Build.find(BL.m, id); return f ? (f.node || f.gw || f.ext || f.part || f.dc || {}).name || "it" : "it"; };
+const bLabel = (id) => { const f = Build.find(BL.m, id); return f ? (f.node || f.gw || f.ext || f.part || f.vault || f.dc || {}).name || "it" : "it"; };
 
 // ---------- canvas ----------
 const DCW = 288, GAP = 76, X0 = 28, Y0 = 112, CW = 236, CH = 48, ROW = 60;
@@ -250,6 +252,13 @@ function bLayout() {
     exts.forEach((e) => { P.it[e.id] = { x: x + (DCW - CW) / 2, y, w: CW }; y += ROW; });
     P.ext = { x, y: Y0, w: DCW, h: Math.max(330, y - Y0 + 70) };
   }
+  // Vault clusters: a region each, after the datacenters.
+  P.vault = {};
+  (BL.m.vaults || []).forEach((v, i) => {
+    const x = X0 + (BL.m.dcs.length + (P.ext ? 1 : 0) + i) * (DCW + GAP);
+    P.vault[v.id] = { x, y: Y0, w: DCW, h: 330 };
+    P.it[v.id] = { x: x + (DCW - CW) / 2, y: Y0 + 30, w: CW };
+  });
   return P;
 }
 
@@ -313,8 +322,17 @@ function bCanvas() {
       h += bCard(x.id, P.it[x.id], BI.ext, "ext", x.name, `:${x.port} · ${regs.length ? "in " + regs.join(", ") : "not registered"}${Build.extNs(m, x) ? ` · ns ${Build.extNs(m, x)}` : ""}${fos.length ? " · failover" : ""}`, { port: true, bad: problems.has(x.id) });
     }
   }
-  const ax = X0 + (m.dcs.length + (P.ext ? 1 : 0)) * (DCW + GAP);
+  const vaults = m.vaults || [];
+  for (const v of vaults) {
+    const r = P.vault[v.id];
+    const store = v.storage === "consul" ? `Consul storage (${(Build.dcById(m, v.store) || {}).name || "?"})` : v.storage;
+    h += `<div class="breg ${BL.sel === v.id ? "sel" : ""} ${BL.from === v.id ? "linksrc" : ""} ${problems.has(v.id) ? "bad" : ""}" data-bid="${v.id}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px">
+      <div class="lbl" data-bid="${v.id}" tabindex="0" role="button">${bOrigin(v.id) === "import" ? '<i class="otag" title="From an import">🔒</i>' : ""}${esc(v.name)}<span>Vault · ${v.servers} server${v.servers > 1 ? "s" : ""}</span><span class="port dcport" data-port="${v.id}" title="Drag to a datacenter or another Vault cluster to link them"></span></div></div>`;
+    h += bCard(v.id, P.it[v.id], BI.vault, "srv", v.servers > 1 ? `vault-1 … vault-${v.servers}` : "vault-1", v.dev ? "dev mode, in memory" : `${store}${v.tls ? " · TLS" : ""}${v.transit ? " · auto-unseal" : ""}`, { bad: problems.has(v.id) });
+  }
+  const ax = X0 + (m.dcs.length + (P.ext ? 1 : 0) + vaults.length) * (DCW + GAP);
   const maxH = Math.max(330, ...m.dcs.map((d) => P.dc[d.id].h), P.ext ? P.ext.h : 0);
+  for (const v of vaults) P.vault[v.id].h = maxH;
   h += `<div class="adddc" data-drop="new" style="left:${ax}px;top:${Y0}px;width:190px;height:${maxH}px">${BI.dc}<span>Drop a Datacenter</span></div>`;
   const W = ax + 230, H = Y0 + maxH + 60;
 
@@ -337,6 +355,24 @@ function bCanvas() {
     const lift = 78 + i * 14;
     s += `<path d="M${x1 + 30},${y1} C${x1 + 30},${y1 - lift} ${x2 - 30},${y1 - lift} ${x2 - 30},${y1}" fill="none" stroke="var(--peer)" stroke-width="2" ${BL.sel === p.id ? 'stroke-width="3"' : ""}/>`;
     labels.push(pill((x1 + x2) / 2, y1 - lift * 0.75, `peering ${Build.peeringName(m, p)}`, "peer", p.id));
+  });
+  // Vault's links: dashed arcs over the regions, from the user to the one
+  // it uses.
+  const vtop = (v) => { const r = P.vault[v.id]; return [r.x + r.w / 2, r.y]; };
+  const plinks = [];
+  for (const d of m.dcs) { const v = d.ca && Build.vaultById(m, d.ca); if (v) plinks.push([top(d), vtop(v), "Connect CA", v.id]); }
+  for (const v of vaults) {
+    const dto = (id, text) => { const d = Build.dcById(m, id); if (d) plinks.push([vtop(v), top(d), text, v.id]); };
+    if (v.storage === "consul") dto(v.store, "Consul storage");
+    if (v.reg && v.storage !== "consul") dto(v.reg, "registered");
+    if (v.secrets) dto(v.secrets, "secrets engine");
+    const t = v.transit && Build.vaultById(m, v.transit);
+    if (t) plinks.push([vtop(v), vtop(t), "auto-unseal", v.id]);
+  }
+  plinks.forEach(([[x1, y1], [x2], text, id], i) => {
+    const lift = 46 + (i % 4) * 34, o = x2 > x1 ? 16 : -16;
+    s += `<path d="M${x1 + o},${y1} C${x1 + o},${y1 - lift} ${x2 - o},${y1 - lift} ${x2 - o},${y1}" fill="none" stroke="var(--ink-2)" stroke-width="1.6" stroke-dasharray="7 4" marker-end="url(#bah-ink-2)"${BL.sel === id ? ' stroke-opacity="1"' : ' stroke-opacity=".75"'}/>`;
+    labels.push(pill((x1 + x2) / 2, y1 - lift * 0.75, text, "ink-2", id));
   });
   const mid = (r) => [r.x + r.w / 2, r.y + CH / 2];
   const curve = (A, B, side) => {
@@ -380,7 +416,14 @@ function bCanvas() {
   }
   s += `<path id="blinkline" d="" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4"/></svg>`;
   let pick = "";
-  if (BL.pick) {
+  if (BL.pick && BL.pick.vault) {
+    const v = Build.vaultById(m, BL.pick.a), d = Build.dcById(m, BL.pick.b);
+    pick = `<div class="card bpick" style="left:${BL.pick.x}px;top:${BL.pick.y}px"><div class="hd"><h3>How ${esc(v.name)} uses ${esc(d.name)}</h3></div>
+      <button data-vjoin="reg">${BI.svc}<span><b>Register in ${esc(d.name)}</b><small>The vault service, tagged active or standby</small></span></button>
+      <button data-vjoin="store">${BI.server}<span><b>Consul storage</b><small>Keeps its data in ${esc(d.name)}'s KV, as before raft</small></span></button>
+      <button data-vjoin="secrets">${BI.vault}<span><b>Consul secrets engine</b><small>Mints ${esc(d.name)}'s ACL tokens; turns ACLs on</small></span></button>
+      <button data-vjoin="" class="cancel"><span>Cancel</span></button></div>`;
+  } else if (BL.pick) {
     const a = Build.dcById(m, BL.pick.a), b = Build.dcById(m, BL.pick.b);
     pick = `<div class="card bpick" style="left:${BL.pick.x}px;top:${BL.pick.y}px"><div class="hd"><h3>Join ${esc(a.name)} and ${esc(b.name)}</h3></div>
       <button data-join="peering">${BI.peer}<span><b>Cluster peering</b><small>${esc(a.name)} dials, ${esc(b.name)} accepts and exports</small></span></button>
@@ -434,6 +477,7 @@ function bInspector() {
       fld("Consul", vlist("consul", m.consul, ((BL.versions && BL.versions.releases) || []).map((r) => r.consul)), "", "bf-consul",
         [Build.ent(m) ? "Partitions and namespaces need Consul Enterprise; the YAML pins the +ent build." : "", "Pick a release or type any version (or path:/my/build)."].filter(Boolean).join(" ")) +
       fld("Envoy", vlist("envoy", m.envoy, envoyChoices(m)), "", "bf-envoy", Build.envoyNote(m, BL.versions)) +
+      ((m.vaults || []).length ? fld("Vault", vlist("vaultv", m.vault, [Build.VERSIONS.vault]), "", "bf-vaultv", "Type any release (1.4 or later for raft), or path:/my/build.") : "") +
       fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_template connect: sidecar).") +
       fld("TLS", seg("tls", yes, m.tls), sdoc("Inheritable", "tls")) +
       fld("ACLs", seg("acl", yes, m.acl), sdoc("Inheritable", "acl"), "", m.acl ? "The builder writes the intentions each call needs." : "") +
@@ -444,6 +488,7 @@ function bInspector() {
     body = fld("Name", txt("name", d.name), "", "bf-name") +
       fld("Servers", stepper("servers", d.servers), sdoc("Datacenter", "servers"), "", d.servers % 2 ? "" : "An even number of servers can't break a tie; use 1, 3 or 5.") +
       fld("Web UI", seg("ui", yes, d.ui), sdoc("Datacenter", "ui")) +
+      ((m.vaults || []).length ? fld("Connect CA", `<select data-f="dcca" id="bf-dcca"><option value="">Consul's own</option>${m.vaults.map((v) => `<option value="${v.id}" ${d.ca === v.id ? "selected" : ""}>Vault: ${esc(v.name)}</option>`).join("")}</select>`, sdoc("ConnectCA", "vault"), "bf-dcca") : "") +
       bEntries(d, "", d.parts.length ? "Entries (default)" : "") +
       `<div class="row-btns"><button class="btn sm" data-bact="linkfrom">${BI.peer}Federate or peer…</button><button class="btn sm danger" data-bact="remove">Remove ${esc(d.name)}</button></div>`;
   } else if (f.t === "part") {
@@ -497,6 +542,24 @@ function bInspector() {
       x.in.map((r) => bFailFld(x.id, r.dc, r.part, `From ${esc(Build.sideName(m, r.dc, r.part))}`)).join("") +
       `<div class="hint">One node outside Consul, with no agent, on the LAN of every datacenter that registers it. Each registers it on an external node that Parker health-checks from server-1, as consul-esm would. The mesh reaches it through a terminating gateway.</div>` +
       `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(x.name)}</button></div>`;
+  } else if (f.t === "vault") {
+    const v = f.vault;
+    title = `Vault cluster · ${esc(v.name)}`; where = "vault";
+    const dcOpts = (cur, none) => `<option value="">${none}</option>` + m.dcs.map((d) => `<option value="${d.id}" ${cur === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+    const storeOpts = [["raft", "raft (integrated)"], ["file", "file (one server)"], ...m.dcs.map((d) => ["consul:" + d.id, `Consul storage in ${d.name}`])];
+    const curStore = v.storage === "consul" ? "consul:" + v.store : v.storage;
+    const others = m.vaults.filter((x) => x !== v);
+    body = fld("Name", txt("name", v.name), "", "bf-name", "Datacenters and Vault clusters share names: east/vault-2 needs no prefix.") +
+      fld("Servers", stepper("vservers", v.servers), sdoc("VaultCluster", "servers")) +
+      fld("Dev mode", seg("vdev", yes, v.dev), sdoc("VaultCluster", "dev")) +
+      (v.dev ? "" :
+        fld("TLS", seg("vtls", yes, v.tls), sdoc("VaultSettings", "tls")) +
+        fld("Storage", `<select data-f="vstore" id="bf-vstore">${storeOpts.map(([x, l]) => `<option value="${x}" ${curStore === x ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`, sdoc("VaultSettings", "storage"), "bf-vstore") +
+        (m.dcs.length && v.storage !== "consul" ? fld("Register in", `<select data-f="vreg" id="bf-vreg">${dcOpts(v.reg, "nowhere")}</select>`, sdoc("VaultSettings", "register"), "bf-vreg") : "") +
+        (others.length ? fld("Auto-unseal", `<select data-f="vtransit" id="bf-vtransit"><option value="">no: Parker unseals with keys</option>${others.map((x) => `<option value="${x.id}" ${v.transit === x.id ? "selected" : ""}>transit in ${esc(x.name)}</option>`).join("")}</select>`, sdoc("VaultSeal", "transit"), "bf-vtransit") : "") +
+        (m.dcs.length ? fld("Consul secrets", `<select data-f="vsecrets" id="bf-vsecrets">${dcOpts(v.secrets, "off")}</select>`, sdoc("VaultSecrets", "consul"), "bf-vsecrets", v.secrets ? "Mint tokens with vault read consul/creds/management." : "") : "")) +
+      `<div class="hint">Parker initialises the cluster, unseals every server and keeps the root token: parker exec on a server sets VAULT_ADDR and VAULT_TOKEN.</div>` +
+      `<div class="row-btns"><button class="btn sm" data-bact="linkfrom">${BI.vault}Link…</button><button class="btn sm danger" data-bact="remove">Remove ${esc(v.name)}</button></div>`;
   } else if (f.t === "peering") {
     const p = f.peering, a = Build.dcById(m, p.acceptor), d = Build.dcById(m, p.dialer);
     title = `Peering · ${esc(Build.peeringName(m, p))}`;
@@ -600,13 +663,13 @@ function bEntryDialog(sk, i, e) {
 }
 
 // ---------- scenario ----------
-const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", exec: "Check a command" };
+const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", seal: "Seal", unseal: "Unseal", stepdown: "Step down", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", unsealed: "Check unsealed", exec: "Check a command" };
 // bStepKinds lists the steps that fit a thing.
 const bStepKinds = (id) => Object.keys(STEP_LABEL).filter((k) => Build.stepFor(BL.m, id, k));
 function bStepBtns(id) {
   const ks = bStepKinds(id);
   if (!ks.length) return "";
-  const faults = ks.filter((k) => Build.FAULTS.includes(k) || k === "fault" || k === "unfault"), checks = ks.filter((k) => !faults.includes(k));
+  const faults = ks.filter((k) => Build.FAULTS.includes(k) || ["fault", "unfault", "seal", "unseal", "stepdown"].includes(k)), checks = ks.filter((k) => !faults.includes(k));
   const row = (l) => l.map((k) => `<button class="btn sm" data-step="${k}" data-sid="${esc(id)}">${STEP_LABEL[k]}</button>`).join("");
   return `<div class="fld" style="align-items:start">${flbl("Scenario", "", `Adds a step on ${Build.sel(BL.m, id)} to the lab's scenario. Right-click it on the canvas for the same steps.`)}<div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}</div></div>`;
 }
@@ -634,7 +697,7 @@ function bScenario() {
       <button class="x" data-f="smove" data-i="${i}" data-v="-1" title="Up" ${i ? "" : "disabled"}>↑</button><button class="x" data-f="smove" data-i="${i}" data-v="1" title="Down" ${i + 1 < steps.length ? "" : "disabled"}>↓</button><button class="x" data-f="srm" data-i="${i}" title="Remove">✕</button></div>
       ${open && ok ? `<div class="sb"><label class="sf"><span>name</span><input data-f="sname" data-i="${i}" value="${esc(st.name || "")}" placeholder="${esc(Build.stepText(st))}" spellcheck="false"></label>${fields}</div>` : ""}</div>`;
   }).join("");
-  const dcs = m.dcs.map((d) => `<button class="btn sm" data-step="wait" data-sid="${esc(d.id)}">Wait for ${esc(d.name)}</button>`).join("");
+  const dcs = [...m.dcs, ...(m.vaults || [])].map((d) => `<button class="btn sm" data-step="wait" data-sid="${esc(d.id)}">Wait for ${esc(d.name)}</button>`).join("");
   return `<div class="hd"><h3>Scenario</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${steps.length} step${steps.length === 1 ? "" : "s"}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">
     ${m.named ? `<div class="hint onote">The file has named scenarios: too. This edits scenario:; edit the others in the YAML pane.</div>` : ""}
     <div class="bsteps">${list || '<div class="hint">No steps yet. Select a node, gateway or service and use its Scenario buttons, or right-click it on the canvas.</div>'}</div>
@@ -711,6 +774,7 @@ function bField(el) {
       if (f === "name") { if (!Build.NAME_RE.test(v)) throw new Error("Use lowercase letters, digits and single hyphens."); m.name = v; }
       else if (f === "consul") { if (v.trim()) Build.setConsul(m, v.trim(), BL.versions); }
       else if (f === "envoy") m.envoy = v.trim() || m.envoy;
+      else if (f === "vaultv") m.vault = v.trim() || m.vault;
       else if (f === "mesh" || f === "tls" || f === "acl") m[f] = v === "true";
       else if (f === "fed") { if (v) return Build.joinDCs(m, m.dcs[0].id, m.dcs[1].id, v); m.fed = ""; }
       return;
@@ -738,7 +802,23 @@ function bField(el) {
       if (f === "fotimeout") { const x = v.trim(); if (x && !/^\d+(\.\d+)?(ms|s|m)$/.test(x)) throw new Error("A duration, e.g. 2s or 500ms."); fo.timeout = x; }
       return;
     }
+    if (t.t === "vault") {
+      const x = t.vault;
+      if (f === "vservers") x.servers = Math.max(1, Math.min(7, x.servers + +v));
+      if (f === "vdev") { x.dev = v === "true"; if (x.dev) { x.servers = 1; x.storage = "raft"; x.store = ""; x.reg = ""; x.transit = ""; x.secrets = ""; x.tls = false; } }
+      if (f === "vtls") x.tls = v === "true";
+      if (f === "vstore") {
+        if (v.startsWith("consul:")) return Build.joinVault(m, x.id, v.slice(7), "store");
+        x.storage = v; x.store = "";
+        if (v === "file") x.servers = 1;
+      }
+      if (f === "vreg") x.reg = v;
+      if (f === "vtransit") { if (v) return Build.link(m, x.id, v); x.transit = ""; }
+      if (f === "vsecrets") { if (v) return Build.joinVault(m, x.id, v, "secrets"); x.secrets = ""; }
+      return;
+    }
     if (t.t === "dc") {
+      if (f === "dcca") { if (v) return Build.joinVault(m, v, t.dc.id, "ca"); t.dc.ca = ""; return; }
       if (f === "servers") t.dc.servers = Math.max(1, Math.min(7, t.dc.servers + +v));
       if (f === "ui") t.dc.ui = v === "true";
     } else if (t.t === "node") {
@@ -786,9 +866,10 @@ function bField(el) {
 // ---------- adding ----------
 function bAdd(kind, dcId, pid) {
   BL.pick = null;
-  if (kind === "up" || kind === "peer" || kind === "fed") {
+  if (kind === "up" || kind === "peer" || kind === "fed" || kind === "vlink") {
     bMode("link");
     toast(kind === "up" ? "Click the calling service, then the one it calls. Or drag from a service's dot."
+      : kind === "vlink" ? "Click a Vault cluster, then a datacenter (storage, registration, secrets) or another cluster (auto-unseal); or a datacenter, then a cluster (its Connect CA). Or drag from a dot."
       : kind === "peer" ? "Click one datacenter or partition, then one in another datacenter. Or drag from a datacenter's dot onto the other side."
       : "Click one datacenter, then the other. Or drag from a datacenter's dot.");
     return;
@@ -811,6 +892,15 @@ function bAdd(kind, dcId, pid) {
       const d = Build.dcById(m, dcId);
       if (d) return `Added the external service ${name}. ` + Build.register(m, x, d, pid || "") + " Link a terminating gateway to it.";
       return `Added the external service ${name}. Link a terminating gateway to it, or link it to a datacenter, to register it.`;
+    }
+    if (kind === "vault") {
+      const used = new Set([...m.dcs.map((d) => d.name), ...m.vaults.map((v) => v.name)]);
+      let name = ["east", "west", "unsealer", "central"].find((x) => !used.has(x));
+      for (let i = 2; !name; i++) if (!used.has("vault-" + i)) name = "vault-" + i;
+      const v = Build.vault(name, 3);
+      m.vaults.push(v);
+      BL.sel = v.id; BL.fresh = v.id;
+      return `Added the Vault cluster ${name}: three servers on raft, initialised and unsealed by Parker. Link it to a datacenter or another cluster.`;
     }
     if (dcId === "ext") throw new Error("Only external services go outside Consul; drop that into a datacenter.");
     const d = Build.dcById(m, dcId) || m.dcs[0];
@@ -852,9 +942,9 @@ function bLink(from, to, at) {
     return Build.link(m, a, b);
   });
   BL.from = "";
-  if (r === "pick") {
+  if (r === "pick" || r === "vpick") {
     const a = from.replace(/^srv:/, ""), b = to.replace(/^srv:/, "");
-    BL.pick = { a, b, x: at[0], y: at[1] };
+    BL.pick = { a, b, x: at[0], y: at[1], vault: r === "vpick" };
     bCanvas();
   } else bRender();
 }
@@ -1188,6 +1278,8 @@ function bBind() {
     const sb = t.closest("[data-step]");
     if (sb) { if (sb.dataset.step) bAddStep(sb.dataset.step, sb.dataset.sid); else { BL.menu = null; bCanvas(); } return; }
     if (BL.menu && !t.closest(".bmenu")) { BL.menu = null; bCanvas(); }
+    const vj = t.closest("[data-vjoin]");
+    if (vj) { const p = BL.pick; BL.pick = null; if (vj.dataset.vjoin) bEdit((m) => Build.joinVault(m, p.a, p.b, vj.dataset.vjoin)); else bCanvas(); return; }
     const jn = t.closest("[data-join]");
     if (jn) { const p = BL.pick; BL.pick = null; if (jn.dataset.join) bEdit((m) => Build.joinDCs(m, p.a, p.b, jn.dataset.join)); else bCanvas(); return; }
     const fb = t.closest("button[data-f]");
@@ -1268,7 +1360,7 @@ function bBind() {
     e.preventDefault();
     z.classList.remove("hot");
     const k = e.dataTransfer.getData("text/x-parker") || e.dataTransfer.getData("text/plain");
-    if (z.dataset.drop === "new") { if (k === "dc") bAdd("dc"); else toast("Drop that into a datacenter."); return; }
+    if (z.dataset.drop === "new") { if (k === "dc" || k === "vault") bAdd(k); else toast("Drop that into a datacenter."); return; }
     const [dcId, pid] = z.dataset.drop.split(":");
     bAdd(k, dcId, pid);
   });

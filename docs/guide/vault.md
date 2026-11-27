@@ -288,6 +288,9 @@ vault-east/sys/
   variables, so `vault` and `consul` both work there.
 - The servers stay in their cluster for [selectors](selectors.md)
   (`east/vault-1`); `dc1` doesn't match them.
+- The datacenter can't also use the cluster as its
+  [Connect CA](#vault-as-the-connect-ca): each would wait for the
+  other to start.
 
 Faults on the datacenter reach Vault: stop its servers, or partition a
 Vault server from them, and Vault loses its storage and its lock.

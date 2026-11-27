@@ -12,7 +12,7 @@
 (function (root) {
   // The newest release pins Parker knows (compat.Releases[0]); the daemon's
   // /ui/versions lists the rest.
-  const VERSIONS = { consul: "2.1.0", envoy: "1.39.1", dataplane: "2.1.0" };
+  const VERSIONS = { consul: "2.1.0", envoy: "1.39.1", dataplane: "2.1.0", vault: "1.21.1" };
   const KINDS = ["mesh", "ingress", "terminating", "api"];
   // A gateway's default node name per kind (api gateways are often "edge").
   const GW_NAME = { mesh: "mesh", ingress: "ingress", terminating: "terminating", api: "edge" };
@@ -48,12 +48,19 @@
   //   or ext id) to the same service in each side of to, in order.
   // scenario: null or the file's scenario: as is ({steps: [...], ...}).
   //   named: the file has scenarios: too (the builder edits scenario: only)
+  // vault: {id, name, servers, dev, tls, storage, store, reg, transit, secrets}
+  //   a Vault cluster. storage: "raft" | "file" | "consul" (store: the dc
+  //   id that keeps its data); reg: dc id it registers in; transit: the
+  //   vault id it auto-unseals with; secrets: dc id of its Consul secrets
+  //   engine. dc.ca: the vault id that is the dc's Connect CA.
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
   function lab(name) {
-    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [], fails: [] };
+    return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, vault: VERSIONS.vault, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [], fails: [], vaults: [] };
   }
+  function vault(name, servers) { return { id: uid("v"), name, servers: servers || 1, dev: false, tls: false, storage: "raft", store: "", reg: "", transit: "", secrets: "" }; }
+  const vaultById = (m, id) => (m.vaults || []).find((v) => v.id === id);
   function dc(name, servers) { return { id: uid("d"), name, servers: servers || 1, ui: false, parts: [], nodes: [], gws: [] }; }
   function node(name, port, opts) {
     const o = opts || {};
@@ -73,6 +80,7 @@
     for (const p of m.peerings) if (p.id === id) return { t: "peering", peering: p };
     for (const x of m.exts || []) if (x.id === id) return { t: "ext", ext: x };
     for (const x of m.fails || []) if (x.id === id) return { t: "fail", fail: x };
+    for (const v of m.vaults || []) if (v.id === id) return { t: "vault", vault: v };
     return null;
   }
   const dcById = (m, id) => m.dcs.find((d) => d.id === id);
@@ -300,6 +308,7 @@
   function link(m, fromId, toId) {
     const a = find(m, fromId), b = find(m, toId);
     if (!a || !b || fromId === toId) throw new Error("Pick two different things to link.");
+    if (a.t === "vault" || b.t === "vault") return linkVault(m, a, b);
     if (a.t === "ext" && b.t === "ext") throw new Error("External services don't call each other through Consul.");
     // An external service with a datacenter or partition: it registers there.
     if ((a.t === "ext" && (b.t === "dc" || b.t === "part")) || (b.t === "ext" && (a.t === "dc" || a.t === "part"))) {
@@ -373,6 +382,50 @@
       return joinDCs(m, a.t === "part" ? a.part.id : a.dc.id, b.t === "part" ? b.part.id : b.dc.id, "peering");
     }
     throw new Error("Link a service to a service it calls, a gateway to a service, an external service to where it registers, or two datacenters (or partitions in two datacenters).");
+  }
+
+  // linkVault links a Vault cluster: to another one, it auto-unseals with
+  // it; a datacenter to a cluster makes it the dc's Connect CA; a cluster
+  // to a datacenter asks how it uses it ("vpick").
+  function linkVault(m, a, b) {
+    const dcOf = (x) => (x.t === "dc" || x.t === "part" ? x.dc : null);
+    if (a.t === "vault" && b.t === "vault") {
+      const v = a.vault, t = b.vault;
+      if (t.transit === v.id) throw new Error(`${t.name} auto-unseals with ${v.name}, so ${v.name} can't auto-unseal with ${t.name}.`);
+      v.transit = t.id;
+      return `${v.name} auto-unseals with a key in ${t.name}'s Transit secrets engine.`;
+    }
+    if (dcOf(a) && b.t === "vault") return joinVault(m, b.vault.id, dcOf(a).id, "ca");
+    if (a.t === "vault" && dcOf(b)) return "vpick";
+    throw new Error("Link a Vault cluster to another one (auto-unseal), to a datacenter (Consul storage, registration or the Consul secrets engine), or a datacenter to a Vault cluster (its Connect CA).");
+  }
+  // joinVault wires a Vault cluster to a datacenter: how is ca (the dc's
+  // Connect CA), store (Consul storage), reg (registers in the dc) or
+  // secrets (the Consul secrets engine).
+  function joinVault(m, vId, dcId, how) {
+    const v = vaultById(m, vId), d = dcById(m, dcId);
+    if (!v || !d) throw new Error("Pick a Vault cluster and a datacenter.");
+    if (how === "ca") {
+      if (v.storage === "consul" && v.store === d.id) throw new Error(`${v.name} keeps its data in ${d.name}, so it can't be ${d.name}'s Connect CA too: each would wait for the other.`);
+      d.ca = v.id; return `${d.name}'s Connect CA is now ${v.name}, through Vault's PKI secrets engine.`; }
+    if (how === "store") {
+      if (d.ca === v.id) throw new Error(`${v.name} is ${d.name}'s Connect CA, so it can't keep its data in ${d.name} too: each would wait for the other.`);
+      if (v.dev) throw new Error(`${v.name} runs in dev mode, in memory; turn dev off first.`);
+      v.storage = "consul"; v.store = d.id; v.reg = "";
+      return `${v.name} keeps its data in ${d.name}, through a Consul client agent beside each server. That registers it in ${d.name} too.`;
+    }
+    if (how === "reg") {
+      if (v.storage === "consul") throw new Error(`${v.name} keeps its data in Consul, which registers it already.`);
+      v.reg = d.id;
+      return `${v.name} registers in ${d.name} as the vault service, tagged active or standby.`;
+    }
+    if (how === "secrets") {
+      v.secrets = d.id;
+      const note = m.acl ? "" : " The engine mints ACL tokens, so that turned ACLs on.";
+      m.acl = true;
+      return `${v.name} mints ${d.name}'s ACL tokens at consul/creds/management.${note}`;
+    }
+    throw new Error("unknown link " + how);
   }
 
   // joinHint says how to let a call between two sides through.
@@ -458,6 +511,16 @@
       m.exts = m.exts.filter((x) => x.id !== id);
     } else if (f.t === "fail") {
       m.fails = m.fails.filter((x) => x.id !== id);
+    } else if (f.t === "vault") {
+      m.vaults = m.vaults.filter((v) => v.id !== id);
+      for (const v of m.vaults) if (v.transit === id) v.transit = "";
+      for (const d of m.dcs) if (d.ca === id) d.ca = "";
+    }
+    // Vault's links to a removed datacenter go with it.
+    if (f.t === "dc") for (const v of m.vaults || []) {
+      if (v.store === id) { v.storage = "raft"; v.store = ""; }
+      if (v.reg === id) v.reg = "";
+      if (v.secrets === id) v.secrets = "";
     }
     // Registrations in a removed datacenter or partition go with it.
     if (f.t === "dc" || f.t === "part") for (const x of m.exts || []) x.in = x.in.filter((r) => r.dc !== id && r.part !== id);
@@ -472,7 +535,7 @@
   function rename(m, id, name) {
     const f = find(m, id);
     name = String(name || "").trim();
-    const before = sel(m, id), oldName = f && (f.dc && f.t === "dc" ? f.dc : f.node || f.gw || f.ext || f.part || {}).name;
+    const before = sel(m, id), oldName = f && (f.dc && f.t === "dc" ? f.dc : f.node || f.gw || f.ext || f.part || f.vault || {}).name;
     renameOnly(m, f, name);
     const after = sel(m, id);
     retarget(m, before, after, (f.t === "node" && f.node.svc) || f.t === "ext" ? [oldName, name] : null);
@@ -481,8 +544,13 @@
   }
   function renameOnly(m, f, name) {
     if (!NAME_RE.test(name)) throw new Error("Use lowercase letters, digits and single hyphens.");
-    if (f.t === "dc") {
-      if (m.dcs.some((d) => d !== f.dc && d.name === name)) throw new Error(`There's a ${name} already.`);
+    // Datacenters and Vault clusters share one name space.
+    const taken = (self) => m.dcs.some((d) => d !== self && d.name === name) || (m.vaults || []).some((v) => v !== self && v.name === name);
+    if (f.t === "vault") {
+      if (taken(f.vault)) throw new Error(`There's a ${name} already; datacenters and Vault clusters share names.`);
+      f.vault.name = name;
+    } else if (f.t === "dc") {
+      if (taken(f.dc)) throw new Error(`There's a ${name} already.`);
       f.dc.name = name;
     } else if (f.t === "part") {
       if (name === "default" || f.dc.parts.some((p) => p !== f.part && p.name === name)) throw new Error(`There's a partition ${name} already.`);
@@ -509,6 +577,7 @@
     const f = find(m, id);
     if (!f) return "";
     if (f.t === "ext") return f.ext.name;
+    if (f.t === "vault") return f.vault.name;
     if (f.t === "dc") return f.dc.name;
     if (f.t === "part") return `part:${f.dc.name}/${f.part.name}`;
     const x = f.node || f.gw;
@@ -539,6 +608,10 @@
       }
       case "healthy": return svcName ? { assert: { consul: Object.assign(m.dcs.length > 1 && dcName ? { dc: dcName } : {}, { service_healthy: svcName }), within: "60s" } } : null;
       case "exec": return f && (f.t === "node" || f.t === "gw") ? { assert: { exec: { on: s, run: "true", output: "" }, within: "30s" } } : null;
+      case "seal": return f && f.t === "vault" && !f.vault.dev ? { vault: { seal: `${s}/active` } } : null;
+      case "unseal": return f && f.t === "vault" && !f.vault.dev ? { vault: { unseal: s } } : null;
+      case "stepdown": return f && f.t === "vault" && f.vault.servers > 1 ? { vault: { step_down: `${s}/active` } } : null;
+      case "unsealed": return f && f.t === "vault" ? { assert: { vault: { on: `${s}/active`, sealed: false }, within: "30s" } } : null;
       case "fault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, health: { code: 503 } } } : null;
       case "unfault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, reset: true } } : null;
     }
@@ -565,16 +638,18 @@
     if (isMap(st.fake)) return `fake ${st.fake.on || ""}${st.fake.reset ? " reset" : ""}${st.fake.health ? ` health ${st.fake.health.code}` : ""}`;
     if (isMap(st.upgrade)) return `upgrade ${st.upgrade.on || ""} to ${st.upgrade.to || ""}`;
     if (isMap(st.exec)) return `exec on ${st.exec.on || ""}`;
+    if (isMap(st.vault)) return `vault ${Object.entries(st.vault).map(([k, v]) => `${k} ${v}`).join(", ")}`;
     if (isMap(st.assert)) {
       const a = st.assert, w = a.within ? ` within ${a.within}` : "";
       if (isMap(a.call)) return `call ${a.call.on || ""}${a.call.reaches ? ` reaches ${a.call.reaches}` : ""}${a.call.code ? ` code ${a.call.code}` : ""}${w}`;
       if (isMap(a.exec)) return `exec on ${a.exec.on || ""}${a.exec.output ? ` shows ${a.exec.output}` : ""}${w}`;
       if (isMap(a.consul)) return `consul ${Object.entries(a.consul).map(([k, v]) => `${k} ${v}`).join(", ")}${w}`;
+      if (isMap(a.vault)) return `vault ${Object.entries(a.vault).map(([k, v]) => `${k} ${v}`).join(", ")}${w}`;
     }
     return Object.keys(st).filter((k) => k !== "name" && k !== "at").join(", ");
   }
   // Step keys whose values are selectors.
-  const SEL_KEYS = new Set([...FAULTS, "heal", "wait", "on"]);
+  const SEL_KEYS = new Set([...FAULTS, "heal", "wait", "on", "seal", "unseal", "step_down"]);
   // retarget makes the scenario's selectors follow a rename: from and to
   // are selectors (dc1, dc1/web); bare is a service's old and new name.
   function retarget(m, from, to, bare) {
@@ -601,9 +676,13 @@
     const doc = { parker: "v1alpha1", name: m.name };
     const nodes = m.dcs.flatMap((d) => d.nodes);
     const anyEnvoy = nodes.some((n) => connectOf(m, n) !== "none") || m.dcs.some((d) => d.gws.length);
-    const versions = { consul: m.consul + (ent(m) && !/\+ent$/.test(m.consul) ? "+ent" : "") };
+    const vaults = m.vaults || [];
+    // A lab of Vault clusters alone has no consul: section.
+    const hasConsul = m.dcs.length > 0 || !vaults.length;
+    const versions = hasConsul ? { consul: m.consul + (ent(m) && !/\+ent$/.test(m.consul) ? "+ent" : "") } : {};
     if (anyEnvoy) versions.envoy = m.envoy;
     if (nodes.some((n) => n.agent === "dataplane")) versions["consul-dataplane"] = m.dataplane;
+    if (vaults.length) versions.vault = m.vault || VERSIONS.vault;
     doc.versions = versions;
 
     const consul = {};
@@ -646,6 +725,8 @@
     for (const d of m.dcs) {
       const out = { servers: d.servers };
       if (d.ui) out.ui = true;
+      const ca = d.ca && vaultById(m, d.ca);
+      if (ca) out.connect = { ca: { vault: ca.name } };
       const scopes = [{ id: "", name: "default" }, ...d.parts];
       const bodies = scopes.map((s) => scopeBody(m, d, s, all));
       if (d.parts.length) {
@@ -654,7 +735,25 @@
       } else Object.assign(out, bodies[0]);
       consul.datacenters[d.name] = out;
     }
-    doc.consul = consul;
+    if (hasConsul) doc.consul = consul;
+    if (vaults.length) {
+      const clusters = {};
+      const dn = (id) => (dcById(m, id) || {}).name;
+      for (const v of vaults) {
+        const c = {};
+        if (v.servers > 1) c.servers = v.servers;
+        if (v.dev) c.dev = true;
+        if (v.tls) c.tls = true;
+        if (v.storage === "file") c.storage = "file";
+        if (v.storage === "consul" && dn(v.store)) c.storage = { consul: dn(v.store) };
+        if (v.reg && dn(v.reg) && v.storage !== "consul") c.register = dn(v.reg);
+        const t = v.transit && vaultById(m, v.transit);
+        if (t) c.seal = { transit: t.name };
+        if (v.secrets && dn(v.secrets)) c.secrets = { consul: dn(v.secrets) };
+        clusters[v.name] = c;
+      }
+      doc.vault = { clusters };
+    }
     if (m.scenario && Array.isArray(m.scenario.steps) && m.scenario.steps.length) doc.scenario = JSON.parse(JSON.stringify(m.scenario));
     return doc;
   }
@@ -864,7 +963,7 @@
   function blockAt(path) {
     const p = path.join(".");
     return path.length <= 1 && p !== "versions" ||
-      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) || p === "scenario" ||
+      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) || p === "scenario" || p === "vault.clusters" ||
       /\.(nodes|partitions)(\.[^.]+)?$/.test(p) && !/\.nodes\.[^.]+\.service/.test(p);
   }
 
@@ -953,6 +1052,7 @@
     if (!f) return "";
     if (f.t === "peering") return `consul.peering.${peeringName(m, f.peering)}`;
     if (f.t === "ext") return `consul.external.${f.ext.name}`;
+    if (f.t === "vault") return `vault.clusters.${f.vault.name}`;
     if (f.t === "fail") return "";
     const base = `consul.datacenters.${f.dc.name}`;
     if (f.t === "dc") return base;
@@ -969,6 +1069,7 @@
     for (const d of m.dcs) { each(d.id); d.parts.forEach((p) => each(p.id)); d.nodes.forEach((n) => each(n.id)); d.gws.forEach((g) => each(g.id)); }
     m.peerings.forEach((p) => each(p.id));
     (m.exts || []).forEach((x) => each(x.id));
+    (m.vaults || []).forEach((v) => each(v.id));
     return best;
   }
 
@@ -976,7 +1077,13 @@
   function checks(m) {
     const out = [];
     if (!NAME_RE.test(m.name)) out.push({ message: "The lab name wants lowercase letters, digits and single hyphens.", id: "" });
-    if (!m.dcs.length) out.push({ message: "Add a datacenter to start.", id: "" });
+    if (!m.dcs.length && !(m.vaults || []).length) out.push({ message: "Add a datacenter or a Vault cluster to start.", id: "" });
+    for (const v of m.vaults || []) {
+      const t = v.transit && vaultById(m, v.transit);
+      if (t && t.dev) out.push({ message: `${v.name} auto-unseals with ${t.name}, which runs in dev mode and loses its keys; turn dev off on ${t.name}.`, id: v.id });
+      if (t && t.transit) out.push({ message: `${v.name} auto-unseals with ${t.name}, which auto-unseals itself; ${t.name} must unseal with keys.`, id: v.id });
+      if (v.dev && (v.servers > 1 || v.transit || v.reg || v.secrets || v.storage !== "raft")) out.push({ message: `${v.name} runs in dev mode: one server, in memory, with no auto-unseal, registration or secrets engines.`, id: v.id });
+    }
     for (const c of calls(m)) if (c.r.kind === "none") {
       const message = c.r.peerParts
         ? `${sideName(m, c.sd.id, c.src.part)}/${c.src.name} calls ${c.t.name} in ${sideName(m, c.td.id, c.t.part)}, but those partitions aren't peered. Link ${sideName(m, c.sd.id, c.src.part)} to ${sideName(m, c.td.id, c.t.part)}.`
@@ -1030,6 +1137,7 @@
     if (!f) return null;
     if (f.t === "peering") return ["consul", "peering", peeringName(m, f.peering)];
     if (f.t === "ext") return ["consul", "external", f.ext.name];
+    if (f.t === "vault") return ["vault", "clusters", f.vault.name];
     if (f.t === "fail") return null;
     const base = ["consul", "datacenters", f.dc.name];
     if (f.t === "dc") return base;
@@ -1050,6 +1158,7 @@
       for (const d of prev.dcs) { ids.set(dot(segs(prev, d.id)), d.id); for (const x of [...d.parts, ...d.nodes, ...d.gws]) ids.set(dot(segs(prev, x.id)), x.id); }
       for (const p of prev.peerings) ids.set(dot(segs(prev, p.id)), p.id);
       for (const x of prev.exts || []) ids.set(dot(segs(prev, x.id)), x.id);
+      for (const x of prev.vaults || []) ids.set(dot(segs(prev, x.id)), x.id);
     }
     const keep = (x, path) => { const id = ids.get(dot(path)); if (id) x.id = id; return x; };
     const m = lab(typeof t.name === "string" ? t.name : "lab");
@@ -1058,9 +1167,37 @@
     if (v.consul) m.consul = String(v.consul);
     if (v.envoy) m.envoy = String(v.envoy);
     if (v["consul-dataplane"]) m.dataplane = String(v["consul-dataplane"]);
+    if (v.vault) m.vault = String(v.vault);
+    // Vault clusters, and the dcs whose Connect CA they are, once the
+    // dcs exist.
+    const cas = [];
+    const readVaults = () => {
+      const vt = isMap(t.vault) ? t.vault : {};
+      const defs = isMap(vt.defaults) ? vt.defaults : {};
+      const dcNamed = (n) => (m.dcs.find((d) => d.name === n) || {}).id || "";
+      const transits = [];
+      for (const [vn, cvRaw] of Object.entries(isMap(vt.clusters) ? vt.clusters : {})) {
+        const cv = Object.assign({}, defs, isMap(cvRaw) ? cvRaw : {});
+        const x = keep(vault(vn, Number(cv.servers) || 1), ["vault", "clusters", vn]);
+        x.dev = !!cv.dev; x.tls = !!cv.tls;
+        if (cv.storage === "file") x.storage = "file";
+        else if (isMap(cv.storage) && typeof cv.storage.consul === "string") { x.storage = "consul"; x.store = dcNamed(cv.storage.consul); }
+        if (typeof cv.register === "string") x.reg = dcNamed(cv.register);
+        if (isMap(cv.secrets) && typeof cv.secrets.consul === "string") x.secrets = dcNamed(cv.secrets.consul);
+        if (isMap(cv.seal) && typeof cv.seal.transit === "string") transits.push([x, cv.seal.transit]);
+        m.vaults.push(x);
+      }
+      for (const [x, tn] of transits) x.transit = (m.vaults.find((y) => y.name === tn) || {}).id || "";
+      for (const [d, vn] of cas) d.ca = (m.vaults.find((y) => y.name === vn) || {}).id || "";
+    };
     if (isMap(t.scenario)) m.scenario = JSON.parse(JSON.stringify(t.scenario));
     if (isMap(t.scenarios) && Object.keys(t.scenarios).length) m.named = true;
-    if (!c) { m.raw = !!(t.nodes || t.networks); m.mesh = false; return m; }
+    if (!c) {
+      m.mesh = false;
+      if (isMap(t.vault)) { readVaults(); return m; }
+      m.raw = !!(t.nodes || t.networks);
+      return m;
+    }
     const defs = isMap(c.defaults) ? c.defaults : {};
     const sdOf = (x) => (x && isMap(x.service_template) ? x.service_template : {});
     m.tls = !!defs.tls; m.acl = !!defs.acl;
@@ -1075,6 +1212,7 @@
       const dpath = ["consul", "datacenters", dn];
       const d = keep(dc(dn, Number(dv.servers) || 1), dpath);
       d.ui = !!dv.ui;
+      if (isMap(dv.connect) && isMap(dv.connect.ca) && typeof dv.connect.ca.vault === "string") cas.push([d, dv.connect.ca.vault]);
       m.dcs.push(d);
       const scope = (pid, sv, spath, sds) => {
         const sd = Object.assign({}, ...sds.map(sdOf), sdOf(sv));
@@ -1220,6 +1358,7 @@
       const own = list.filter((e) => !gen.some((g) => same(g, e)));
       if (own.length) (d.ces = d.ces || {})[pid] = own;
     }
+    readVaults();
     return m;
   }
 
@@ -1246,7 +1385,7 @@
     const varAt = (p) => { let v = src; for (const k of p) { if (typeof v === "string") break; if (v === null || typeof v !== "object" || !(k in v)) return ""; v = v[k]; } return typeof v === "string" && v.includes("${") ? v : ""; };
     const da = toDoc(a), db = toDoc(b);
     // Renames first, parents before children, so the paths after them line up.
-    const order = (m) => [...m.dcs.map((d) => d.id), ...m.dcs.flatMap((d) => d.parts.map((p) => p.id)), ...m.peerings.map((p) => p.id), ...(m.exts || []).map((x) => x.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws].map((x) => x.id))];
+    const order = (m) => [...m.dcs.map((d) => d.id), ...(m.vaults || []).map((v) => v.id), ...m.dcs.flatMap((d) => d.parts.map((p) => p.id)), ...m.peerings.map((p) => p.id), ...(m.exts || []).map((x) => x.id), ...m.dcs.flatMap((d) => [...d.nodes, ...d.gws].map((x) => x.id))];
     for (const id of order(b)) {
       const pa = segs(a, id), pb = segs(b, id);
       if (!pa || !pb) continue;
@@ -1382,6 +1521,21 @@
         else m.peerings.push({ id: uid("p"), name: "", acceptor: d2.id, dialer: d1.id, mesh: true });
         break;
       }
+      case "vault": {
+        m.dcs = [];
+        m.vaults.push(vault("east", 3));
+        break;
+      }
+      case "vault-ca": {
+        d1.servers = 1;
+        const web = node("web", 8080), api = node("api", 9090);
+        d1.nodes.push(web, api);
+        web.svc.ups.push({ to: api.id, port: 9091 });
+        const v = vault("east", 3);
+        m.vaults.push(v);
+        d1.ca = v.id;
+        break;
+      }
       default: throw new Error("unknown starter " + name);
     }
     return m;
@@ -1394,9 +1548,11 @@
     ["dataplane", "Dataplane", "An agentless node in the mesh"],
     ["meshfed", "Mesh federation", "Two dcs federated through mesh gateways"],
     ["peering", "Cluster peering", "dc2 exports api to dc1"],
+    ["vault", "Vault", "Three Vault servers on raft"],
+    ["vault-ca", "Vault as Connect CA", "dc1's mesh certificates from Vault"],
   ];
 
-  const api = { entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, vault, vaultById, joinVault, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);
