@@ -507,6 +507,10 @@
           "$ref": "#/$defs/FakeRateLimit",
           "description": "RateLimit answers requests over a rate with an error code."
         },
+        "limits": {
+          "$ref": "#/$defs/FakeLimits",
+          "description": "Limits refuses requests over a size, the way an app server does\n(Tomcat answers 400 to headers over 8 KB, for example). Default: no\nlimits."
+        },
         "seed": {
           "type": "integer",
           "description": "Seed makes the random draws (errors, latency) repeatable\n(RAND_SEED); default: a new seed each start."
@@ -601,6 +605,110 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "FakeLimitCodes": {
+      "properties": {
+        "header": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Header is for header size and count; default 431. Tomcat, Nginx\nand Apache answer 400."
+        },
+        "url": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "URL; default 414."
+        },
+        "body": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Body; default 413."
+        },
+        "form": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Form is for form parameters; default 400."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "FakeLimitCodes are the codes for each kind of limit."
+    },
+    "FakeLimits": {
+      "properties": {
+        "max_header_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "MaxHeaderBytes bounds the request line and all headers together,\nas Tomcat's maxHttpHeaderSize and Node's max header size do."
+        },
+        "max_header_line_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "MaxHeaderLineBytes bounds any one header (\"Name: value\"), as\nNginx's large_client_header_buffers and Apache's\nLimitRequestFieldSize do."
+        },
+        "max_header_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "MaxHeaderCount bounds the number of headers, Host included\n(Tomcat's maxHeaderCount)."
+        },
+        "max_url_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "MaxURLBytes bounds the path and query (Nginx and Apache answer 414)."
+        },
+        "max_body_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "MaxBodyBytes bounds the request body (Nginx's\nclient_max_body_size). With protocol: grpc it bounds the request\nmessage, answered RESOURCE_EXHAUSTED."
+        },
+        "max_form_params": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "MaxFormParams bounds the query and form body parameters together\n(Tomcat's maxParameterCount)."
+        },
+        "codes": {
+          "$ref": "#/$defs/FakeLimitCodes",
+          "description": "Codes are the status codes a refused request answers."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "FakeLimits are request size limits."
+    },
     "FakeRateLimit": {
       "properties": {
         "rps": {
@@ -669,6 +777,10 @@
         "rate_limit": {
           "$ref": "#/$defs/FakeRateLimit",
           "description": "RateLimit, as under fake:. rps: 0 turns it off."
+        },
+        "limits": {
+          "$ref": "#/$defs/FakeLimits",
+          "description": "Limits, as under fake:. Set a limit to 0 to turn it off."
         }
       },
       "additionalProperties": false,

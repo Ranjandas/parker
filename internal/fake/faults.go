@@ -35,11 +35,13 @@ type Faults struct {
 	// RateLimit is requests per second; 0 is off.
 	RateLimit     float64 `json:"rate_limit,omitempty"`
 	RateLimitCode int     `json:"rate_limit_code"`
+	// Limits refuse requests over a size.
+	Limits Limits `json:"limits"`
 }
 
 // DefaultFaults is a healthy service with no faults.
 func DefaultFaults() Faults {
-	return Faults{HealthCode: 200, ErrorCode: 500, ErrorType: "http_error", RateLimitCode: 503}
+	return Faults{HealthCode: 200, ErrorCode: 500, ErrorType: "http_error", RateLimitCode: 503, Limits: DefaultLimits()}
 }
 
 func parseDur(field, v string) (time.Duration, error) {
@@ -127,6 +129,11 @@ func (f *Faults) Apply(sf *spec.Fake) error {
 		}
 		if r.Code != 0 {
 			f.RateLimitCode = r.Code
+		}
+	}
+	if l := sf.Limits; l != nil {
+		if err := f.Limits.apply(l); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -425,9 +425,11 @@ func TestFakeStep(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 	for bad, want := range map[string]string{
-		"fake: { health: { code: 503 } }":                       "needs on:",
-		"fake: { on: dc1, reset: true, health: { code: 503 } }": "takes no other changes",
-		"fake: { on: dc1, errors: { rate: 5 } }":                "errors.rate",
+		"fake: { health: { code: 503 } }":                                 "needs on:",
+		"fake: { on: dc1, reset: true, health: { code: 503 } }":           "takes no other changes",
+		"fake: { on: dc1, errors: { rate: 5 } }":                          "errors.rate",
+		"fake: { on: dc1, reset: true, limits: { max_header_bytes: 0 } }": "takes no other changes",
+		"fake: { on: dc1, limits: { codes: { header: 42 } } }":            "limits.codes.header",
 	} {
 		if err := Validate(parse(t, "steps:\n  - "+bad+"\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", bad, err)
@@ -435,6 +437,10 @@ func TestFakeStep(t *testing.T) {
 	}
 	if got := Selectors(parse(t, "steps:\n  - fake: { on: dc1/api }\n")); !slices.Equal(got, []string{"dc1/api"}) {
 		t.Errorf("Selectors = %v", got)
+	}
+	out, err = run(t, parse(t, "steps:\n  - fake: { on: dc1/web, limits: { max_header_bytes: 8KB } }\n"), &fakeLab{clk: &fakeClock{}})
+	if err != nil || !strings.Contains(out, "step 1: fake dc1/web: limits") {
+		t.Errorf("limits step: %v\n%s", err, out)
 	}
 }
 

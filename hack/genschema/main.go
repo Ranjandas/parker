@@ -56,6 +56,14 @@ func generate() ([]byte, error) {
 // mapper describes the types that accept more than one YAML shape.
 func mapper(t reflect.Type) *jsonschema.Schema {
 	switch t {
+	case reflect.TypeOf(spec.ByteSize(0)):
+		return &jsonschema.Schema{
+			Description: "A size: bytes, or a string like 8KB or 1MB (KB is 1024 bytes).",
+			OneOf: []*jsonschema.Schema{
+				{Type: "integer", Minimum: "0"},
+				{Type: "string", Pattern: `^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$`},
+			},
+		}
 	case reflect.TypeOf(spec.Command{}):
 		return &jsonschema.Schema{
 			Description: "A command: a string split on whitespace, or an argv list.",

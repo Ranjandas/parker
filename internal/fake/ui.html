@@ -296,6 +296,7 @@ const FakeUI = (() => {
   // the service's own fault injection, a failing upstream, or the error.
   function why(h, broken) {
     if (h.injected && (broken || []).includes(h.name)) return { kind: "req", text: "Broken for requests from this page" };
+    if (h.limit) return { kind: "own", text: h.name + " refused it: " + (h.error || h.limit) };
     if (h.injected === "rate_limit") return { kind: "own", text: "Fault injection on " + h.name + ": rate limit" };
     if (h.injected === "error") return { kind: "own", text: "Fault injection on " + h.name + ": error " + h.code };
     if (h.injected === "delay") return { kind: "own", text: "Fault injection on " + h.name + ": delay" };
@@ -363,6 +364,11 @@ const FakeUI = (() => {
     const p50 = Math.round((f.p50 || 0) / 1e6), p99 = Math.round((f.p99 || 0) / 1e6);
     if (p50 || p99) out.push("latency " + (p50 === p99 || !p99 ? p50 + "ms" : p50 + "–" + p99 + "ms"));
     if (f.rate_limit > 0) out.push("rate limit " + f.rate_limit + "/s");
+    const l = f.limits || {}, kb = (n) => (n % 1048576 === 0 ? n / 1048576 + "MB" : n % 1024 ? n + "B" : n / 1024 + "KB");
+    const lim = [l.max_header_bytes && "headers " + kb(l.max_header_bytes), l.max_header_line_bytes && "header line " + kb(l.max_header_line_bytes),
+      l.max_header_count && l.max_header_count + " headers", l.max_url_bytes && "url " + kb(l.max_url_bytes),
+      l.max_body_bytes && "body " + kb(l.max_body_bytes), l.max_form_params && l.max_form_params + " params"].filter(Boolean);
+    if (lim.length) out.push("limits " + lim.join(", "));
     return out.join(" · ");
   }
   return { faultSummary, ms, fmtMs, hops, failed, label, below, header, brokeSummary, why, headline, factHop, stats, labelsOf, labFromHost };

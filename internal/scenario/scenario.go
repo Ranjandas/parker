@@ -203,7 +203,7 @@ func validateStep(st *spec.Step) error {
 		if f.On == "" {
 			return errors.New("fake: needs on:")
 		}
-		if f.Reset && !(&spec.FakeStep{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit}).Empty() {
+		if f.Reset && !(&spec.FakeStep{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit, Limits: f.Limits}).Empty() {
 			return errors.New("fake: reset: true takes no other changes")
 		}
 		if err := fake.Validate(f.Change()); err != nil {
@@ -704,6 +704,9 @@ func fakeLabel(f *spec.FakeStep) string {
 		parts = append(parts, fmt.Sprintf("rate limit %g/s", *r.RPS))
 	} else if r != nil {
 		parts = append(parts, "rate limit")
+	}
+	if f.Limits != nil {
+		parts = append(parts, "limits")
 	}
 	return "fake " + on + ": " + strings.Join(parts, ", ")
 }
