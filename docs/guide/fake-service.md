@@ -177,6 +177,7 @@ api  dc1-api · dc1  400  42µs  request headers too large: 9094 bytes > max_hea
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `limits.profile` | | A server's stock limits and codes: see [profiles](#profiles). |
 | `limits.max_header_bytes` | off | The request line and all headers together, as Tomcat's `maxHttpHeaderSize` and Node's `--max-http-header-size` count them. |
 | `limits.max_header_line_bytes` | off | Any one header, `Name: value`, as Nginx's `large_client_header_buffers` and Apache's `LimitRequestFieldSize` count them. |
 | `limits.max_header_count` | off | The number of headers, `Host` included (Tomcat's `maxHeaderCount`). |
@@ -187,6 +188,53 @@ api  dc1-api · dc1  400  42µs  request headers too large: 9094 bytes > max_hea
 | `limits.codes.url` | `414` | Code for the URL. |
 | `limits.codes.body` | `413` | Code for the body. |
 | `limits.codes.form` | `400` | Code for form parameters. |
+
+### Profiles
+
+`profile:` sets a server's stock limits and codes in one key, so a fake
+refuses what that server would. Keys set beside it win:
+
+```yaml
+fake:
+  limits:
+    profile: tomcat
+    max_header_bytes: 16KB   # this Tomcat has maxHttpHeaderSize="16384"
+```
+
+A refused request names the server's own setting, so you know what to
+change in production:
+
+```console
+$ parker call lab.yaml dc1/api --pad-header Cookie=9KB
+api  dc1-api · dc1  400  49.842µs  request headers too large: 9294 bytes > tomcat maxHttpHeaderSize 8KB
+```
+
+| Profile | Server | Limits (code) | Settings |
+| --- | --- | --- | --- |
+| `alb` | [AWS Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html) | headers 64KB (400), header line 16KB (400), url 16KB (414) | `request header quota`, `single header quota`, `request line quota` |
+| `apache` | [Apache httpd](https://httpd.apache.org/docs/2.4/mod/core.html) | header line 8190B (400), 100 headers (400), url 8190B (414), body 1GB (413) | `LimitRequestFieldSize`, `LimitRequestFields`, `LimitRequestLine`, `LimitRequestBody` |
+| `envoy` | [Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto) | headers 60KB (431), 100 headers (431) | `max_request_headers_kb`, `max_headers_count` |
+| `go` | [Go net/http](https://pkg.go.dev/net/http#DefaultMaxHeaderBytes) | headers 1MB (431) | `MaxHeaderBytes` |
+| `gunicorn` | [Gunicorn](https://docs.gunicorn.org/en/stable/settings.html) | header line 8190B (400), 100 headers (400), url 4094B (400) | `limit_request_field_size`, `limit_request_fields`, `limit_request_line` |
+| `kestrel` | [ASP.NET Core Kestrel](https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits) | headers 32KB (431), 100 headers (431), url 8KB (414), body 30000000B (413) | `MaxRequestHeadersTotalSize`, `MaxRequestHeaderCount`, `MaxRequestLineSize`, `MaxRequestBodySize` |
+| `nginx` | [nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html) | headers 32KB (400), header line 8KB (400), url 8KB (414), body 1MB (413) | `large_client_header_buffers`, `client_max_body_size` |
+| `node` | [Node.js http server](https://nodejs.org/api/http.html#httpmaxheadersize) | headers 16KB (431) | `maxHeaderSize` |
+| `tomcat` | [Apache Tomcat HTTP connector](https://tomcat.apache.org/tomcat-11.0-doc/config/http.html) | headers 8KB (400), 100 headers (400), 10000 params (400) | `maxHttpHeaderSize`, `maxHeaderCount`, `maxParameterCount` |
+
+The values are each server's defaults as its documentation gives them
+(follow the link). A profile copies the limits and codes only, not every
+behaviour: the answer is still the fake's JSON, not the server's error
+page. Some notes:
+
+- `tomcat` counts the URL in `maxHttpHeaderSize`, and its `maxPostSize`
+  (2 MB) only covers form posts, so it sets no body limit.
+- `nginx` refuses a request line over one 8 KB buffer with `414`, and any
+  header over one buffer, or all of them over the four buffers, with
+  `400` (`Request Header Or Cookie Too Large`; nginx logs it as `494`).
+- `alb` uses AWS's quotas: 16 KB for the request line and for one header,
+  64 KB for all headers. AWS doesn't list one code for header overflow,
+  so check yours.
+- `profile: none` in a `fake:` step clears the limits again.
 
 Sizes are bytes, or a string such as `8KB` or `1MB` (a KB is 1024
 bytes). `0` turns a limit off. Headers are counted the way they are sent

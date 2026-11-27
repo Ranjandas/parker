@@ -649,6 +649,22 @@
     },
     "FakeLimits": {
       "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "tomcat",
+            "nginx",
+            "apache",
+            "node",
+            "envoy",
+            "go",
+            "alb",
+            "kestrel",
+            "gunicorn",
+            "none"
+          ],
+          "description": "Profile starts from a server's stock limits and status codes:\ntomcat, nginx, apache, node, envoy, go, alb, kestrel or gunicorn.\nKeys set beside it win. none clears every limit."
+        },
         "max_header_bytes": {
           "oneOf": [
             {

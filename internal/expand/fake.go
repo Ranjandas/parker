@@ -171,6 +171,10 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 			l = *out.Limits
 		}
 		bl := b.Limits
+		if bl.Profile != "" {
+			// A profile replaces the template's limits.
+			l = spec.FakeLimits{Profile: bl.Profile}
+		}
 		l.MaxHeaderBytes = cmp.Or(bl.MaxHeaderBytes, l.MaxHeaderBytes)
 		l.MaxHeaderLineBytes = cmp.Or(bl.MaxHeaderLineBytes, l.MaxHeaderLineBytes)
 		l.MaxHeaderCount = cmp.Or(bl.MaxHeaderCount, l.MaxHeaderCount)

@@ -1,0 +1,99 @@
+package fake
+
+import (
+	"maps"
+	"slices"
+	"strings"
+)
+
+// profile is a server's stock request limits, with the names of its own
+// settings and where they were checked.
+type profile struct {
+	title    string
+	limits   Limits
+	settings map[string]string // limit key -> the server's setting
+	source   string
+}
+
+// Profiles are the servers a fake can be limited like, by
+// limits.profile. Each value is the server's default as its own docs
+// give it (see source); the guide's table is checked against these.
+var profiles = map[string]profile{
+	"tomcat": {
+		title:  "Apache Tomcat HTTP connector",
+		limits: Limits{HeaderBytes: 8192, HeaderCount: 100, FormParams: 10000, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_bytes": "maxHttpHeaderSize", "max_header_count": "maxHeaderCount",
+			"max_form_params": "maxParameterCount"},
+		source: "https://tomcat.apache.org/tomcat-11.0-doc/config/http.html",
+	},
+	"nginx": {
+		title:  "nginx",
+		limits: Limits{HeaderLineBytes: 8192, HeaderBytes: 4 * 8192, URLBytes: 8192, BodyBytes: 1 << 20, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_line_bytes": "large_client_header_buffers", "max_header_bytes": "large_client_header_buffers",
+			"max_url_bytes": "large_client_header_buffers", "max_body_bytes": "client_max_body_size"},
+		source: "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+	},
+	"apache": {
+		title:  "Apache httpd",
+		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 8190, BodyBytes: 1 << 30, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_line_bytes": "LimitRequestFieldSize", "max_header_count": "LimitRequestFields",
+			"max_url_bytes": "LimitRequestLine", "max_body_bytes": "LimitRequestBody"},
+		source: "https://httpd.apache.org/docs/2.4/mod/core.html",
+	},
+	"node": {
+		title:    "Node.js http server",
+		limits:   Limits{HeaderBytes: 16 << 10, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_bytes": "maxHeaderSize"},
+		source:   "https://nodejs.org/api/http.html#httpmaxheadersize",
+	},
+	"envoy": {
+		title:    "Envoy",
+		limits:   Limits{HeaderBytes: 60 << 10, HeaderCount: 100, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_bytes": "max_request_headers_kb", "max_header_count": "max_headers_count"},
+		source:   "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto",
+	},
+	"go": {
+		title:    "Go net/http",
+		limits:   Limits{HeaderBytes: 1 << 20, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_bytes": "MaxHeaderBytes"},
+		source:   "https://pkg.go.dev/net/http#DefaultMaxHeaderBytes",
+	},
+	"alb": {
+		title:  "AWS Application Load Balancer",
+		limits: Limits{HeaderLineBytes: 16 << 10, HeaderBytes: 64 << 10, URLBytes: 16 << 10, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_line_bytes": "single header quota", "max_header_bytes": "request header quota",
+			"max_url_bytes": "request line quota"},
+		source: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html",
+	},
+	"kestrel": {
+		title:  "ASP.NET Core Kestrel",
+		limits: Limits{HeaderBytes: 32 << 10, HeaderCount: 100, URLBytes: 8 << 10, BodyBytes: 30_000_000, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_bytes": "MaxRequestHeadersTotalSize", "max_header_count": "MaxRequestHeaderCount",
+			"max_url_bytes": "MaxRequestLineSize", "max_body_bytes": "MaxRequestBodySize"},
+		source: "https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits",
+	},
+	"gunicorn": {
+		title:  "Gunicorn",
+		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 4094, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400},
+		settings: map[string]string{"max_header_line_bytes": "limit_request_field_size", "max_header_count": "limit_request_fields",
+			"max_url_bytes": "limit_request_line"},
+		source: "https://docs.gunicorn.org/en/stable/settings.html",
+	},
+}
+
+// ProfileNames lists the profiles, sorted.
+func ProfileNames() []string { return slices.Sorted(maps.Keys(profiles)) }
+
+// profileRow is the profile's row in the guide's profiles table, which a
+// test keeps in step with the values here.
+func profileRow(name string) string {
+	p := profiles[name]
+	l := p.limits
+	var sets []string
+	for _, k := range []string{"max_header_bytes", "max_header_line_bytes", "max_header_count", "max_url_bytes", "max_body_bytes", "max_form_params"} {
+		if s := p.settings[k]; s != "" && !slices.Contains(sets, "`"+s+"`") {
+			sets = append(sets, "`"+s+"`")
+		}
+	}
+	return "| `" + name + "` | [" + p.title + "](" + p.source + ") | " + l.summary() + " | " + strings.Join(sets, ", ") + " |"
+}
