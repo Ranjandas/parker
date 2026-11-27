@@ -64,8 +64,9 @@
   });
 
   // ---- latest release version ----
-  // The headline comes from the release title, "v0.13.0 · resume labs by
-  // name": the release workflow builds it from the annotated tag's message.
+  // The headline is the bold first line of the release notes, which the
+  // release workflow takes from the annotated tag's message. (Older
+  // releases carried it in the title, "v0.14.0 · headline"; still read.)
   // A release without one keeps the page's own headline only if the page
   // already names that version; otherwise it says "what's new", so an old
   // headline never sits next to a newer version.
@@ -78,8 +79,9 @@
       .then((j) => {
         if (!j || !/^v\d+\.\d+\.\d+$/.test(j.tag_name)) return;
         const v = j.tag_name.slice(1);
-        const rest = (j.name || '').trim().replace(j.tag_name, '').replace(/^[\s·:—–-]+/, '').trim();
-        const headline = rest || (j.tag_name === pageTag ? null : 'what’s new');
+        const fromBody = ((j.body || '').match(/^\s*\*\*(.+?)\*\*/) || [])[1];
+        const fromTitle = (j.name || '').trim().replace(j.tag_name, '').replace(/^[\s·:—–-]+/, '').trim();
+        const headline = (fromBody || '').trim() || fromTitle || (j.tag_name === pageTag ? null : 'what’s new');
         if (headline) headEls.forEach((el) => (el.textContent = headline));
         verEls.forEach((el) => (el.textContent = el.dataset.version === 'tag' ? 'v' + v : v));
       })
