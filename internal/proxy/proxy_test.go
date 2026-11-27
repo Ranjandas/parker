@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -31,8 +32,25 @@ func startProxy(t *testing.T, dial DialFunc) string {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go Serve(ctx, ln, dial, t.Logf)
+	// A connection's goroutine can log after the test ends (the client
+	// has its reply before the proxy logs the refusal), and t.Logf then
+	// panics; drop those lines.
+	var mu sync.Mutex
+	done := false
+	t.Cleanup(func() {
+		cancel()
+		mu.Lock()
+		done = true
+		mu.Unlock()
+	})
+	logf := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			t.Logf(format, args...)
+		}
+	}
+	go Serve(ctx, ln, dial, logf)
 	return ln.Addr().String()
 }
 
