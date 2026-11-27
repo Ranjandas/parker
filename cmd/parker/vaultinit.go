@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -82,6 +83,9 @@ type vaultAPI interface {
 	CreateToken(ctx context.Context, addr, token, id string) error
 	// TokenExists reports whether a token works.
 	TokenExists(ctx context.Context, addr, token string) bool
+	// MountPKI mounts a PKI secrets engine at path with the CA in bundle,
+	// unless one is mounted there already.
+	MountPKI(ctx context.Context, addr, token, path, bundle string) error
 }
 
 // vaultKeys is the keys file.
@@ -168,6 +172,21 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 		}); err != nil {
 			return err
 		}
+	}
+	for _, r := range s.PKIRoots {
+		token := s.RootToken
+		if token == "" {
+			token = keys.Root
+		}
+		// A standby forwards to the active server, which a fresh cluster
+		// may still be electing.
+		if err := retry("mounting "+r.Path, func() (bool, error) {
+			err := v.MountPKI(ctx, first, token, r.Path, r.Bundle)
+			return err == nil, err
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintf(log, "vault-init: %s holds the lab CA\n", r.Path)
 	}
 	return nil
 }
@@ -268,6 +287,29 @@ func (v vaultHTTP) Unseal(ctx context.Context, addr, key string) (bool, error) {
 func (v vaultHTTP) CreateToken(ctx context.Context, addr, token, id string) error {
 	_, err := v.do(ctx, http.MethodPost, addr+"/v1/auth/token/create-orphan", token,
 		map[string]any{"id": id, "policies": []string{"root"}, "display_name": "parker"}, nil)
+	return err
+}
+
+func (v vaultHTTP) MountPKI(ctx context.Context, addr, token, path, bundle string) error {
+	path = strings.Trim(path, "/")
+	var mounts map[string]any
+	if _, err := v.do(ctx, http.MethodGet, addr+"/v1/sys/mounts", token, nil, &mounts); err != nil {
+		return err
+	}
+	if _, ok := mounts[path+"/"]; ok {
+		var ca struct {
+			Data struct {
+				Certificate string `json:"certificate"`
+			} `json:"data"`
+		}
+		if _, err := v.do(ctx, http.MethodGet, addr+"/v1/"+path+"/cert/ca", token, nil, &ca); err == nil && ca.Data.Certificate != "" {
+			return nil // mounted with its CA, on an earlier run
+		}
+	} else if _, err := v.do(ctx, http.MethodPost, addr+"/v1/sys/mounts/"+path, token,
+		map[string]any{"type": "pki", "config": map[string]any{"max_lease_ttl": "87600h"}}, nil); err != nil {
+		return err
+	}
+	_, err := v.do(ctx, http.MethodPost, addr+"/v1/"+path+"/config/ca", token, map[string]any{"pem_bundle": bundle}, nil)
 	return err
 }
 

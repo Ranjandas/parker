@@ -2,6 +2,7 @@ package expand
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -227,5 +228,70 @@ vault:
 	c := vaultConfigOf(t, n.Files)["storage"].(map[string]any)["consul"].(map[string]any)
 	if c["address"] != "127.0.0.1:8501" || c["scheme"] != "https" || c["token"] == nil || c["path"] != "vault-east/" {
 		t.Errorf("storage %v", c)
+	}
+}
+
+// Vault as the Connect CA: dc1's servers join east's LAN from .200, set
+// the vault CA provider, start after vault-init, and with TLS on the lab
+// CA becomes the root in Vault's PKI.
+func TestVaultConnectCA(t *testing.T) {
+	low, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7, vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3, tls: true }
+consul:
+  datacenters:
+    dc1: { servers: 2, tls: true, connect: { ca: { vault: east } } }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, key := range []string{"dc1-server-1", "dc1-server-2"} {
+		n := low.Nodes[key]
+		if a := n.Networks["east-lan"]; a == nil || a.IP != "10.64.0."+strconv.Itoa(200+i) {
+			t.Errorf("%s east-lan %+v", key, a)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(n.Files["consul.json"]), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		conn := cfg["connect"].(map[string]any)
+		cc := conn["ca_config"].(map[string]any)
+		if conn["ca_provider"] != "vault" || conn["enabled"] != true || cc["address"] != "https://10.64.0.10:8200" ||
+			cc["token"] == "" || cc["intermediate_pki_path"] != "connect-dc1-intermediate/" || cc["ca_file"] == nil || cc["private_key"] != nil {
+			t.Errorf("%s connect %v", key, conn)
+		}
+		if n.Files[VaultCAFile] == "" || n.Files[CAKeyFile] == "" {
+			t.Errorf("%s: missing the Vault CA or the lab CA key", key)
+		}
+		if d := n.Processes["consul"].DependsOn["east-vault-1/"+VaultInit]; d == nil || d.Condition != "ready" {
+			t.Errorf("%s doesn't wait for vault-init", key)
+		}
+	}
+	var is VaultInitSpec
+	if err := json.Unmarshal([]byte(low.Nodes["east-vault-1"].Files[VaultInitManifest]), &is); err != nil {
+		t.Fatal(err)
+	}
+	if len(is.PKIRoots) != 1 || is.PKIRoots[0].Path != "connect-root/" || !strings.Contains(is.PKIRoots[0].Bundle, "PRIVATE KEY") {
+		t.Errorf("pki roots %+v", is.PKIRoots)
+	}
+	// Moving the lab re-signs the servers' certificates with the kept key.
+	fix := func(ip string) string { return strings.Replace(ip, "10.1.0.", "10.98.0.", 1) }
+	if err := ReissueServerCerts(low, fix); err != nil {
+		t.Fatal(err)
+	}
+
+	// A dev server can't hold the lab CA.
+	if _, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7, vault: 1.21.1 }
+vault:
+  clusters:
+    east: { dev: true }
+consul:
+  datacenters:
+    dc1: { servers: 1, tls: true, connect: { ca: { vault: east } } }
+`)); err == nil || !strings.Contains(err.Error(), "dev-mode") {
+		t.Errorf("dev with tls: %v", err)
 	}
 }

@@ -221,6 +221,63 @@ vault-east/sys/
 Faults on the datacenter reach Vault: stop its servers, or partition a
 Vault server from them, and Vault loses its storage and its lock.
 
+## Vault as the Connect CA
+
+`connect: { ca: { vault: CLUSTER } }` on a Consul datacenter makes the
+Vault cluster the service mesh's certificate authority, through Vault's
+PKI secrets engine. The datacenter's servers join the cluster's network
+(from `.200` up) and start once the cluster is unsealed. Consul mounts
+`connect-root/` and `connect-<dc>-intermediate/` in Vault and signs every
+sidecar's certificate there.
+
+```yaml
+parker: v1alpha1
+name: vault-connect-ca
+versions: { consul: 1.22.7, envoy: 1.35.12, vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      connect: { ca: { vault: east } }
+      service_template: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: 9091 }
+        api:
+          service: { port: 9090 }
+```
+
+```console
+$ parker exec vault-connect-ca dc1/server-1 -- consul connect ca get-config
+{
+	"Provider": "vault",
+	"Config": {
+		"Address": "http://10.64.0.10:8200",
+...
+$ parker exec vault-connect-ca east/vault-1 -- vault secrets list
+Path                         Type         Accessor              Description
+----                         ----         --------              -----------
+connect-dc1-intermediate/    pki          pki_dcd832e6          intermediate CA backend for Consul Connect
+connect-root/                pki          pki_008e0664          root CA backend for Consul Connect
+cubbyhole/                   cubbyhole    cubbyhole_23339f83    per-token private secret storage
+identity/                    identity     identity_5f9c13ae     identity store
+sys/                         system       system_34d9b279       system endpoints used for control, policy and debugging
+```
+
+- Consul uses the cluster's root token, and HTTPS with the lab CA when
+  the cluster has `tls: true`.
+- With the datacenter's [TLS](acl-and-tls.md#tls) on, Parker puts the
+  lab's CA into `connect-root/` before Consul starts, so client agents'
+  auto-encrypt certificates, which the Connect CA signs, chain to the same
+  CA as everything else. That needs a cluster without `dev: true`.
+- Vault faults reach the mesh: seal or stop the cluster and Consul can't
+  sign new certificates or rotate them.
+
 ## Old Vault releases
 
 Integrated storage needs Vault 1.4 or later, and `parker validate` refuses
@@ -238,5 +295,5 @@ vault:
 
 ## Limits
 
-- Replication, Enterprise builds, and other links to Consul (Vault as the Connect CA, service registration) are planned.
+- Replication, Enterprise builds, and other links to Consul (service registration, the Consul secrets engine) are planned.
 - The topology view shows Vault servers as nodes, without their seal or HA state yet.

@@ -49,6 +49,18 @@ type VaultInitSpec struct {
 	// KeysFile is where the unseal keys are kept, so a resumed lab can
 	// unseal again.
 	KeysFile string `json:"keys_file"`
+	// PKIRoots are PKI secrets engines to mount with a given root CA
+	// before anything else uses the cluster: the lab CA as the root of a
+	// Consul datacenter's Connect CA.
+	PKIRoots []VaultPKIRoot `json:"pki_roots,omitempty"`
+}
+
+// VaultPKIRoot is a PKI mount and its root CA.
+type VaultPKIRoot struct {
+	// Path of the mount, e.g. connect-root/.
+	Path string `json:"path"`
+	// Bundle is the CA certificate and key, PEM.
+	Bundle string `json:"bundle"`
 }
 
 // VaultFacts are what the vault product tells the others, keyed by cluster.

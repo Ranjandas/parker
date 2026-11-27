@@ -23,7 +23,10 @@ const (
 	// CAKeyFile is the lab CA's key, on nodes with no Consul config to keep
 	// it in (Vault servers), so a moved lab can re-sign their certificates.
 	CAKeyFile = "ca-key.pem"
-	HTTPSPort = 8501
+	// VaultCAFile is the CA that verifies a Vault cluster's TLS, on
+	// Consul servers that use it as their Connect CA.
+	VaultCAFile = "vault-ca.pem"
+	HTTPSPort   = 8501
 )
 
 // certValidity is long enough for any lab and short enough to look odd if

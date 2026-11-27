@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
@@ -168,11 +169,12 @@ func (l *ScenarioLab) Consul(ctx context.Context, a *spec.ConsulAssert) error {
 	return nil
 }
 
-// dc is the named datacenter, or the only one.
+// dc is the named Consul datacenter, or the only one. Other products'
+// clusters (Vault's) share the name space but aren't datacenters.
 func (l *ScenarioLab) dc(name string) (string, error) {
 	dcs := map[string]bool{}
 	for _, n := range l.Low.Nodes {
-		if n.Labels != nil && n.Labels.DC != "" {
+		if n.Labels != nil && n.Labels.DC != "" && (n.Labels.Product == "" || n.Labels.Product == expand.ProductConsul) {
 			dcs[n.Labels.DC] = true
 		}
 	}

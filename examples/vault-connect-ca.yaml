@@ -1,0 +1,39 @@
+# Vault as Consul's Connect CA: dc1's servers join the Vault cluster's
+# network and keep the mesh's root and intermediate CAs in Vault's PKI
+# secrets engine. web reaches api through sidecars whose certificates
+# Vault signed.
+parker: v1alpha1
+name: vault-connect-ca
+versions: { consul: 1.22.7, envoy: 1.35.12, vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3 }
+consul:
+  datacenters:
+    dc1:
+      servers: 3
+      connect: { ca: { vault: east } }
+      service_template: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: 9091 }
+        api:
+          service: { port: 9090 }
+
+scenario:
+  steps:
+    - wait: dc1 ready
+    - assert:
+        exec: { on: dc1/server-1, run: "consul connect ca get-config", output: '"Provider": "vault"' }
+        within: 30s
+    # Consul mounted its PKI paths in Vault.
+    - assert:
+        exec: { on: east/vault-1, run: "vault secrets list", output: "connect-dc1-intermediate/" }
+        within: 30s
+    - assert: { consul: { service_healthy: api-sidecar-proxy }, within: 60s }
+    - name: web reaches api through the mesh, on Vault-signed certificates
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 60s
