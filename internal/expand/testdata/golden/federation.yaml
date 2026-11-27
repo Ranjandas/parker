@@ -1,0 +1,350 @@
+parker: v1alpha1
+name: federation
+versions:
+  consul: 1.22.7
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+    auto: true
+  dc2-lan:
+    subnet: 10.2.0.0/24
+    gateway: 10.2.0.1
+    auto: true
+  wan:
+    subnet: 10.255.0.0/24
+    gateway: 10.255.0.1
+    auto: true
+nodes:
+  dc1-client:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.100
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.100",
+          "bind_addr": "10.1.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "client",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": false
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+          timeout: 60s
+    labels:
+      dc: dc1
+      name: client
+      role: client
+      group: client
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+      wan:
+        ip: 10.255.0.10
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.10",
+          "advertise_addr_wan": "10.255.0.10",
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_interval_wan": "1s",
+          "retry_join": [
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "retry_join_wan": [
+            "10.255.0.11",
+            "10.255.0.12",
+            "10.255.0.30"
+          ],
+          "serf_lan": "10.1.0.10",
+          "serf_wan": "10.255.0.10",
+          "server": true,
+          "ui_config": {
+            "enabled": true
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            wan_members: ">=4"
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-1
+      role: server
+  dc1-server-2:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.11
+      wan:
+        ip: 10.255.0.11
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.11",
+          "advertise_addr_wan": "10.255.0.11",
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-2",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_interval_wan": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.12"
+          ],
+          "retry_join_wan": [
+            "10.255.0.10",
+            "10.255.0.12",
+            "10.255.0.30"
+          ],
+          "serf_lan": "10.1.0.11",
+          "serf_wan": "10.255.0.11",
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            wan_members: ">=4"
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-2
+      role: server
+  dc1-server-3:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.12
+      wan:
+        ip: 10.255.0.12
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.12",
+          "advertise_addr_wan": "10.255.0.12",
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-3",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_interval_wan": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11"
+          ],
+          "retry_join_wan": [
+            "10.255.0.10",
+            "10.255.0.11",
+            "10.255.0.30"
+          ],
+          "serf_lan": "10.1.0.12",
+          "serf_wan": "10.255.0.12",
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            wan_members: ">=4"
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-3
+      role: server
+  dc2-api:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.100
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.100",
+          "bind_addr": "10.2.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "api",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:9090/health",
+                "interval": "2s"
+              },
+              "name": "api",
+              "port": 9090
+            }
+          ]
+        }
+    processes:
+      api:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - api
+          - --port
+          - "9090"
+          - --dc
+          - dc2
+          - --control
+          - ${node_dir}/api.fake.sock
+        env:
+          PARKER_FAKE: "{}"
+        depends_on:
+          dc2-api/consul:
+            condition: started
+        ready_when:
+          port: 9090
+          http:
+            url: http://127.0.0.1:9090/ready
+            status: 200
+          consul:
+            service_healthy: api
+          timeout: 60s
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+          timeout: 60s
+    labels:
+      dc: dc2
+      name: api
+      role: client
+      group: api
+      services:
+        - api
+  dc2-server-1:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.10
+      wan:
+        ip: 10.255.0.30
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.10",
+          "advertise_addr_wan": "10.255.0.30",
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 1,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_interval_wan": "1s",
+          "retry_join": null,
+          "retry_join_wan": [
+            "10.255.0.10",
+            "10.255.0.11",
+            "10.255.0.12"
+          ],
+          "serf_lan": "10.2.0.10",
+          "serf_wan": "10.255.0.30",
+          "server": true,
+          "ui_config": {
+            "enabled": true
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            wan_members: ">=4"
+          timeout: 90s
+    labels:
+      dc: dc2
+      name: server-1
+      role: server

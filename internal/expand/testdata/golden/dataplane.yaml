@@ -1,0 +1,480 @@
+parker: v1alpha1
+name: dataplane
+versions:
+  consul: 1.22.7
+  consul-dataplane: 1.9.12
+  envoy: 1.35.12
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+    auto: true
+nodes:
+  dc1-api:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.100
+    processes:
+      api:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - api
+          - --port
+          - "9090"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/api.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9092/\"]}"
+        ready_when:
+          port: 9090
+          http:
+            url: http://127.0.0.1:9090/ready
+            status: 200
+          timeout: 60s
+      api-sidecar:
+        run:
+          - consul-dataplane
+          - -addresses
+          - exec=echo 10.1.0.10 10.1.0.11 10.1.0.12
+          - -proxy-id
+          - api-sidecar-proxy
+          - -proxy-node-name
+          - api
+          - -envoy-admin-bind-address
+          - 127.0.0.1
+          - -envoy-admin-bind-port
+          - "19000"
+          - -graceful-port
+          - "20300"
+          - -log-level
+          - info
+          - -grpc-port
+          - "8502"
+          - -tls-disabled
+        uses:
+          - envoy
+        depends_on:
+          dc1-server-1/dataplane-health:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: api
+      role: dataplane
+      group: api
+      services:
+        - api
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+    files:
+      config-entries.json: |
+        [
+          {
+            "file": "${node_dir}/config-entry-0.json",
+            "label": "consul.datacenters.dc1.config_entries[0] (line 20)"
+          },
+          {
+            "file": "${node_dir}/config-entry-1.json",
+            "label": "consul.datacenters.dc1.config_entries[1] (line 21)"
+          }
+        ]
+      config-entry-0.json: |-
+        {
+          "Kind": "service-intentions",
+          "Name": "api",
+          "Sources": [
+            {
+              "Action": "allow",
+              "Name": "web"
+            }
+          ]
+        }
+      config-entry-1.json: |-
+        {
+          "Kind": "service-intentions",
+          "Name": "web",
+          "Sources": [
+            {
+              "Action": "allow",
+              "Name": "api"
+            }
+          ]
+        }
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.10",
+          "bind_addr": "10.1.0.10",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "ports": {
+            "grpc": 8502
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": true
+          }
+        }
+      dataplane.json: |
+        [
+          {
+            "node": "api",
+            "address": "10.1.0.100",
+            "datacenter": "dc1",
+            "service": {
+              "id": "api",
+              "name": "api",
+              "port": 9090,
+              "address": "10.1.0.100"
+            },
+            "probe": "http://10.1.0.100:9090/health"
+          },
+          {
+            "node": "api",
+            "address": "10.1.0.100",
+            "datacenter": "dc1",
+            "service": {
+              "id": "api-sidecar-proxy",
+              "name": "api-sidecar-proxy",
+              "port": 21000,
+              "address": "10.1.0.100",
+              "kind": "connect-proxy",
+              "proxy": {
+                "destination_service_name": "api",
+                "destination_service_id": "api",
+                "local_service_address": "127.0.0.1",
+                "local_service_port": 9090,
+                "upstreams": [
+                  {
+                    "destination_name": "web",
+                    "local_bind_port": 9092
+                  }
+                ]
+              }
+            },
+            "probe": "10.1.0.100:21000"
+          }
+        ]
+    processes:
+      config-entries:
+        run:
+          - ${parker}
+          - config-entries
+          - ${node_dir}/config-entries.json
+        env:
+          CONSUL_HTTP_ADDR: 127.0.0.1:8500
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: config entries applied"
+          timeout: 60s
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+      dataplane-health:
+        run:
+          - ${parker}
+          - dataplane-health
+          - ${node_dir}/dataplane.json
+          - --servers
+          - 10.1.0.10,10.1.0.11,10.1.0.12
+        env:
+          CONSUL_HTTP_ADDR: 127.0.0.1:8500
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: dataplane services registered"
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: server-1
+      role: server
+  dc1-server-2:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.11
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.11",
+          "bind_addr": "10.1.0.11",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-2",
+          "ports": {
+            "grpc": 8502
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.12"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-2
+      role: server
+  dc1-server-3:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.12
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.12",
+          "bind_addr": "10.1.0.12",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-3",
+          "ports": {
+            "grpc": 8502
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-3
+      role: server
+  dc1-web:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.101
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.101",
+          "bind_addr": "10.1.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "web",
+          "ports": {
+            "grpc": 8502
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:8080/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {
+                    "upstreams": [
+                      {
+                        "destination_name": "api",
+                        "local_bind_port": 9091
+                      }
+                    ]
+                  }
+                }
+              },
+              "name": "web",
+              "port": 8080
+            }
+          ]
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+          timeout: 60s
+      web:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - web
+          - --port
+          - "8080"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/web.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9091/\"]}"
+        depends_on:
+          dc1-web/consul:
+            condition: started
+        ready_when:
+          port: 8080
+          http:
+            url: http://127.0.0.1:8080/ready
+            status: 200
+          consul:
+            service_healthy: web
+          timeout: 60s
+      web-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - web
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_GRPC_ADDR: 127.0.0.1:8502
+          CONSUL_HTTP_ADDR: 127.0.0.1:8500
+        depends_on:
+          dc1-web/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: web
+      role: client
+      group: web
+      services:
+        - web
+scenario:
+  steps:
+    - wait: dc1 ready
+    - name: api is in the catalog with no agent, healthy
+      assert:
+        exec:
+          "on": dc1/server-1
+          run: "curl -sf ${CONSUL_CACERT:+--cacert $CONSUL_CACERT} -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" \"${CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}/v1/health/service/api?passing\""
+          output: "\"Node\":\"api\""
+        within: 60s
+    - name: web (agent) reaches api (dataplane) through the mesh
+      assert:
+        exec:
+          "on": dc1/web
+          run: curl -sf -m 2 http://127.0.0.1:9091/
+          output: "\"name\":\"api\""
+        within: 60s
+    - name: api (dataplane) reaches web (agent) through the mesh
+      assert:
+        exec:
+          "on": dc1/api
+          run: curl -sf -m 2 http://127.0.0.1:9092/
+          output: "\"name\":\"web\""
+        within: 60s
+    - name: stopping api's service turns its check critical
+      stop: dc1/api
+    - assert:
+        exec:
+          "on": dc1/server-1
+          run: "curl -sf ${CONSUL_CACERT:+--cacert $CONSUL_CACERT} -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" \"${CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}/v1/health/checks/api\" | grep -q critical"
+        within: 30s
