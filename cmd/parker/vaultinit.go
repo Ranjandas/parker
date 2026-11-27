@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,9 +37,23 @@ func vaultInitCmd() *cobra.Command {
 			}
 			ctx, stop := signalContext()
 			defer stop()
-			v := vaultHTTP{c: &http.Client{Timeout: 5 * time.Second}}
-			if err := vaultInit(ctx, v, s, 90*time.Second, os.Stderr); err != nil {
-				return err
+			// Restarted in the same run (a fault on this node), it leaves the
+			// servers be: a restarted server stays sealed, as a real one
+			// does. A new run (up, resume) unseals them again.
+			run := os.Getenv("PARKER_RUN")
+			done := filepath.Join(filepath.Dir(s.KeysFile), expand.VaultInitDone)
+			if b, err := os.ReadFile(done); err != nil || run == "" || string(b) != run {
+				v := vaultHTTP{c: &http.Client{Timeout: 5 * time.Second}}
+				if err := vaultInit(ctx, v, s, 90*time.Second, os.Stderr); err != nil {
+					return err
+				}
+				if run != "" {
+					if err := os.WriteFile(done, []byte(run), 0o600); err != nil {
+						return err
+					}
+				}
+			} else {
+				fmt.Fprintln(os.Stderr, "vault-init: already done in this run; leaving the servers as they are")
 			}
 			fmt.Println(expand.VaultReadyLine)
 			<-ctx.Done()

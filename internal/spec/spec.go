@@ -127,6 +127,9 @@ type Step struct {
 	// LogLevel changes the log level of the Consul agents, Envoys and
 	// fake services on the nodes a selector matches, without a restart.
 	LogLevel *LogLevelStep `yaml:"log_level,omitempty"`
+	// Vault acts on Vault servers: seal, unseal or step_down, each a
+	// selector.
+	Vault *VaultStep `yaml:"vault,omitempty"`
 }
 
 // LogLevelStep changes running processes' log levels. With no level,
@@ -243,6 +246,8 @@ type Assert struct {
 	// Call sends one request to a fake service (run: fake-service) and
 	// checks the answer and the hops it went through.
 	Call *CallAssert `yaml:"call,omitempty"`
+	// Vault checks the state of Vault servers.
+	Vault *VaultAssert `yaml:"vault,omitempty"`
 	// Within is how long to keep retrying, e.g. 20s; default once.
 	Within string `yaml:"within,omitempty"`
 }

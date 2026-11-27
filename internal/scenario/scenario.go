@@ -52,6 +52,10 @@ type Lab interface {
 	// LogLevel changes (or, for an empty step, reads) the log levels of
 	// the processes on node and returns a line per process.
 	LogLevel(ctx context.Context, node string, st *spec.LogLevelStep) ([]string, error)
+	// Vault runs a Vault action (seal, unseal, step_down) on node.
+	Vault(ctx context.Context, action, node string) error
+	// VaultCheck checks node's Vault server against an assertion once.
+	VaultCheck(ctx context.Context, node string, a *spec.VaultAssert) error
 }
 
 // Upgrades lists a scenario's upgrade steps, so their binaries can be
@@ -151,7 +155,7 @@ func Validate(sc *spec.Scenario) error {
 func validateStep(st *spec.Step) error {
 	if n := len(actions(st)); n != 1 {
 		if n == 0 {
-			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ", upgrade, fake)")
+			return errors.New("no action (want one of wait, sleep, exec, assert, snapshot, partition, heal, " + strings.Join(ProcActions, ", ") + ", upgrade, fake, log_level, vault)")
 		}
 		return fmt.Errorf("one action per step, got %s", strings.Join(actions(st), ", "))
 	}
@@ -170,19 +174,32 @@ func validateStep(st *spec.Step) error {
 	}
 	if a := st.Assert; a != nil {
 		n := 0
-		for _, set := range []bool{a.Consul != nil, a.Exec != nil, a.Call != nil} {
+		for _, set := range []bool{a.Consul != nil, a.Exec != nil, a.Call != nil, a.Vault != nil} {
 			if set {
 				n++
 			}
 		}
 		if n != 1 {
-			return errors.New("assert: needs exactly one of consul:, exec: or call:")
+			return errors.New("assert: needs exactly one of consul:, vault:, exec: or call:")
 		}
 		if a.Call != nil && a.Call.On == "" {
 			return errors.New("assert.call: needs on:")
 		}
 		if a.Exec != nil && (a.Exec.On == "" || len(a.Exec.Run) == 0) {
 			return errors.New("assert.exec: needs on: and run:")
+		}
+		if v := a.Vault; v != nil {
+			if v.On == "" {
+				return errors.New("assert.vault: needs on:")
+			}
+			if v.Sealed == nil && v.Active == nil && v.RaftPeers == "" {
+				return errors.New("assert.vault: nothing to check (sealed, active, raft_peers)")
+			}
+			if v.RaftPeers != "" {
+				if _, err := spec.ParseMembers(v.RaftPeers); err != nil {
+					return fmt.Errorf("assert.vault.raft_peers: %w", err)
+				}
+			}
 		}
 		if c := a.Consul; c != nil && !c.Leader && c.Members == "" && c.Peers == "" && c.ServiceHealthy == "" {
 			return errors.New("assert.consul: nothing to check (leader, members, peers, service_healthy)")
@@ -216,6 +233,17 @@ func validateStep(st *spec.Step) error {
 	if ll := st.LogLevel; ll != nil {
 		if err := ValidateLogLevel(ll); err != nil {
 			return err
+		}
+	}
+	if v := st.Vault; v != nil {
+		n := 0
+		for _, s := range []string{v.Seal, v.Unseal, v.StepDown} {
+			if s != "" {
+				n++
+			}
+		}
+		if n != 1 {
+			return errors.New("vault: needs exactly one of seal:, unseal: or step_down:")
 		}
 	}
 	for i, g := range st.Partition {
@@ -257,6 +285,9 @@ func actions(st *spec.Step) []string {
 	}
 	if st.LogLevel != nil {
 		a = append(a, "log_level")
+	}
+	if st.Vault != nil {
+		a = append(a, "vault")
 	}
 	for _, x := range []struct{ name, sel string }{
 		{"kill", st.Kill}, {"stop", st.Stop}, {"start", st.Start},
@@ -307,6 +338,14 @@ func Selectors(sc *spec.Scenario) []string {
 		if st.LogLevel != nil {
 			out = append(out, st.LogLevel.On)
 		}
+		if st.Vault != nil {
+			if _, sel := st.Vault.Action(); sel != "" {
+				out = append(out, sel)
+			}
+		}
+		if st.Assert != nil && st.Assert.Vault != nil {
+			out = append(out, st.Assert.Vault.On)
+		}
 	}
 	return out
 }
@@ -348,6 +387,8 @@ func Label(st *spec.Step) string {
 		return "assert consul"
 	case st.Assert != nil && st.Assert.Call != nil:
 		return "assert call " + st.Assert.Call.On
+	case st.Assert != nil && st.Assert.Vault != nil:
+		return "assert vault on " + st.Assert.Vault.On
 	case st.Assert != nil:
 		return "assert exec on " + st.Assert.Exec.On
 	case st.Snapshot != "":
@@ -369,6 +410,9 @@ func Label(st *spec.Step) string {
 		return fakeLabel(st.Fake)
 	case st.LogLevel != nil:
 		return logLevelLabel(st.LogLevel)
+	case st.Vault != nil:
+		a, sel := st.Vault.Action()
+		return "vault " + strings.ReplaceAll(a, "_", "-") + " " + sel
 	}
 	if a, sel := procTarget(st); a != "" {
 		return a + " " + sel
@@ -466,6 +510,21 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		if c := st.Assert.Call; c != nil {
 			check = func() error { return assertCall(ctx, l, c, say) }
 		}
+		if v := st.Assert.Vault; v != nil {
+			check = func() error {
+				nodes, err := l.Resolve(v.On)
+				if err != nil {
+					return err
+				}
+				var errs []error
+				for _, n := range nodes {
+					if err := l.VaultCheck(ctx, n, v); err != nil {
+						errs = append(errs, err)
+					}
+				}
+				return errors.Join(errs...)
+			}
+		}
 		return retry(ctx, clk, within, check)
 
 	case st.Snapshot != "":
@@ -536,6 +595,21 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 			}
 		}
 		return nil
+	}
+	if v := st.Vault; v != nil {
+		action, sel := v.Action()
+		nodes, err := l.Resolve(sel)
+		if err != nil {
+			return err
+		}
+		say("  %s %s", strings.ReplaceAll(action, "_", "-"), strings.Join(nodes, ", "))
+		var errs []error
+		for _, n := range nodes {
+			if err := l.Vault(ctx, action, n); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
 	}
 	if ll := st.LogLevel; ll != nil {
 		nodes, err := l.Resolve(ll.On)

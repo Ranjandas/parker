@@ -149,7 +149,8 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		return none(inDC(func(l *spec.NodeLabels) bool { return l.Role == "client" }), nil)
 	case "gateways":
 		return none(inDC(func(l *spec.NodeLabels) bool { return l.Role == "gateway" }), nil)
-	case "leader", "followers":
+	case "leader", "followers", "active", "standbys":
+		// active and standbys are Vault's words for leader and followers.
 		if raft == nil {
 			return nil, fmt.Errorf("selector %q: %w", sel, ErrNoRaft)
 		}
@@ -157,7 +158,7 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("selector %q: %w", sel, err)
 		}
-		if what == "leader" {
+		if what == "leader" || what == "active" {
 			return []string{leader}, nil
 		}
 		return none(filter(func(n string, l *spec.NodeLabels) bool { return l.DC == dc && l.Role == "server" && n != leader }), nil)

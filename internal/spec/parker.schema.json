@@ -30,6 +30,10 @@
           "$ref": "#/$defs/CallAssert",
           "description": "Call sends one request to a fake service (run: fake-service) and\nchecks the answer and the hops it went through."
         },
+        "vault": {
+          "$ref": "#/$defs/VaultAssert",
+          "description": "Vault checks the state of Vault servers."
+        },
         "within": {
           "type": "string",
           "description": "Within is how long to keep retrying, e.g. 20s; default once."
@@ -1704,6 +1708,10 @@
         "log_level": {
           "$ref": "#/$defs/LogLevelStep",
           "description": "LogLevel changes the log level of the Consul agents, Envoys and\nfake services on the nodes a selector matches, without a restart."
+        },
+        "vault": {
+          "$ref": "#/$defs/VaultStep",
+          "description": "Vault acts on Vault servers: seal, unseal or step_down, each a\nselector."
         }
       },
       "additionalProperties": false,
@@ -1752,6 +1760,32 @@
         "clusters"
       ],
       "description": "Vault is the vault: section: Vault clusters, each on its own network."
+    },
+    "VaultAssert": {
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "On is a selector: east, east/vault-2, east/active, ..."
+        },
+        "sealed": {
+          "type": "boolean",
+          "description": "Sealed: the servers are sealed (true) or unsealed (false)."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Active: the servers are the active one (true) or standbys (false)."
+        },
+        "raft_peers": {
+          "type": "string",
+          "description": "RaftPeers, e.g. \"\u003e=3\": voting raft peers, asked of the servers."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "on"
+      ],
+      "description": "VaultAssert checks the Vault servers a selector matches: each must match every field set."
     },
     "VaultCluster": {
       "properties": {
@@ -1840,6 +1874,25 @@
       "additionalProperties": false,
       "type": "object",
       "description": "VaultSettings are the settings a cluster can inherit from defaults."
+    },
+    "VaultStep": {
+      "properties": {
+        "seal": {
+          "type": "string",
+          "description": "Seal seals the servers. Vault seals an active server through its\nAPI; a standby is restarted, as Vault asks, and comes back sealed."
+        },
+        "unseal": {
+          "type": "string",
+          "description": "Unseal unseals them with the cluster's key."
+        },
+        "step_down": {
+          "type": "string",
+          "description": "StepDown makes the active server among them give up leadership."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultStep acts on the Vault servers a selector matches."
     }
   },
   "properties": {

@@ -91,6 +91,41 @@ hand is one command:
 $ parker exec vault east/vault-2 -- sh -c 'vault operator unseal "$PARKER_VAULT_UNSEAL_KEY"'
 ```
 
+## Seal, unseal and step down
+
+Scenario steps act on Vault servers through [selectors](selectors.md):
+`east/active` is the cluster's active server at that moment, and
+`east/standbys` the others.
+
+| Step | Does |
+|---|---|
+| `vault: { seal: SEL }` | Seals the servers. Vault seals only an active server through its API, so a standby is restarted instead, as Vault suggests, and comes back sealed. |
+| `vault: { unseal: SEL }` | Unseals them with the cluster's key. An unsealed server is left as is. |
+| `vault: { step_down: SEL }` | The active server among them gives up being active, and a standby takes over. Standbys are left as they are. |
+
+`assert: { vault: ... }` checks them: `sealed`, `active` and
+`raft_peers`, described under [assert](scenarios.md#assert).
+
+```yaml
+parker: v1alpha1
+name: vault-seal
+versions: { vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3 }
+scenario:
+  steps:
+    - wait: east ready
+    # New servers join raft as non-voters; wait until all three vote.
+    - assert: { vault: { on: east/active, raft_peers: ">=3" }, within: 60s }
+    - vault: { step_down: east/active }
+    - vault: { seal: east/vault-2 }
+    - assert: { vault: { on: east/vault-2, sealed: true }, within: 30s }
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - vault: { unseal: east/vault-2 }
+    - assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 60s }
+```
+
 ## Old Vault releases
 
 Integrated storage needs Vault 1.4 or later, and `parker validate` refuses

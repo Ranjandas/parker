@@ -25,6 +25,8 @@ const (
 	VaultInit         = "vault-init"
 	VaultInitManifest = "vault-init.json"
 	VaultInitKeys     = "vault-keys.json" // unseal keys, in the first server's dir
+	// VaultInitDone records the supervision run vault-init finished in.
+	VaultInitDone = "vault-init.run"
 	// VaultReadyLine is what vault-init logs once every server is unsealed.
 	VaultReadyLine = "parker: vault initialised and unsealed"
 	// vaultSubnetBase: cluster LANs default to 10.<base+i>.0.0/24, clear
@@ -111,8 +113,10 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				Labels: &spec.NodeLabels{Product: ProductVault, DC: name, Name: "vault-" + strconv.Itoa(k+1),
 					Role: "server", Group: "vault", Meta: c.Meta},
 			}
+			// A sealed server is up too: it is sealed after every restart,
+			// and vault-init or the user unseals it.
 			ready := &spec.Ready{
-				HTTP:    &spec.HTTPCheck{URL: fmt.Sprintf("http://127.0.0.1:%d/v1/sys/health?standbyok=true&perfstandbyok=true", VaultPort)},
+				HTTP:    &spec.HTTPCheck{URL: fmt.Sprintf("http://127.0.0.1:%d/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200", VaultPort)},
 				Timeout: "90s",
 			}
 			if c.Dev {

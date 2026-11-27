@@ -22,6 +22,7 @@ $ parker logs lab.yaml dc1/servers --level debug
 | `dc1/server-2`, `dc1/web-1` | One node. |
 | `dc1/web` | A node group: every copy of `nodes.web` (`count: N`), in every partition. |
 | `dc1/leader`, `dc1/followers` | Raft roles, asked of the running servers at that moment. |
+| `east/active`, `east/standbys` | A [Vault cluster](vault.md)'s active server and its standbys, asked at that moment. `east/leader` and `east/followers` mean the same. |
 | `svc:api`, `svc:dc2/api` | The nodes that run the service `api`. |
 | `dc1/team-a/billing-1`, `dc1/team-a/billing` | A node or a group inside the admin partition `team-a`. |
 | `part:team-a`, `part:dc1/team-a` | The client agents in a partition; `part:default` for the rest. |
