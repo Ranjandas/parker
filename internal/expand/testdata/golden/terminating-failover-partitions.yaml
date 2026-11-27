@@ -1,0 +1,1892 @@
+parker: v1alpha1
+name: tgw-failover-ent
+versions:
+  consul: 2.1.0+ent
+  envoy: 1.39.1
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+  dc2-lan:
+    subnet: 10.2.0.0/24
+    gateway: 10.2.0.1
+  wan:
+    subnet: 10.255.0.0/24
+    gateway: 10.255.0.1
+    auto: true
+nodes:
+  api:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.254
+      dc2-lan:
+        ip: 10.2.0.254
+    processes:
+      api:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - api
+          - --port
+          - "9000"
+          - --dc
+          - ""
+          - --control
+          - ${node_dir}/api.fake.sock
+        env:
+          PARKER_FAKE: "{\"facts\":false}"
+        ready_when:
+          port: 9000
+          http:
+            url: http://127.0.0.1:9000/ready
+            status: 200
+          timeout: 60s
+    labels:
+      name: api
+      role: external
+      group: api
+      services:
+        - api
+      namespaces:
+        - app
+  dc1-part-a-mesh:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.100
+      wan:
+        ip: 10.255.0.200
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.100",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "mesh",
+          "partition": "part-a",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      mesh-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=mesh
+          - -register
+          - -service
+          - mesh-gateway
+          - -address
+          - 10.1.0.100:8443
+          - -bind-address
+          - default=0.0.0.0:8443
+          - -wan-address
+          - 10.255.0.200:8443
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_NAMESPACE: default
+          CONSUL_PARTITION: part-a
+        depends_on:
+          dc1-part-a-mesh/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: mesh
+      role: gateway
+      group: mesh
+      partition: part-a
+  dc1-part-a-terminating:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.101
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.101",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "terminating",
+          "partition": "part-a",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      terminating-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=terminating
+          - -register
+          - -service
+          - terminating-gateway
+          - -address
+          - 10.1.0.101:8443
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_NAMESPACE: app
+          CONSUL_PARTITION: part-a
+        depends_on:
+          dc1-part-a-terminating/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: terminating
+      role: gateway
+      group: terminating
+      partition: part-a
+      namespaces:
+        - app
+  dc1-part-a-web:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.102
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.102",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.102",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "web",
+          "partition": "part-a",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:8080/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {
+                    "upstreams": [
+                      {
+                        "destination_name": "api",
+                        "local_bind_port": 9091
+                      }
+                    ]
+                  }
+                }
+              },
+              "name": "web",
+              "namespace": "app",
+              "port": 8080,
+              "token": "00000000-0000-4000-8000-000000000000"
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      web:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - web
+          - --port
+          - "8080"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/web.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9091/\"]}"
+        depends_on:
+          dc1-part-a-web/consul:
+            condition: started
+        ready_when:
+          port: 8080
+          http:
+            url: http://127.0.0.1:8080/ready
+            status: 200
+          consul:
+            service_healthy: web
+            partition: part-a
+            namespace: app
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      web-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - web
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_NAMESPACE: app
+          CONSUL_PARTITION: part-a
+        depends_on:
+          dc1-part-a-web/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: web
+      role: client
+      group: web
+      services:
+        - web
+      partition: part-a
+      namespaces:
+        - app
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+      wan:
+        ip: 10.255.0.10
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      config-entries.json: |
+        [
+          {
+            "file": "${node_dir}/config-entry-0.json",
+            "label": "consul.datacenters.dc1.partitions.part-a.config_entries[0] (line 56)",
+            "partition": "part-a"
+          },
+          {
+            "file": "${node_dir}/config-entry-1.json",
+            "label": "consul.datacenters.dc1.partitions.part-a.config_entries[1] (line 59)",
+            "partition": "part-a"
+          },
+          {
+            "file": "${node_dir}/config-entry-2.json",
+            "label": "consul.datacenters.dc1.partitions.part-a.config_entries[2] (line 65)",
+            "partition": "part-a"
+          },
+          {
+            "file": "${node_dir}/gateway-entry-0.json",
+            "label": "consul.datacenters.dc1.partitions.part-a.gateways.terminating.entry",
+            "partition": "part-a"
+          }
+        ]
+      config-entry-0.json: |-
+        {
+          "Kind": "proxy-defaults",
+          "MeshGateway": {
+            "Mode": "local"
+          },
+          "Name": "global"
+        }
+      config-entry-1.json: |-
+        {
+          "ConnectTimeout": "2s",
+          "Failover": {
+            "*": {
+              "Targets": [
+                {
+                  "Namespace": "app",
+                  "Peer": "dc1-dc2"
+                }
+              ]
+            }
+          },
+          "Kind": "service-resolver",
+          "Name": "api",
+          "Namespace": "app"
+        }
+      config-entry-2.json: |-
+        {
+          "Kind": "service-intentions",
+          "Name": "api",
+          "Namespace": "app",
+          "Sources": [
+            {
+              "Action": "allow",
+              "Name": "web",
+              "Namespace": "app"
+            }
+          ]
+        }
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.10",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "serf_lan": "10.1.0.10",
+          "serf_wan": "10.1.0.10",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": true
+          }
+        }
+      dataplane.json: |
+        [
+          {
+            "node": "api",
+            "address": "10.1.0.254",
+            "datacenter": "dc1",
+            "partition": "part-a",
+            "node_meta": {
+              "external-node": "true",
+              "external-probe": "true"
+            },
+            "service": {
+              "id": "api",
+              "name": "api",
+              "port": 9000,
+              "address": "10.1.0.254",
+              "namespace": "app"
+            },
+            "probe": "http://10.1.0.254:9000/health"
+          }
+        ]
+      gateway-entry-0.json: |
+        {
+          "Kind": "terminating-gateway",
+          "Name": "terminating-gateway",
+          "Namespace": "app",
+          "Services": [
+            {
+              "Name": "api",
+              "Namespace": "app"
+            }
+          ]
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+      tenancy.json: |
+        {
+          "partitions": [
+            "part-a"
+          ],
+          "namespaces": [
+            {
+              "partition": "part-a",
+              "name": "app",
+              "policy_defaults": [
+                "parker-read-everywhere"
+              ]
+            }
+          ],
+          "policies": [
+            {
+              "name": "parker-mesh-gateway-mesh-gateway",
+              "partition": "part-a",
+              "rules": "mesh = \"write\"\npeering = \"read\"\nservice \"mesh-gateway\" { policy = \"write\" }\nservice_prefix \"\" { policy = \"read\" }\nnode_prefix \"\" { policy = \"read\" }\nagent_prefix \"\" { policy = \"read\" }\nnamespace_prefix \"\" {\n  service_prefix \"\" { policy = \"read\" }\n  node_prefix \"\" { policy = \"read\" }\n}\n"
+            },
+            {
+              "name": "parker-terminating-gateway-terminating-gateway",
+              "partition": "part-a",
+              "namespace": "app",
+              "rules": "service \"api\" { policy = \"write\" }\n"
+            },
+            {
+              "name": "parker-read-everywhere",
+              "partition": "part-a",
+              "rules": "namespace_prefix \"\" {\n  service_prefix \"\" { policy = \"read\" }\n  node_prefix \"\" { policy = \"read\" }\n}\n"
+            }
+          ],
+          "tokens": [
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker mesh gateway mesh-gateway",
+              "partition": "part-a",
+              "service": "mesh-gateway",
+              "policies": [
+                "parker-mesh-gateway-mesh-gateway"
+              ]
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker agent mesh",
+              "partition": "part-a",
+              "node": "mesh",
+              "datacenter": "dc1"
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker terminating gateway terminating-gateway",
+              "partition": "part-a",
+              "namespace": "app",
+              "service": "terminating-gateway",
+              "policies": [
+                "parker-terminating-gateway-terminating-gateway"
+              ]
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker agent terminating",
+              "partition": "part-a",
+              "node": "terminating",
+              "datacenter": "dc1"
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker service web",
+              "partition": "part-a",
+              "namespace": "app",
+              "service": "web"
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker agent web",
+              "partition": "part-a",
+              "node": "web",
+              "datacenter": "dc1"
+            }
+          ]
+        }
+    processes:
+      acl-setup:
+        run:
+          - ${parker}
+          - acl-setup
+          - --agent-token
+          - 00000000-0000-4000-8000-000000000000
+          - --enterprise
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: ACLs set up"
+          timeout: 60s
+      config-entries:
+        run:
+          - ${parker}
+          - config-entries
+          - ${node_dir}/config-entries.json
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: config entries applied"
+          timeout: 60s
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+      dataplane-health:
+        run:
+          - ${parker}
+          - dataplane-health
+          - ${node_dir}/dataplane.json
+          - --servers
+          - 10.1.0.10,10.1.0.11,10.1.0.12
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: dataplane services registered"
+          timeout: 60s
+        restart: on-failure
+      peering-dc1-dc2:
+        run:
+          - sh
+          - -c
+          - |-
+            if ! consul peering read -name dc1-dc2 >/dev/null 2>&1; then
+              # The acceptor's gateway can lag its servers: until it routes to them the
+              # exchange fails (tls: unrecognized name), so retry until ready_when's
+              # timeout.
+              until consul peering establish -name dc1-dc2 -peering-token "$(cat ${run_dir}/peering-dc1-dc2.token)"; do sleep 2; done
+            fi
+            until consul peering read -name dc1-dc2 | grep -q ACTIVE; do sleep 1; done
+            echo "parker: peering dc1-dc2 active"
+            exec sleep 2147483647
+        uses:
+          - consul
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_PARTITION: part-a
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/config-entries:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-1/tenancy:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+          dc2-server-1/peering-dc1-dc2-token:
+            condition: ready
+        ready_when:
+          log: "parker: peering dc1-dc2 active"
+          timeout: 120s
+        restart: on-failure
+      tenancy:
+        run:
+          - ${parker}
+          - tenancy
+          - ${node_dir}/tenancy.json
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc1-server-1/acl-setup:
+            condition: ready
+          dc1-server-1/consul:
+            condition: ready
+          dc1-server-2/consul:
+            condition: ready
+          dc1-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: partitions and namespaces ready"
+          timeout: 60s
+    labels:
+      dc: dc1
+      name: server-1
+      role: server
+  dc1-server-2:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.11
+      wan:
+        ip: 10.255.0.11
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.11",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-2",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.12"
+          ],
+          "serf_lan": "10.1.0.11",
+          "serf_wan": "10.1.0.11",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": false
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-2
+      role: server
+  dc1-server-3:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.12
+      wan:
+        ip: 10.255.0.12
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.1.0.12",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-3",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11"
+          ],
+          "serf_lan": "10.1.0.12",
+          "serf_wan": "10.1.0.12",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": false
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-3
+      role: server
+  dc2-part-b-mesh:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.100
+      wan:
+        ip: 10.255.0.210
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.2.0.100",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.2.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "mesh",
+          "partition": "part-b",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc2",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10",
+            "10.2.0.11",
+            "10.2.0.12"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-1/tenancy:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      mesh-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=mesh
+          - -register
+          - -service
+          - mesh-gateway
+          - -address
+          - 10.2.0.100:8443
+          - -bind-address
+          - default=0.0.0.0:8443
+          - -wan-address
+          - 10.255.0.210:8443
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_NAMESPACE: default
+          CONSUL_PARTITION: part-b
+        depends_on:
+          dc2-part-b-mesh/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc2
+      name: mesh
+      role: gateway
+      group: mesh
+      partition: part-b
+  dc2-part-b-terminating:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.101
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.2.0.101",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.2.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "terminating",
+          "partition": "part-b",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc2",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10",
+            "10.2.0.11",
+            "10.2.0.12"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-1/tenancy:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=4"
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 60s
+      terminating-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=terminating
+          - -register
+          - -service
+          - terminating-gateway
+          - -address
+          - 10.2.0.101:8443
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_NAMESPACE: app
+          CONSUL_PARTITION: part-b
+        depends_on:
+          dc2-part-b-terminating/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc2
+      name: terminating
+      role: gateway
+      group: terminating
+      partition: part-b
+      namespaces:
+        - app
+  dc2-server-1:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.10
+      wan:
+        ip: 10.255.0.30
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      config-entries.json: |
+        [
+          {
+            "file": "${node_dir}/config-entry-0.json",
+            "label": "consul.datacenters.dc2.partitions.part-b.config_entries[0] (line 80)",
+            "partition": "part-b"
+          },
+          {
+            "file": "${node_dir}/gateway-entry-0.json",
+            "label": "consul.datacenters.dc2.partitions.part-b.gateways.terminating.entry",
+            "partition": "part-b"
+          },
+          {
+            "file": "${node_dir}/gateway-entry-1.json",
+            "label": "consul.peering exports (exported-services entry)",
+            "partition": "part-b"
+          }
+        ]
+      config-entry-0.json: |-
+        {
+          "Kind": "service-intentions",
+          "Name": "api",
+          "Namespace": "app",
+          "Sources": [
+            {
+              "Action": "allow",
+              "Name": "web",
+              "Namespace": "app",
+              "Peer": "dc1-dc2"
+            }
+          ]
+        }
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.2.0.10",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc2",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.11",
+            "10.2.0.12"
+          ],
+          "serf_lan": "10.2.0.10",
+          "serf_wan": "10.2.0.10",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": true
+          }
+        }
+      dataplane.json: |
+        [
+          {
+            "node": "api",
+            "address": "10.2.0.254",
+            "datacenter": "dc2",
+            "partition": "part-b",
+            "node_meta": {
+              "external-node": "true",
+              "external-probe": "true"
+            },
+            "service": {
+              "id": "api",
+              "name": "api",
+              "port": 9000,
+              "address": "10.2.0.254",
+              "namespace": "app"
+            },
+            "probe": "http://10.2.0.254:9000/health"
+          }
+        ]
+      gateway-entry-0.json: |
+        {
+          "Kind": "terminating-gateway",
+          "Name": "terminating-gateway",
+          "Namespace": "app",
+          "Services": [
+            {
+              "Name": "api",
+              "Namespace": "app"
+            }
+          ]
+        }
+      gateway-entry-1.json: |
+        {
+          "Kind": "exported-services",
+          "Name": "part-b",
+          "Services": [
+            {
+              "Consumers": [
+                {
+                  "Peer": "dc1-dc2"
+                }
+              ],
+              "Name": "api",
+              "Namespace": "app"
+            }
+          ]
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+      tenancy.json: |
+        {
+          "partitions": [
+            "part-b"
+          ],
+          "namespaces": [
+            {
+              "partition": "part-b",
+              "name": "app",
+              "policy_defaults": [
+                "parker-read-everywhere"
+              ]
+            }
+          ],
+          "policies": [
+            {
+              "name": "parker-mesh-gateway-mesh-gateway",
+              "partition": "part-b",
+              "rules": "mesh = \"write\"\npeering = \"read\"\nservice \"mesh-gateway\" { policy = \"write\" }\nservice_prefix \"\" { policy = \"read\" }\nnode_prefix \"\" { policy = \"read\" }\nagent_prefix \"\" { policy = \"read\" }\nnamespace_prefix \"\" {\n  service_prefix \"\" { policy = \"read\" }\n  node_prefix \"\" { policy = \"read\" }\n}\n"
+            },
+            {
+              "name": "parker-terminating-gateway-terminating-gateway",
+              "partition": "part-b",
+              "namespace": "app",
+              "rules": "service \"api\" { policy = \"write\" }\n"
+            },
+            {
+              "name": "parker-read-everywhere",
+              "partition": "part-b",
+              "rules": "namespace_prefix \"\" {\n  service_prefix \"\" { policy = \"read\" }\n  node_prefix \"\" { policy = \"read\" }\n}\n"
+            }
+          ],
+          "tokens": [
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker mesh gateway mesh-gateway",
+              "partition": "part-b",
+              "service": "mesh-gateway",
+              "policies": [
+                "parker-mesh-gateway-mesh-gateway"
+              ]
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker agent mesh",
+              "partition": "part-b",
+              "node": "mesh",
+              "datacenter": "dc2"
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker terminating gateway terminating-gateway",
+              "partition": "part-b",
+              "namespace": "app",
+              "service": "terminating-gateway",
+              "policies": [
+                "parker-terminating-gateway-terminating-gateway"
+              ]
+            },
+            {
+              "secret_id": "00000000-0000-4000-8000-000000000000",
+              "description": "Parker agent terminating",
+              "partition": "part-b",
+              "node": "terminating",
+              "datacenter": "dc2"
+            }
+          ]
+        }
+    processes:
+      acl-setup:
+        run:
+          - ${parker}
+          - acl-setup
+          - --agent-token
+          - 00000000-0000-4000-8000-000000000000
+          - --enterprise
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: ACLs set up"
+          timeout: 60s
+      config-entries:
+        run:
+          - ${parker}
+          - config-entries
+          - ${node_dir}/config-entries.json
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-1/tenancy:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: config entries applied"
+          timeout: 60s
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+      dataplane-health:
+        run:
+          - ${parker}
+          - dataplane-health
+          - ${node_dir}/dataplane.json
+          - --servers
+          - 10.2.0.10,10.2.0.11,10.2.0.12
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-1/tenancy:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: dataplane services registered"
+          timeout: 60s
+        restart: on-failure
+      peering-dc1-dc2-token:
+        run:
+          - sh
+          - -c
+          - |-
+            if ! { [ -s ${run_dir}/peering-dc1-dc2.token ] && consul peering read -name dc1-dc2 >/dev/null 2>&1; }; then
+              consul peering generate-token -name dc1-dc2 -server-external-addresses 10.255.0.30:8503,10.255.0.31:8503,10.255.0.32:8503 > ${run_dir}/peering-dc1-dc2.token.tmp && mv ${run_dir}/peering-dc1-dc2.token.tmp ${run_dir}/peering-dc1-dc2.token || exit 1
+            fi
+            echo "parker: peering token ready"
+            exec sleep 2147483647
+        uses:
+          - consul
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+          CONSUL_PARTITION: part-b
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/config-entries:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-1/tenancy:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: peering token ready"
+          timeout: 90s
+        restart: on-failure
+      tenancy:
+        run:
+          - ${parker}
+          - tenancy
+          - ${node_dir}/tenancy.json
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+          CONSUL_HTTP_TOKEN: 00000000-0000-4000-8000-000000000000
+        depends_on:
+          dc2-server-1/acl-setup:
+            condition: ready
+          dc2-server-1/consul:
+            condition: ready
+          dc2-server-2/consul:
+            condition: ready
+          dc2-server-3/consul:
+            condition: ready
+        ready_when:
+          log: "parker: partitions and namespaces ready"
+          timeout: 60s
+    labels:
+      dc: dc2
+      name: server-1
+      role: server
+  dc2-server-2:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.11
+      wan:
+        ip: 10.255.0.31
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.2.0.11",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-2",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc2",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10",
+            "10.2.0.12"
+          ],
+          "serf_lan": "10.2.0.11",
+          "serf_wan": "10.2.0.11",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": false
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc2
+      name: server-2
+      role: server
+  dc2-server-3:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.12
+      wan:
+        ip: 10.255.0.32
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "acl": {
+            "default_policy": "deny",
+            "enable_token_persistence": true,
+            "enabled": true,
+            "tokens": {
+              "agent": "00000000-0000-4000-8000-000000000000",
+              "initial_management": "00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "advertise_addr": "10.2.0.12",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "encrypt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "log_level": "INFO",
+          "node_name": "server-3",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc2",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10",
+            "10.2.0.11"
+          ],
+          "serf_lan": "10.2.0.12",
+          "serf_wan": "10.2.0.12",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": false
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            token: 00000000-0000-4000-8000-000000000000
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc2
+      name: server-3
+      role: server
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the peering is active
+      assert:
+        exec:
+          "on": dc1/server-1
+          run: consul peering read -partition part-a -name dc1-dc2
+          output: ACTIVE
+        within: 60s
+    - name: api is registered on an external node in dc1/part-a
+      assert:
+        exec:
+          "on": dc1/server-1
+          run: consul catalog nodes -partition part-a -node-meta external-node=true
+          output: api
+        within: 30s
+    - name: web reaches api through dc1's terminating gateway
+      assert:
+        exec:
+          "on": dc1/part-a/web
+          run: curl -sf -m 2 http://127.0.0.1:9091/
+          output: "\"from\":\"10.1.0."
+        within: 90s
+    - name: dc1/part-a sees app/api imported from dc2/part-b
+      assert:
+        exec:
+          "on": dc1/server-1
+          run: "curl -sf --cacert \"$CONSUL_CACERT\" -H \"X-Consul-Token: $CONSUL_HTTP_TOKEN\" \"$CONSUL_HTTP_ADDR/v1/health/service/api?peer=dc1-dc2&partition=part-a&ns=app\""
+          output: "\"Service\":\"api\""
+        within: 60s
+    - name: dc1's terminating gateway goes down
+      stop: dc1/part-a/terminating
+    - name: web fails over to api through dc2's terminating gateway
+      assert:
+        exec:
+          "on": dc1/part-a/web
+          run: curl -sf -m 2 http://127.0.0.1:9091/
+          output: "\"from\":\"10.2.0."
+        within: 90s
+    - name: dc1's terminating gateway comes back
+      start: dc1/part-a/terminating
+    - name: web is back on dc1's terminating gateway
+      assert:
+        exec:
+          "on": dc1/part-a/web
+          run: curl -sf -m 2 http://127.0.0.1:9091/
+          output: "\"from\":\"10.1.0."
+        within: 90s

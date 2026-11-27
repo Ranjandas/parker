@@ -1,0 +1,133 @@
+parker: v1alpha1
+name: minimal
+versions:
+  consul: 1.22.7
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+    auto: true
+nodes:
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.10",
+          "bind_addr": "10.1.0.10",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.11",
+            "10.1.0.12"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": true
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-1
+      role: server
+  dc1-server-2:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.11
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.11",
+          "bind_addr": "10.1.0.11",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-2",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.12"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-2
+      role: server
+  dc1-server-3:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.12
+    files:
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.12",
+          "bind_addr": "10.1.0.12",
+          "bootstrap_expect": 3,
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-3",
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10",
+            "10.1.0.11"
+          ],
+          "server": true,
+          "ui_config": {
+            "enabled": false
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-3
+      role: server

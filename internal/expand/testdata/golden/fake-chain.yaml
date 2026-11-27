@@ -1,0 +1,1145 @@
+parker: v1alpha1
+name: failover
+versions:
+  consul: 1.22.7
+  envoy: 1.35.12
+networks:
+  dc1-lan:
+    subnet: 10.1.0.0/24
+    gateway: 10.1.0.1
+    auto: true
+  dc2-lan:
+    subnet: 10.2.0.0/24
+    gateway: 10.2.0.1
+    auto: true
+  wan:
+    subnet: 10.255.0.0/24
+    gateway: 10.255.0.1
+    auto: true
+nodes:
+  dc1-api:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.100
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.100",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "api",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:9090/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {
+                    "upstreams": [
+                      {
+                        "destination_name": "db",
+                        "local_bind_port": 9092
+                      }
+                    ]
+                  }
+                }
+              },
+              "name": "api",
+              "port": 9090
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      api:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - api
+          - --port
+          - "9090"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/api.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9092/\"]}"
+        depends_on:
+          dc1-api/consul:
+            condition: started
+        ready_when:
+          port: 9090
+          http:
+            url: http://127.0.0.1:9090/ready
+            status: 200
+          consul:
+            service_healthy: api
+            ca_file: ca.pem
+          timeout: 60s
+      api-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - api
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc1-api/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+    labels:
+      dc: dc1
+      name: api
+      role: client
+      group: api
+      services:
+        - api
+  dc1-db:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.101
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.101",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "db",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:7000/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {}
+                }
+              },
+              "name": "db",
+              "port": 7000
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+      db:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - db
+          - --port
+          - "7000"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/db.fake.sock
+        env:
+          PARKER_FAKE: "{\"message\":\"rows\"}"
+        depends_on:
+          dc1-db/consul:
+            condition: started
+        ready_when:
+          port: 7000
+          http:
+            url: http://127.0.0.1:7000/ready
+            status: 200
+          consul:
+            service_healthy: db
+            ca_file: ca.pem
+          timeout: 60s
+      db-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - db
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc1-db/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: db
+      role: client
+      group: db
+      services:
+        - db
+  dc1-mesh:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.102
+      wan:
+        ip: 10.255.0.200
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.102",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.102",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "mesh",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+      mesh-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=mesh
+          - -register
+          - -service
+          - mesh-gateway
+          - -address
+          - 10.1.0.102:8443
+          - -bind-address
+          - default=0.0.0.0:8443
+          - -wan-address
+          - 10.255.0.200:8443
+          - -expose-servers
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc1-mesh/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: mesh
+      role: gateway
+      group: mesh
+  dc1-server-1:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.10
+      wan:
+        ip: 10.255.0.10
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      config-entries.json: |
+        [
+          {
+            "file": "${node_dir}/config-entry-0.json",
+            "label": "consul.datacenters.dc1.config_entries[0] (line 27)"
+          },
+          {
+            "file": "${node_dir}/config-entry-1.json",
+            "label": "consul.datacenters.dc1.config_entries[1] (line 30)"
+          }
+        ]
+      config-entry-0.json: |-
+        {
+          "Kind": "proxy-defaults",
+          "MeshGateway": {
+            "Mode": "local"
+          },
+          "Name": "global"
+        }
+      config-entry-1.json: |-
+        {
+          "ConnectTimeout": "2s",
+          "Failover": {
+            "*": {
+              "Datacenters": [
+                "dc2"
+              ]
+            }
+          },
+          "Kind": "service-resolver",
+          "Name": "api"
+        }
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.10",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 1,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enable_mesh_gateway_wan_federation": true,
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "ports": {
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": null,
+          "serf_lan": "10.1.0.10",
+          "serf_wan": "10.1.0.10",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": true
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      config-entries:
+        run:
+          - ${parker}
+          - config-entries
+          - ${node_dir}/config-entries.json
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          log: "parker: config entries applied"
+          timeout: 60s
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        ready_when:
+          consul:
+            leader: true
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc1
+      name: server-1
+      role: server
+  dc1-web:
+    networks:
+      dc1-lan:
+        ip: 10.1.0.103
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.1.0.103",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.1.0.103",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc1",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "web",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.1.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:8080/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {
+                    "upstreams": [
+                      {
+                        "destination_name": "api",
+                        "local_bind_port": 9091
+                      }
+                    ]
+                  }
+                }
+              },
+              "name": "web",
+              "port": 8080
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+      web:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - web
+          - --port
+          - "8080"
+          - --dc
+          - dc1
+          - --control
+          - ${node_dir}/web.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9091/\"]}"
+        depends_on:
+          dc1-web/consul:
+            condition: started
+        ready_when:
+          port: 8080
+          http:
+            url: http://127.0.0.1:8080/ready
+            status: 200
+          consul:
+            service_healthy: web
+            ca_file: ca.pem
+          timeout: 60s
+      web-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - web
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc1-web/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc1
+      name: web
+      role: client
+      group: web
+      services:
+        - web
+  dc2-api:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.100
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.100",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.2.0.100",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "api",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:9090/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {
+                    "upstreams": [
+                      {
+                        "destination_name": "db",
+                        "local_bind_port": 9092
+                      }
+                    ]
+                  }
+                }
+              },
+              "name": "api",
+              "port": 9090
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      api:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - api
+          - --port
+          - "9090"
+          - --dc
+          - dc2
+          - --control
+          - ${node_dir}/api.fake.sock
+        env:
+          PARKER_FAKE: "{\"upstreams\":[\"http://127.0.0.1:9092/\"]}"
+        depends_on:
+          dc2-api/consul:
+            condition: started
+        ready_when:
+          port: 9090
+          http:
+            url: http://127.0.0.1:9090/ready
+            status: 200
+          consul:
+            service_healthy: api
+            ca_file: ca.pem
+          timeout: 60s
+      api-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - api
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc2-api/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+    labels:
+      dc: dc2
+      name: api
+      role: client
+      group: api
+      services:
+        - api
+  dc2-db:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.101
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.101",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.2.0.101",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "db",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10"
+          ],
+          "server": false,
+          "services": [
+            {
+              "check": {
+                "http": "http://127.0.0.1:7000/health",
+                "interval": "2s"
+              },
+              "connect": {
+                "sidecar_service": {
+                  "port": 21000,
+                  "proxy": {}
+                }
+              },
+              "name": "db",
+              "port": 7000
+            }
+          ],
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/consul:
+            condition: ready
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+      db:
+        run:
+          - ${parker}
+          - fake-service
+          - --name
+          - db
+          - --port
+          - "7000"
+          - --dc
+          - dc2
+          - --control
+          - ${node_dir}/db.fake.sock
+        env:
+          PARKER_FAKE: "{\"message\":\"rows\"}"
+        depends_on:
+          dc2-db/consul:
+            condition: started
+        ready_when:
+          port: 7000
+          http:
+            url: http://127.0.0.1:7000/ready
+            status: 200
+          consul:
+            service_healthy: db
+            ca_file: ca.pem
+          timeout: 60s
+      db-sidecar:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -sidecar-for
+          - db
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc2-db/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          timeout: 60s
+        restart: on-failure
+    labels:
+      dc: dc2
+      name: db
+      role: client
+      group: db
+      services:
+        - db
+  dc2-mesh:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.102
+      wan:
+        ip: 10.255.0.210
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.102",
+          "auto_encrypt": {
+            "tls": true
+          },
+          "bind_addr": "10.2.0.102",
+          "client_addr": "0.0.0.0",
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "mesh",
+          "ports": {
+            "grpc_tls": 8503,
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "retry_interval": "1s",
+          "retry_join": [
+            "10.2.0.10"
+          ],
+          "server": false,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "verify_outgoing": true
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          }
+        }
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc2-server-1/consul:
+            condition: started
+        ready_when:
+          consul:
+            members: ">=2"
+            ca_file: ca.pem
+          timeout: 60s
+      mesh-gateway:
+        run:
+          - consul
+          - connect
+          - envoy
+          - -gateway=mesh
+          - -register
+          - -service
+          - mesh-gateway
+          - -address
+          - 10.2.0.102:8443
+          - -bind-address
+          - default=0.0.0.0:8443
+          - -wan-address
+          - 10.255.0.210:8443
+          - -expose-servers
+          - -admin-bind
+          - 127.0.0.1:19000
+          - --
+          - --log-level
+          - info
+        uses:
+          - envoy
+        env:
+          CONSUL_CACERT: ${node_dir}/ca.pem
+          CONSUL_GRPC_ADDR: https://127.0.0.1:8503
+          CONSUL_HTTP_ADDR: https://127.0.0.1:8501
+        depends_on:
+          dc2-mesh/consul:
+            condition: ready
+        ready_when:
+          http:
+            url: http://127.0.0.1:19000/ready
+          consul:
+            addr: 10.255.0.10:8501
+            reaches: dc2
+            ca_file: ca.pem
+          timeout: 90s
+        restart: on-failure
+    labels:
+      dc: dc2
+      name: mesh
+      role: gateway
+      group: mesh
+  dc2-server-1:
+    networks:
+      dc2-lan:
+        ip: 10.2.0.10
+      wan:
+        ip: 10.255.0.30
+    files:
+      ca.pem: |
+        <generated CERTIFICATE>
+      consul.json: |
+        {
+          "advertise_addr": "10.2.0.10",
+          "auto_encrypt": {
+            "allow_tls": true
+          },
+          "bind_addr": "0.0.0.0",
+          "bootstrap_expect": 1,
+          "client_addr": "0.0.0.0",
+          "connect": {
+            "ca_config": {
+              "private_key": "<generated EC PRIVATE KEY>\n",
+              "root_cert": "<generated CERTIFICATE>\n"
+            },
+            "ca_provider": "consul",
+            "enable_mesh_gateway_wan_federation": true,
+            "enabled": true
+          },
+          "data_dir": "${node_dir}/data",
+          "datacenter": "dc2",
+          "disable_update_check": true,
+          "log_level": "INFO",
+          "node_name": "server-1",
+          "ports": {
+            "http": -1,
+            "https": 8501
+          },
+          "primary_datacenter": "dc1",
+          "primary_gateways": [
+            "10.255.0.200:8443"
+          ],
+          "primary_gateways_interval": "5s",
+          "retry_interval": "1s",
+          "retry_join": null,
+          "serf_lan": "10.2.0.10",
+          "serf_wan": "10.2.0.10",
+          "server": true,
+          "tls": {
+            "defaults": {
+              "ca_file": "${node_dir}/ca.pem",
+              "cert_file": "${node_dir}/server.pem",
+              "key_file": "${node_dir}/server-key.pem",
+              "verify_incoming": true,
+              "verify_outgoing": true
+            },
+            "https": {
+              "verify_incoming": false
+            },
+            "internal_rpc": {
+              "verify_server_hostname": true
+            }
+          },
+          "ui_config": {
+            "enabled": true
+          }
+        }
+      server-key.pem: |
+        <generated EC PRIVATE KEY>
+      server.pem: |
+        <generated CERTIFICATE>
+    processes:
+      consul:
+        run:
+          - consul
+          - agent
+          - -config-file=${node_dir}/consul.json
+        depends_on:
+          dc1-mesh/mesh-gateway:
+            condition: ready
+        ready_when:
+          consul:
+            leader: true
+            wan_members: ">=2"
+            ca_file: ca.pem
+          timeout: 90s
+    labels:
+      dc: dc2
+      name: server-1
+      role: server
+scenario:
+  steps:
+    - wait: dc1 ready
+    - wait: dc2 ready
+    - name: the servers are federated through the gateways
+      assert:
+        exec:
+          "on": dc1/server-1
+          run: test $(consul members -wan | grep -c alive) -eq 2
+        within: 60s
+    - assert:
+        consul:
+          dc: dc2
+          service_healthy: api-sidecar-proxy
+        within: 60s
+    - name: web reaches api and db in dc1
+      assert:
+        call:
+          "on": dc1/web
+          reaches: dc1/db
+          body: rows
+        within: 90s
+    - name: dc1/api fails its health check but keeps running
+      fake:
+        "on": dc1/api
+        health:
+          code: 503
+    - name: the request fails over to dc2/api, and on to dc2's db
+      assert:
+        call:
+          "on": dc1/web
+          reaches: dc2/api
+          body: rows
+        within: 60s
+    - fake:
+        "on": dc1/api
+        reset: true
+    - name: and comes back to dc1 when api recovers
+      assert:
+        call:
+          "on": dc1/web
+          reaches: dc1/api
+        within: 60s
