@@ -117,6 +117,9 @@ Parker also sets things up around the fake:
   `rate_limit`. A failure deep in a chain shows where it came from.
 - `limit` names the [limit](#request-size-limits) that refused the
   request, and `error` says by how much.
+- `dropped_headers` and `dropped_cookies` list what
+  [strict parsing](#strict-request-parsing) took out of the request before
+  the service saw it, which a real server doesn't tell you.
 - `cycle: true` means the service was already on the request's path, so
   it answered without calling its upstreams again. The path travels in
   `X-Parker-Trail`, and a chain stops at 16 hops.
@@ -217,9 +220,9 @@ api  dc1-api · dc1  400  49.842µs  request headers too large: 9294 bytes > tom
 | `go` | [Go net/http](https://pkg.go.dev/net/http#DefaultMaxHeaderBytes) | headers 1MB (431) | `MaxHeaderBytes` |
 | `gunicorn` | [Gunicorn](https://docs.gunicorn.org/en/stable/settings.html) | header line 8190B (400), 100 headers (400), url 4094B (400), idle 2s | `limit_request_field_size`, `limit_request_fields`, `limit_request_line`, `keep_alive` |
 | `kestrel` | [ASP.NET Core Kestrel](https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits) | headers 32KB (431), 100 headers (431), url 8KB (414), body 30000000B (413), idle 2m, header timeout 30s | `MaxRequestHeadersTotalSize`, `MaxRequestHeaderCount`, `MaxRequestLineSize`, `MaxRequestBodySize`, `KeepAliveTimeout`, `RequestHeadersTimeout` |
-| `nginx` | [nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html) | headers 32KB (400), header line 8KB (400), url 8KB (414), body 1MB (413), 1000 requests per connection, idle 75s, header timeout 1m | `large_client_header_buffers`, `client_max_body_size`, `keepalive_requests`, `keepalive_timeout`, `client_header_timeout` |
+| `nginx` | [nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html) | headers 32KB (400), header line 8KB (400), url 8KB (414), body 1MB (413), 1000 requests per connection, idle 75s, header timeout 1m, underscore headers dropped | `large_client_header_buffers`, `client_max_body_size`, `keepalive_requests`, `keepalive_timeout`, `client_header_timeout`, `underscores_in_headers` |
 | `node` | [Node.js http server](https://nodejs.org/api/http.html#httpmaxheadersize) | headers 16KB (431), idle 5s, header timeout 1m | `maxHeaderSize`, `keepAliveTimeout`, `headersTimeout` |
-| `tomcat` | [Apache Tomcat HTTP connector](https://tomcat.apache.org/tomcat-11.0-doc/config/http.html) | headers 8KB (400), 100 headers (400), 10000 params (400), 200 at once + 100 queued (refused), 100 requests per connection, idle 20s, header timeout 20s | `maxHttpHeaderSize`, `maxHeaderCount`, `maxParameterCount`, `maxThreads`, `maxKeepAliveRequests`, `keepAliveTimeout`, `connectionTimeout` |
+| `tomcat` | [Apache Tomcat HTTP connector](https://tomcat.apache.org/tomcat-11.0-doc/config/http.html) | headers 8KB (400), 100 headers (400), 10000 params (400), 200 at once + 100 queued (refused), 100 requests per connection, idle 20s, header timeout 20s, strict cookies, strict path chars (400) | `maxHttpHeaderSize`, `maxHeaderCount`, `maxParameterCount`, `maxThreads`, `maxKeepAliveRequests`, `keepAliveTimeout`, `connectionTimeout`, `Rfc6265CookieProcessor`, `relaxedPathChars` |
 
 The values are each server's defaults as its documentation gives them
 (follow the link). A profile copies the limits and codes only, not every
@@ -302,6 +305,59 @@ and the fake logs it:
 Through the sidecar the caller sees Envoy's 503 for a reset upstream
 connection, and Envoy's retries, circuit breakers and outlier detection
 react to it.
+
+### Strict request parsing
+
+Some requests fail not for their size but for their shape: a header
+name with an underscore, a cookie with a space in it, a `|` in the query.
+They work with curl against the app and break once a stricter server is
+in front. These keys copy those servers:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `limits.underscore_headers` | `allow` | A header with an underscore in its name, such as `X_Tenant_Id`: `allow`, `drop` (Nginx's default, `underscores_in_headers off`: the app never sees it) or `reject` (400). |
+| `limits.strict_cookies` | `false` | Drops cookies whose name or value breaks RFC 6265 (a space, comma, backslash or stray quote in the value), as Tomcat's `Rfc6265CookieProcessor` does. The rest of the `Cookie` header is kept. |
+| `limits.strict_path_chars` | `false` | Answers 400 to a path or query with an unencoded `"`, `<`, `>`, `[`, `\`, `]`, `^`, backtick, `{`, `\|` or `}`, as Tomcat does unless `relaxedPathChars` or `relaxedQueryChars` allow it. |
+
+`profile: nginx` drops underscore headers, and `profile: tomcat` turns
+on `strict_cookies` and `strict_path_chars`. Set a key beside the profile
+to turn one off, such as `underscore_headers: allow`.
+
+A dropped header or cookie isn't passed on by
+[`forward_headers`](#sending-large-requests) either, and the answer names
+it, so a chain shows the hop where it vanished. With `profile: nginx`
+and `forward_headers: [X_Tenant_Id, X-Tenant-Id]`:
+
+```console
+$ curl -s -H 'X_Tenant_Id: acme' -H 'X-Tenant-Id: acme' localhost:9090/orders
+{"name":"api","uri":"/orders","type":"HTTP",...,"code":200,"dropped_headers":["x_tenant_id"]}
+```
+
+```text
+[INFO] request id=609b41d6707b9ab4 type=HTTP path=/orders from=127.0.0.1:37406 code=200 duration=76.754µs dropped_headers=x_tenant_id
+```
+
+and with `profile: tomcat`:
+
+```console
+$ curl -s 'localhost:9090/search?q=a|b'
+{"name":"api","uri":"/search?q=a|b",...,"code":400,"error":"invalid character '|' in the request target (tomcat relaxedPathChars)","limit":"strict_path_chars"}
+$ curl -s -H 'Cookie: session=abc; theme=dark blue' localhost:9090/
+{"name":"api","uri":"/",...,"code":200,"dropped_cookies":["theme"]}
+```
+
+Limits:
+
+- An illegal header name (a space, `(` or `:` in it) is always refused
+  with `400 Bad Request`, by the fake's HTTP server before any of these
+  keys apply. That's what Tomcat's `rejectIllegalHeader` does by default;
+  the fake can't be made to ignore such a header instead.
+- Malformed framing, such as conflicting `Content-Length` headers or an
+  unknown `Transfer-Encoding`, is refused the same way, so request
+  smuggling can't be tried against the fake.
+- Through a Consul sidecar, Envoy lets underscore headers through
+  (`headers_with_underscores_action: ALLOW` is its default), so they reach
+  the fake, which then applies `underscore_headers`.
 
 ### Sending large requests
 

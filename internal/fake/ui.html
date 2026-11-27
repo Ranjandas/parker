@@ -301,6 +301,8 @@ const FakeUI = (() => {
     if (h.injected === "error") return { kind: "own", text: "Fault injection on " + h.name + ": error " + h.code };
     if (h.injected === "delay") return { kind: "own", text: "Fault injection on " + h.name + ": delay" };
     if (h.cycle) return { kind: "up", text: "already on this path, so it didn't call its upstreams again" };
+    const dropped = [...(h.dropped_headers || []).map((n) => "header " + n), ...(h.dropped_cookies || []).map((n) => "cookie " + n)];
+    if (dropped.length && !failed(h)) return { kind: "up", text: h.name + " dropped " + dropped.join(", ") };
     if (!failed(h)) return null;
     if (Object.values(h.upstream_calls || {}).some(failed)) return { kind: "up", text: "an upstream failed" };
     return { kind: "real", text: h.error || "failed" };

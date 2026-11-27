@@ -980,6 +980,20 @@ type FakeLimits struct {
 	// H2MaxStreams is HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS, for
 	// protocol: grpc (default 100 or more, Go's own). Set at start only.
 	H2MaxStreams *int `yaml:"h2_max_streams,omitempty" json:"h2_max_streams,omitempty" jsonschema:"minimum=0"`
+	// UnderscoreHeaders is what happens to a request header with an
+	// underscore in its name, such as X_Tenant_Id: allow (default), drop
+	// (Nginx's default: the app never sees it) or reject (400). A dropped
+	// header is named in the answer's dropped_headers.
+	UnderscoreHeaders string `yaml:"underscore_headers,omitempty" json:"underscore_headers,omitempty" jsonschema:"enum=allow,enum=drop,enum=reject"`
+	// StrictCookies drops cookies whose name or value breaks RFC 6265
+	// (a space, comma, backslash or quote inside the value), as Tomcat's
+	// cookie processor does. They're named in the answer's
+	// dropped_cookies.
+	StrictCookies *bool `yaml:"strict_cookies,omitempty" json:"strict_cookies,omitempty"`
+	// StrictPathChars answers 400 to a request whose path or query has
+	// one of " < > [ \ ] ^ ` { | } unencoded, as Tomcat does unless
+	// relaxedPathChars or relaxedQueryChars allow it.
+	StrictPathChars *bool `yaml:"strict_path_chars,omitempty" json:"strict_path_chars,omitempty"`
 	// Codes are the status codes a refused request answers.
 	Codes *FakeLimitCodes `yaml:"codes,omitempty" json:"codes,omitempty"`
 }

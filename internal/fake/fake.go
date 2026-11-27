@@ -56,6 +56,11 @@ type Response struct {
 	// Limit names the limit that refused this request, if any, such as
 	// max_header_bytes; Error says by how much.
 	Limit string `json:"limit,omitempty"`
+	// DroppedHeaders and DroppedCookies are what limits.underscore_headers
+	// and strict_cookies took out of the request before the service saw
+	// it (a real server doesn't say).
+	DroppedHeaders []string `json:"dropped_headers,omitempty"`
+	DroppedCookies []string `json:"dropped_cookies,omitempty"`
 	// Cycle is set when this service was already on the request's path:
 	// its upstreams aren't called again.
 	Cycle bool `json:"cycle,omitempty"`
@@ -221,7 +226,15 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 	if t := r.Header.Get(HeaderTrail); t != "" {
 		trail = strings.Split(t, ",")
 	}
-	if rf := s.Faults().Limits.check(r); rf != nil {
+	lim := s.Faults().Limits
+	rf := lim.checkTarget(r)
+	if rf == nil {
+		rf = lim.check(r)
+	}
+	if rf == nil {
+		rf, resp.DroppedHeaders, resp.DroppedCookies = lim.clean(r)
+	}
+	if rf != nil {
 		// Refused before the app sees it, as a server's connector does.
 		resp.Code, resp.Error, resp.Limit = rf.code, rf.msg, rf.limit
 	} else if ok, rf := s.inject(r, resp); ok {
@@ -444,6 +457,17 @@ func localIPs() []string {
 }
 
 func injectedNote(r *Response) string {
+	var dropped string
+	if len(r.DroppedHeaders) > 0 {
+		dropped += " dropped_headers=" + strings.Join(r.DroppedHeaders, ",")
+	}
+	if len(r.DroppedCookies) > 0 {
+		dropped += " dropped_cookies=" + strings.Join(r.DroppedCookies, ",")
+	}
+	return note(r) + dropped
+}
+
+func note(r *Response) string {
 	if r.Limit != "" {
 		return " limit=" + r.Limit + errNote(r.Error)
 	}

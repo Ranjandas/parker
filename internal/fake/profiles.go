@@ -22,16 +22,18 @@ type profile struct {
 var profiles = map[string]profile{
 	"tomcat": {
 		title:  "Apache Tomcat HTTP connector",
-		limits: Limits{HeaderBytes: 8192, HeaderCount: 100, FormParams: 10000, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400, Concurrent: 200, Queue: 100, WhenFull: "refuse", FullCode: 503, PerConn: 100, IdleTimeout: 20 * time.Second, HeaderTimeout: 20 * time.Second},
+		limits: Limits{HeaderBytes: 8192, HeaderCount: 100, FormParams: 10000, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400, Concurrent: 200, Queue: 100, WhenFull: "refuse", FullCode: 503, PerConn: 100, IdleTimeout: 20 * time.Second, HeaderTimeout: 20 * time.Second, StrictCookies: true, StrictPath: true},
 		settings: map[string]string{"max_header_bytes": "maxHttpHeaderSize", "max_header_count": "maxHeaderCount",
-			"max_form_params": "maxParameterCount", "max_concurrent": "maxThreads", "max_requests_per_conn": "maxKeepAliveRequests", "idle_timeout": "keepAliveTimeout", "header_timeout": "connectionTimeout"},
+			"max_form_params": "maxParameterCount", "max_concurrent": "maxThreads", "max_requests_per_conn": "maxKeepAliveRequests", "idle_timeout": "keepAliveTimeout", "header_timeout": "connectionTimeout",
+			"strict_cookies": "Rfc6265CookieProcessor", "strict_path_chars": "relaxedPathChars"},
 		source: "https://tomcat.apache.org/tomcat-11.0-doc/config/http.html",
 	},
 	"nginx": {
 		title:  "nginx",
-		limits: Limits{HeaderLineBytes: 8192, HeaderBytes: 4 * 8192, URLBytes: 8192, BodyBytes: 1 << 20, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", PerConn: 1000, IdleTimeout: 75 * time.Second, HeaderTimeout: 60 * time.Second},
+		limits: Limits{HeaderLineBytes: 8192, HeaderBytes: 4 * 8192, URLBytes: 8192, BodyBytes: 1 << 20, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", PerConn: 1000, IdleTimeout: 75 * time.Second, HeaderTimeout: 60 * time.Second, Underscores: "drop"},
 		settings: map[string]string{"max_header_line_bytes": "large_client_header_buffers", "max_header_bytes": "large_client_header_buffers",
-			"max_url_bytes": "large_client_header_buffers", "max_body_bytes": "client_max_body_size", "max_requests_per_conn": "keepalive_requests", "idle_timeout": "keepalive_timeout", "header_timeout": "client_header_timeout"},
+			"max_url_bytes": "large_client_header_buffers", "max_body_bytes": "client_max_body_size", "max_requests_per_conn": "keepalive_requests", "idle_timeout": "keepalive_timeout", "header_timeout": "client_header_timeout",
+			"underscore_headers": "underscores_in_headers"},
 		source: "https://nginx.org/en/docs/http/ngx_http_core_module.html",
 	},
 	"apache": {
@@ -85,7 +87,7 @@ var profiles = map[string]profile{
 // limitKeys are the limits a profile can name a setting for, in the
 // guide's order.
 var limitKeys = []string{"max_header_bytes", "max_header_line_bytes", "max_header_count", "max_url_bytes", "max_body_bytes", "max_form_params",
-	"max_concurrent", "max_requests_per_conn", "idle_timeout", "header_timeout"}
+	"max_concurrent", "max_requests_per_conn", "idle_timeout", "header_timeout", "underscore_headers", "strict_cookies", "strict_path_chars"}
 
 // ProfileNames lists the profiles, sorted.
 func ProfileNames() []string { return slices.Sorted(maps.Keys(profiles)) }
