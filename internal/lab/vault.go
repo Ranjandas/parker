@@ -170,11 +170,30 @@ func VaultSeal(ctx context.Context, low *spec.File, node string, restart func() 
 	if s.Active {
 		return vaultDo(ctx, low, node, http.MethodPut, "/v1/sys/seal", nil, nil)
 	}
+	if vaultAutoUnseal(ctx, low, node) {
+		return fmt.Errorf("%s is a standby that auto-unseals, so a restart doesn't seal it; seal the active server, or seal the transit cluster and then restart it", node)
+	}
 	return restart()
 }
 
-// VaultUnseal unseals node's server with the cluster's kept key.
-func VaultUnseal(ctx context.Context, low *spec.File, node string) error {
+// vaultAutoUnseal reports whether node's server unseals itself (a transit
+// seal) rather than with a key.
+func vaultAutoUnseal(ctx context.Context, low *spec.File, node string) bool {
+	var st struct {
+		Recovery bool `json:"recovery_seal"`
+	}
+	return vaultDo(ctx, low, node, http.MethodGet, "/v1/sys/seal-status", nil, &st) == nil && st.Recovery
+}
+
+// VaultUnseal unseals node's server with the cluster's kept key. A
+// server that auto-unseals only does so as it starts, so it's restarted.
+func VaultUnseal(ctx context.Context, low *spec.File, node string, restart func() error) error {
+	if s, err := VaultStatus(ctx, low, node); err == nil && !s.Sealed {
+		return nil
+	}
+	if vaultAutoUnseal(ctx, low, node) {
+		return restart()
+	}
 	key := VaultUnsealKey(low, low.Nodes[node].Labels.DC)
 	if key == "" {
 		return fmt.Errorf("%s: no unseal key (a dev server, or the cluster isn't initialised)", node)

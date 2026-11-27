@@ -396,7 +396,7 @@ func (l *ScenarioLab) Vault(ctx context.Context, action, node string) error {
 	case "seal":
 		return VaultSeal(ctx, l.Low, node, func() error { return l.Proc(ctx, "restart", node) })
 	case "unseal":
-		return VaultUnseal(ctx, l.Low, node)
+		return VaultUnseal(ctx, l.Low, node, func() error { return l.Proc(ctx, "restart", node) })
 	case "step_down":
 		return VaultStepDown(ctx, l.Low, node)
 	}

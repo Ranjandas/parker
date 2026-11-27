@@ -67,8 +67,9 @@ const (
 	// its own instances are down (another dc, partition or peer).
 	Failover = "failover"
 	// Integration: one product using another, from the user to the one
-	// it uses: a Consul dc's Connect CA in Vault, Vault's storage in
-	// Consul. The label says which.
+	// it uses: a Consul dc's Connect CA in Vault, Vault's storage or
+	// service registration in Consul, a Vault cluster's transit seal in
+	// another. The label says which.
 	Integration = "integration"
 )
 
@@ -662,7 +663,9 @@ func Build(f *spec.File) *Graph {
 
 // integrations are the links between products, read from the agents'
 // configs: a Consul dc whose servers use a Vault cluster as their Connect
-// CA, and a Vault cluster that keeps its data in a Consul dc. One edge
+// CA, a Vault cluster that keeps its data in a Consul dc or registers in
+// one, and a Vault cluster that auto-unseals with another's Transit
+// engine. One edge
 // per pair, between their first servers.
 func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edge {
 	byIP := map[string]string{}
@@ -708,13 +711,33 @@ func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edg
 				Storage struct {
 					Consul *struct{} `json:"consul"`
 				} `json:"storage"`
+				Registration struct {
+					Consul *struct{} `json:"consul"`
+				} `json:"service_registration"`
+				Seal struct {
+					Transit *struct {
+						Address string `json:"address"`
+					} `json:"transit"`
+				} `json:"seal"`
 			}
 			var cc struct {
 				Datacenter string `json:"datacenter"`
 			}
-			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil && vc.Storage.Consul != nil &&
-				json.Unmarshal([]byte(rn.Files["consul.json"]), &cc) == nil {
-				add(firstServer(l.DC), firstServer(cc.Datacenter), "Consul storage")
+			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil && vc.Seal.Transit != nil {
+				if u, err := url.Parse(vc.Seal.Transit.Address); err == nil {
+					if t := byIP[u.Hostname()]; t != "" {
+						add(firstServer(l.DC), firstServer(f.Nodes[t].Labels.DC), "auto-unseal")
+					}
+				}
+			}
+			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil &&
+				json.Unmarshal([]byte(rn.Files["consul.json"]), &cc) == nil && cc.Datacenter != "" {
+				if vc.Storage.Consul != nil {
+					add(firstServer(l.DC), firstServer(cc.Datacenter), "Consul storage")
+				}
+				if vc.Registration.Consul != nil {
+					add(firstServer(l.DC), firstServer(cc.Datacenter), "registered")
+				}
 			}
 		}
 	}

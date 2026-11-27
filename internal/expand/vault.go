@@ -53,7 +53,24 @@ type VaultInitSpec struct {
 	// before anything else uses the cluster: the lab CA as the root of a
 	// Consul datacenter's Connect CA.
 	PKIRoots []VaultPKIRoot `json:"pki_roots,omitempty"`
+	// Recovery: the servers auto-unseal (seal: {transit: ...}), so init
+	// makes a recovery key instead of an unseal key, and vault-init waits
+	// for the servers to unseal themselves.
+	Recovery bool `json:"recovery,omitempty"`
+	// TransitKeys are keys to create in the Transit secrets engine at
+	// transit/, for clusters that auto-unseal with this one.
+	TransitKeys []string `json:"transit_keys,omitempty"`
 }
+
+// VaultTransitMount is where a cluster that others auto-unseal with
+// mounts the Transit secrets engine.
+const VaultTransitMount = "transit/"
+
+// VaultTransitKey is the Transit key that unseals cluster.
+func VaultTransitKey(cluster string) string { return "autounseal-" + cluster }
+
+// VaultTransitCAFile is the CA a server trusts its transit cluster with.
+const VaultTransitCAFile = "vault-transit-ca.pem"
 
 // VaultPKIRoot is a PKI mount and its root CA.
 type VaultPKIRoot struct {
@@ -85,7 +102,80 @@ func (vaultProduct) Name() string { return ProductVault }
 func (vaultProduct) In(in *spec.File) bool { return in.Vault != nil }
 
 // Wire: Vault reads nothing from other products yet.
-func (vaultProduct) Wire(_, _ *spec.File, _ Facts) error { return nil }
+// Wire points the clusters that auto-unseal with transit at their
+// transit cluster.
+func (vaultProduct) Wire(in, out *spec.File, facts Facts) error {
+	vf, _ := facts[ProductVault].(VaultFacts)
+	used := map[string]int{} // addresses taken on each Vault LAN
+	for _, name := range slices.Sorted(maps.Keys(in.Vault.Clusters)) {
+		c := in.Vault.Clusters[name]
+		t := c.Transit()
+		if t == "" || c.Dev {
+			continue
+		}
+		if err := vaultTransit(out, name, vf[name], t, vf[t], used); err != nil {
+			return fmt.Errorf("vault.clusters.%s.seal: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// vaultTransit auto-unseals cluster's servers with a key in the Transit
+// secrets engine of cluster t: t's vault-init makes the key, and each
+// server joins t's LAN (from .150), names t's first server in its seal
+// stanza with t's root token, and starts once t is set up.
+func vaultTransit(out *spec.File, cluster string, v VaultClusterFacts, t string, tv VaultClusterFacts, used map[string]int) error {
+	if len(tv.Nodes) == 0 || len(v.Nodes) == 0 {
+		return fmt.Errorf("no cluster %s", t)
+	}
+	lan := t + "-lan"
+	net := out.Networks[lan]
+	if net == nil {
+		return fmt.Errorf("no network %s", lan)
+	}
+	pfx, err := netip.ParsePrefix(net.Subnet)
+	if err != nil {
+		return err
+	}
+	first := out.Nodes[tv.Nodes[0]]
+	var is VaultInitSpec
+	if err := json.Unmarshal([]byte(first.Files[VaultInitManifest]), &is); err != nil {
+		return fmt.Errorf("%s has no vault-init: %w", t, err)
+	}
+	if key := VaultTransitKey(cluster); !slices.Contains(is.TransitKeys, key) {
+		is.TransitKeys = append(is.TransitKeys, key)
+		first.Files[VaultInitManifest] = mustJSON(is)
+	}
+	for _, key := range v.Nodes {
+		rn := out.Nodes[key]
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(rn.Files[VaultConfigFile]), &cfg); err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+		transit := map[string]any{
+			"address":    tv.Addrs[0],
+			"token":      tv.RootToken,
+			"key_name":   VaultTransitKey(cluster),
+			"mount_path": VaultTransitMount,
+		}
+		if strings.HasPrefix(tv.Addrs[0], "https://") {
+			rn.Files[VaultTransitCAFile] = first.Files[CAFile]
+			transit["tls_ca_cert"] = VarNodeDir + "/" + VaultTransitCAFile
+		}
+		if _, ok := cfg["seal"]; !ok { // unless the user's config has one
+			cfg["seal"] = map[string]any{"transit": transit}
+		}
+		rn.Files[VaultConfigFile] = mustJSON(cfg)
+		rn.Networks[lan] = &spec.Attachment{IP: addrAt(pfx.Masked().Addr(), 150+used[lan])}
+		used[lan]++
+		p := rn.Processes["vault"]
+		if p.DependsOn == nil {
+			p.DependsOn = map[string]*spec.Dep{}
+		}
+		p.DependsOn[tv.Nodes[0]+"/"+VaultInit] = &spec.Dep{Condition: "ready"}
+	}
+	return nil
+}
 
 func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 	v := in.Vault
@@ -155,7 +245,7 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				continue
 			}
 			cfg := vaultConfig(s, name, ips[k], node.Labels.Name, addrs, k)
-			if s.Storage.Kind == spec.VaultStorageConsul {
+			if s.ConsulDC() != "" {
 				if err := vaultOnConsul(out, keys[k], node, cfg); err != nil {
 					return err
 				}
@@ -191,7 +281,7 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				for _, key := range keys {
 					deps[key+"/vault"] = &spec.Dep{Condition: "started"}
 				}
-				is := VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys}
+				is := VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys, Recovery: c.Transit() != ""}
 				if tlsOn {
 					is.CAFile = VarNodeDir + "/" + CAFile
 				}
@@ -210,23 +300,29 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 	return nil
 }
 
-// vaultOnConsul puts a Vault server with consul storage on the node the
-// Consul product made for it: a client agent of the storage datacenter,
-// on that datacenter's LAN (see consulProduct). The server keeps its data
-// through that agent, with the agent's token, over HTTPS when the
-// datacenter has TLS, and starts once the agent is ready.
+// vaultOnConsul puts a Vault server on the node the Consul product made
+// for it: a client agent of the server's Consul datacenter, on that
+// datacenter's LAN (see consulProduct). The server keeps its data through
+// that agent (consul storage) or registers there (register), with the
+// agent's token, over HTTPS when the datacenter has TLS, and starts once
+// the agent is ready.
 func vaultOnConsul(out *spec.File, key string, node *spec.RawNode, cfg map[string]any) error {
 	agent := out.Nodes[key]
 	if agent == nil || agent.Processes["consul"] == nil {
-		return fmt.Errorf("%s: no Consul agent for its consul storage", key)
+		return fmt.Errorf("%s: no Consul agent beside it", key)
 	}
 	maps.Copy(node.Networks, agent.Networks)
 	maps.Copy(node.Files, agent.Files)
 	maps.Copy(node.Processes, agent.Processes)
-	st, _ := cfg["storage"].(map[string]any)
-	c, _ := st["consul"].(map[string]any)
+	var c map[string]any
+	if st, ok := cfg["storage"].(map[string]any); ok {
+		c, _ = st["consul"].(map[string]any)
+	}
+	if sr, ok := cfg["service_registration"].(map[string]any); ok && c == nil {
+		c, _ = sr["consul"].(map[string]any)
+	}
 	if c == nil {
-		return nil // the user's config replaced the storage
+		return nil // the user's config replaced it
 	}
 	if r := agent.Processes["consul"].ReadyWhen; r != nil && r.Consul != nil {
 		if r.Consul.Token != "" {
@@ -284,7 +380,7 @@ func vaultConfig(s spec.VaultSettings, cluster, ip, nodeID string, addrs []strin
 	}
 	switch s.Storage.Kind {
 	case spec.VaultStorageConsul:
-		// The node's own Consul client agent; vaultConsul adds the token
+		// The node's own Consul client agent; vaultOnConsul adds the token
 		// and TLS once the agent is known.
 		cfg["storage"] = map[string]any{"consul": map[string]any{"address": "127.0.0.1:8500", "path": "vault-" + cluster + "/"}}
 	case spec.VaultStorageFile:
@@ -301,6 +397,10 @@ func vaultConfig(s spec.VaultSettings, cluster, ip, nodeID string, addrs []strin
 			raft["retry_join"] = join
 		}
 		cfg["storage"] = map[string]any{"raft": raft}
+	}
+	if s.Register != "" && s.Storage.Kind != spec.VaultStorageConsul {
+		// Through the node's own client agent, like consul storage.
+		cfg["service_registration"] = map[string]any{"consul": map[string]any{"address": "127.0.0.1:8500"}}
 	}
 	deepMerge(cfg, s.Config)
 	return cfg

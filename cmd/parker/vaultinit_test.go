@@ -23,6 +23,8 @@ type fakeVault struct {
 	created  int
 	notUpYet int
 	pki      map[string]string
+	transit  []string
+	recovery bool
 }
 
 func (f *fakeVault) Initialized(_ context.Context, addr string) (bool, error) {
@@ -32,9 +34,24 @@ func (f *fakeVault) Initialized(_ context.Context, addr string) (bool, error) {
 	}
 	return f.inited, nil
 }
-func (f *fakeVault) Init(context.Context, string) (string, string, error) {
-	f.inited, f.key = true, "k1"
+func (f *fakeVault) Init(_ context.Context, _ string, recovery bool) (string, string, error) {
+	f.inited, f.key, f.recovery = true, "k1", recovery
+	if recovery {
+		// Auto-unseal: the servers unseal themselves once initialised.
+		for a := range f.sealed {
+			f.sealed[a] = false
+		}
+	}
 	return "k1", "initial-root", nil
+}
+func (f *fakeVault) Sealed(_ context.Context, addr string) (bool, error) { return f.sealed[addr], nil }
+func (f *fakeVault) MountTransit(_ context.Context, _, token, path string, keys []string) error {
+	for _, k := range keys {
+		if !slices.Contains(f.transit, token+" "+path+k) {
+			f.transit = append(f.transit, token+" "+path+k)
+		}
+	}
+	return nil
 }
 func (f *fakeVault) Unseal(_ context.Context, addr, key string) (bool, error) {
 	if key == f.key {
@@ -112,5 +129,24 @@ func TestVaultInitLostKeys(t *testing.T) {
 	s := expand.VaultInitSpec{Addrs: []string{"http://a:8200"}, KeysFile: filepath.Join(t.TempDir(), "gone.json")}
 	if err := vaultInit(context.Background(), f, s, time.Second, io.Discard); err == nil {
 		t.Error("no error with the keys gone")
+	}
+}
+
+// A cluster that auto-unseals gets a recovery key and unseals itself; one
+// that others auto-unseal with makes their Transit keys.
+func TestVaultInitAutoUnseal(t *testing.T) {
+	addrs := []string{"http://a:8200", "http://b:8200"}
+	f := &fakeVault{sealed: map[string]bool{addrs[0]: true, addrs[1]: true}}
+	s := expand.VaultInitSpec{Addrs: addrs, RootToken: "lab-root", KeysFile: filepath.Join(t.TempDir(), "keys.json"),
+		Recovery: true, TransitKeys: []string{"autounseal-west"}}
+	if err := vaultInit(context.Background(), f, s, 5*time.Second, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !f.recovery || f.sealed[addrs[1]] {
+		t.Errorf("recovery %v, sealed %v", f.recovery, f.sealed)
+	}
+	want := []string{"lab-root transit/autounseal-west"}
+	if !slices.Equal(f.transit, want) {
+		t.Errorf("transit %q, want %q", f.transit, want)
 	}
 }

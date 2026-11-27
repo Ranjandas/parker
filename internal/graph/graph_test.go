@@ -258,5 +258,7 @@ func TestIntegrations(t *testing.T) {
 		t.Errorf("consul product %q", p)
 	}
 	want(t, "consul storage", edges(build(t, "vault-consul.yaml"), Integration), "east-vault-1>dc1-server-1 Consul storage")
+	want(t, "registered", edges(build(t, "vault-register.yaml"), Integration), "east-vault-1>dc1-server-1 registered")
+	want(t, "auto-unseal", edges(build(t, "vault-transit.yaml"), Integration), "east-vault-1>unsealer-vault-1 auto-unseal")
 	want(t, "none", edges(build(t, "vault.yaml"), Integration))
 }

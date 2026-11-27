@@ -1844,6 +1844,10 @@
           ],
           "description": "Storage is raft (integrated storage, the default; Vault 1.4+), file\n(one server, no HA), or {consul: DC}: the Consul datacenter DC keeps\nthe data, through a Consul client agent beside each server."
         },
+        "register": {
+          "type": "string",
+          "description": "Register registers the servers in the Consul datacenter of that name\nas the vault service, tagged active or standby, through a Consul\nclient agent beside each server. storage: {consul: DC} registers\nthem in DC already. Dev clusters don't register."
+        },
         "ui": {
           "type": "boolean",
           "description": "UI serves the Vault web UI; default true."
@@ -1886,11 +1890,29 @@
           },
           "type": "object",
           "description": "Meta is metadata for the cluster's nodes, matched by meta:KEY=VALUE\nselectors."
+        },
+        "seal": {
+          "$ref": "#/$defs/VaultSeal",
+          "description": "Seal is how the servers unseal. Leave it out for Shamir keys, which\nParker keeps and unseals with; {transit: CLUSTER} auto-unseals them\nwith the Transit secrets engine of another Vault cluster of the lab."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "description": "VaultCluster is one Vault cluster."
+    },
+    "VaultSeal": {
+      "properties": {
+        "transit": {
+          "type": "string",
+          "description": "Transit is the Vault cluster whose Transit secrets engine holds the\nkey that unseals this one."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "transit"
+      ],
+      "description": "VaultSeal is a cluster's auto-unseal."
     },
     "VaultSettings": {
       "properties": {
@@ -1918,6 +1940,10 @@
             }
           ],
           "description": "Storage is raft (integrated storage, the default; Vault 1.4+), file\n(one server, no HA), or {consul: DC}: the Consul datacenter DC keeps\nthe data, through a Consul client agent beside each server."
+        },
+        "register": {
+          "type": "string",
+          "description": "Register registers the servers in the Consul datacenter of that name\nas the vault service, tagged active or standby, through a Consul\nclient agent beside each server. storage: {consul: DC} registers\nthem in DC already. Dev clusters don't register."
         },
         "ui": {
           "type": "boolean",

@@ -74,9 +74,11 @@ type vaultAPI interface {
 	// Initialized reports whether the cluster at addr is initialised; an
 	// error means the server isn't answering yet.
 	Initialized(ctx context.Context, addr string) (bool, error)
-	// Init initialises it with one key share and returns the key and the
-	// initial root token.
-	Init(ctx context.Context, addr string) (key, root string, err error)
+	// Init initialises it with one key share (a recovery key when the
+	// servers auto-unseal) and returns the key and the initial root token.
+	Init(ctx context.Context, addr string, recovery bool) (key, root string, err error)
+	// Sealed reports whether the server at addr is sealed.
+	Sealed(ctx context.Context, addr string) (bool, error)
 	// Unseal sends a key and reports whether the server is now unsealed.
 	Unseal(ctx context.Context, addr, key string) (bool, error)
 	// CreateToken creates a root token with this id.
@@ -86,6 +88,9 @@ type vaultAPI interface {
 	// MountPKI mounts a PKI secrets engine at path with the CA in bundle,
 	// unless one is mounted there already.
 	MountPKI(ctx context.Context, addr, token, path, bundle string) error
+	// MountTransit mounts the Transit secrets engine at path, unless one
+	// is mounted there, and creates the keys that don't exist yet.
+	MountTransit(ctx context.Context, addr, token, path string, keys []string) error
 }
 
 // vaultKeys is the keys file.
@@ -140,7 +145,7 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 			return fmt.Errorf("vault-init: %s: %w", s.KeysFile, err)
 		}
 	} else {
-		key, root, err := v.Init(ctx, first)
+		key, root, err := v.Init(ctx, first, s.Recovery)
 		if err != nil {
 			return fmt.Errorf("vault-init: init: %w", err)
 		}
@@ -153,8 +158,19 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 	}
 
 	// The first server unsealed becomes the leader; the others join it
-	// through retry_join once unsealed too.
+	// through retry_join once unsealed too. Servers that auto-unseal do it
+	// themselves.
 	for _, addr := range s.Addrs {
+		if s.Recovery {
+			if err := retry("waiting for "+addr+" to auto-unseal", func() (bool, error) {
+				sealed, err := v.Sealed(ctx, addr)
+				return err == nil && !sealed, err
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(log, "vault-init: %s auto-unsealed\n", addr)
+			continue
+		}
 		if err := retry("unsealing "+addr, func() (bool, error) {
 			return v.Unseal(ctx, addr, keys.Key)
 		}); err != nil {
@@ -187,6 +203,19 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 			return err
 		}
 		fmt.Fprintf(log, "vault-init: %s holds the lab CA\n", r.Path)
+	}
+	if len(s.TransitKeys) > 0 {
+		token := s.RootToken
+		if token == "" {
+			token = keys.Root
+		}
+		if err := retry("mounting "+expand.VaultTransitMount, func() (bool, error) {
+			err := v.MountTransit(ctx, first, token, expand.VaultTransitMount, s.TransitKeys)
+			return err == nil, err
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintf(log, "vault-init: %s holds the keys %s\n", expand.VaultTransitMount, strings.Join(s.TransitKeys, ", "))
 	}
 	return nil
 }
@@ -251,16 +280,24 @@ func (v vaultHTTP) Initialized(ctx context.Context, addr string) (bool, error) {
 	return r.Initialized, err
 }
 
-func (v vaultHTTP) Init(ctx context.Context, addr string) (string, string, error) {
+func (v vaultHTTP) Init(ctx context.Context, addr string, recovery bool) (string, string, error) {
 	var r struct {
-		Keys []string `json:"keys"`
-		Root string   `json:"root_token"`
+		Keys         []string `json:"keys"`
+		RecoveryKeys []string `json:"recovery_keys"`
+		Root         string   `json:"root_token"`
+	}
+	req := map[string]any{"secret_shares": 1, "secret_threshold": 1}
+	if recovery {
+		req = map[string]any{"recovery_shares": 1, "recovery_threshold": 1}
 	}
 	// Init writes the keyring to storage and can take a while; a timeout
 	// here would lose the keys of a cluster that did initialise.
 	long := vaultHTTP{c: &http.Client{Timeout: 60 * time.Second, Transport: v.c.Transport}}
-	if _, err := long.do(ctx, http.MethodPut, addr+"/v1/sys/init", "", map[string]any{"secret_shares": 1, "secret_threshold": 1}, &r); err != nil {
+	if _, err := long.do(ctx, http.MethodPut, addr+"/v1/sys/init", "", req, &r); err != nil {
 		return "", "", err
+	}
+	if recovery {
+		r.Keys = r.RecoveryKeys
 	}
 	if len(r.Keys) == 0 || r.Root == "" {
 		return "", "", errors.New("init returned no key or root token")
@@ -311,6 +348,34 @@ func (v vaultHTTP) MountPKI(ctx context.Context, addr, token, path, bundle strin
 	}
 	_, err := v.do(ctx, http.MethodPost, addr+"/v1/"+path+"/config/ca", token, map[string]any{"pem_bundle": bundle}, nil)
 	return err
+}
+
+func (v vaultHTTP) Sealed(ctx context.Context, addr string) (bool, error) {
+	var st struct {
+		Sealed bool `json:"sealed"`
+	}
+	_, err := v.do(ctx, http.MethodGet, addr+"/v1/sys/seal-status", "", nil, &st)
+	return st.Sealed, err
+}
+
+func (v vaultHTTP) MountTransit(ctx context.Context, addr, token, path string, keys []string) error {
+	path = strings.Trim(path, "/")
+	var mounts map[string]any
+	if _, err := v.do(ctx, http.MethodGet, addr+"/v1/sys/mounts", token, nil, &mounts); err != nil {
+		return err
+	}
+	if _, ok := mounts[path+"/"]; !ok {
+		if _, err := v.do(ctx, http.MethodPost, addr+"/v1/sys/mounts/"+path, token, map[string]any{"type": "transit"}, nil); err != nil {
+			return err
+		}
+	}
+	for _, k := range keys {
+		// Creating a key that exists changes nothing.
+		if _, err := v.do(ctx, http.MethodPost, addr+"/v1/"+path+"/keys/"+k, token, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (v vaultHTTP) TokenExists(ctx context.Context, addr, token string) bool {
