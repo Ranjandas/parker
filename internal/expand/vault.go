@@ -142,7 +142,12 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				out.Nodes[keys[k]] = node
 				continue
 			}
-			cfg := vaultConfig(s, ips[k], node.Labels.Name, addrs, k)
+			cfg := vaultConfig(s, name, ips[k], node.Labels.Name, addrs, k)
+			if s.Storage.Kind == spec.VaultStorageConsul {
+				if err := vaultOnConsul(out, keys[k], node, cfg); err != nil {
+					return err
+				}
+			}
 			if tlsOn {
 				short := node.Labels.Name
 				cert, key, err := labCA.leafCert(keys[k], []string{
@@ -166,6 +171,9 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				Run:       spec.Command{"vault", "server", "-config=" + VarNodeDir + "/" + VaultConfigFile},
 				ReadyWhen: ready,
 			}
+			if _, ok := node.Processes["consul"]; ok {
+				node.Processes["vault"].DependsOn = map[string]*spec.Dep{keys[k] + "/consul": {Condition: "ready"}}
+			}
 			if k == 0 {
 				deps := map[string]*spec.Dep{}
 				for _, key := range keys {
@@ -187,6 +195,37 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 		vf[name] = VaultClusterFacts{Addrs: addrs, RootToken: token, Nodes: keys}
 	}
 	facts[ProductVault] = vf
+	return nil
+}
+
+// vaultOnConsul puts a Vault server with consul storage on the node the
+// Consul product made for it: a client agent of the storage datacenter,
+// on that datacenter's LAN (see consulProduct). The server keeps its data
+// through that agent, with the agent's token, over HTTPS when the
+// datacenter has TLS, and starts once the agent is ready.
+func vaultOnConsul(out *spec.File, key string, node *spec.RawNode, cfg map[string]any) error {
+	agent := out.Nodes[key]
+	if agent == nil || agent.Processes["consul"] == nil {
+		return fmt.Errorf("%s: no Consul agent for its consul storage", key)
+	}
+	maps.Copy(node.Networks, agent.Networks)
+	maps.Copy(node.Files, agent.Files)
+	maps.Copy(node.Processes, agent.Processes)
+	st, _ := cfg["storage"].(map[string]any)
+	c, _ := st["consul"].(map[string]any)
+	if c == nil {
+		return nil // the user's config replaced the storage
+	}
+	if r := agent.Processes["consul"].ReadyWhen; r != nil && r.Consul != nil {
+		if r.Consul.Token != "" {
+			c["token"] = r.Consul.Token
+		}
+		if r.Consul.CAFile != "" {
+			c["address"] = "127.0.0.1:" + strconv.Itoa(HTTPSPort)
+			c["scheme"] = "https"
+			c["tls_ca_file"] = VarNodeDir + "/" + r.Consul.CAFile
+		}
+	}
 	return nil
 }
 
@@ -215,7 +254,7 @@ func vaultTLS(cfg map[string]any) {
 }
 
 // vaultConfig is server k's configuration, in Vault's JSON form.
-func vaultConfig(s spec.VaultSettings, ip, nodeID string, addrs []string, k int) map[string]any {
+func vaultConfig(s spec.VaultSettings, cluster, ip, nodeID string, addrs []string, k int) map[string]any {
 	cfg := map[string]any{
 		// Labs run unprivileged; mlock needs CAP_IPC_LOCK.
 		"disable_mlock": true,
@@ -231,7 +270,11 @@ func vaultConfig(s spec.VaultSettings, ip, nodeID string, addrs []string, k int)
 	if s.LogLevel != "" {
 		cfg["log_level"] = s.LogLevel
 	}
-	switch s.Storage {
+	switch s.Storage.Kind {
+	case spec.VaultStorageConsul:
+		// The node's own Consul client agent; vaultConsul adds the token
+		// and TLS once the agent is known.
+		cfg["storage"] = map[string]any{"consul": map[string]any{"address": "127.0.0.1:8500", "path": "vault-" + cluster + "/"}}
 	case spec.VaultStorageFile:
 		cfg["storage"] = map[string]any{"file": map[string]any{"path": VarNodeDir + "/data"}}
 	default:
