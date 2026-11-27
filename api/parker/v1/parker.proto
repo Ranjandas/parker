@@ -232,6 +232,7 @@ message GraphNode {
   // Consul namespace of each service and gateway ("<kind>-gateway"), when
   // its partition has namespaces other than default.
   map<string, string> namespaces = 9;
+  string product = 10; // consul, vault; "" for a low-level node
 }
 
 // GraphLink is a web UI on a node, opened through the daemon's app proxy.

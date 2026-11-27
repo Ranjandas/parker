@@ -245,3 +245,18 @@ func TestPeeringDirect(t *testing.T) {
 		t.Error("no peering edge")
 	}
 }
+
+// Products that use each other are linked, from the user to the one it
+// uses, between their first servers.
+func TestIntegrations(t *testing.T) {
+	g := build(t, "vault-connect-ca.yaml")
+	want(t, "connect ca", edges(g, Integration), "dc1-server-1>east-vault-1 Connect CA")
+	if p := node(t, g, "east-vault-1").Product; p != expand.ProductVault {
+		t.Errorf("vault product %q", p)
+	}
+	if p := node(t, g, "dc1-server-1").Product; p != expand.ProductConsul {
+		t.Errorf("consul product %q", p)
+	}
+	want(t, "consul storage", edges(build(t, "vault-consul.yaml"), Integration), "east-vault-1>dc1-server-1 Consul storage")
+	want(t, "none", edges(build(t, "vault.yaml"), Integration))
+}

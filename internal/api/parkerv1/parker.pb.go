@@ -1300,6 +1300,7 @@ type GraphNode struct {
 	// Consul namespace of each service and gateway ("<kind>-gateway"), when
 	// its partition has namespaces other than default.
 	Namespaces    map[string]string `protobuf:"bytes,9,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Product       string            `protobuf:"bytes,10,opt,name=product,proto3" json:"product,omitempty"` // consul, vault; "" for a low-level node
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1395,6 +1396,13 @@ func (x *GraphNode) GetNamespaces() map[string]string {
 		return x.Namespaces
 	}
 	return nil
+}
+
+func (x *GraphNode) GetProduct() string {
+	if x != nil {
+		return x.Product
+	}
+	return ""
 }
 
 // GraphLink is a web UI on a node, opened through the daemon's app proxy.
@@ -2781,7 +2789,7 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x05edges\x18\x03 \x03(\v2\x14.parker.v1.GraphEdgeR\x05edges\x12\x1e\n" +
 	"\n" +
 	"federation\x18\x04 \x01(\tR\n" +
-	"federation\"\xdc\x02\n" +
+	"federation\"\xf6\x02\n" +
 	"\tGraphNode\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02dc\x18\x02 \x01(\tR\x02dc\x12\x1c\n" +
@@ -2793,7 +2801,9 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x05links\x18\b \x03(\v2\x14.parker.v1.GraphLinkR\x05links\x12D\n" +
 	"\n" +
 	"namespaces\x18\t \x03(\v2$.parker.v1.GraphNode.NamespacesEntryR\n" +
-	"namespaces\x1a=\n" +
+	"namespaces\x12\x18\n" +
+	"\aproduct\x18\n" +
+	" \x01(\tR\aproduct\x1a=\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"u\n" +
