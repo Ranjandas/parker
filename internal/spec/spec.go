@@ -501,6 +501,8 @@ type Datacenter struct {
 	Meta map[string]string `yaml:"meta,omitempty"`
 	// Servers is the number of Consul servers, or {count, overrides}.
 	Servers Servers `yaml:"servers"`
+	// Connect sets up the service mesh's certificate authority.
+	Connect *DCConnect `yaml:"connect,omitempty"`
 
 	// Nodes besides the servers, keyed by name. A node runs a client agent
 	// by default, plus its services and processes.
@@ -520,6 +522,20 @@ type Datacenter struct {
 
 	// EntrySources say where each config entry came from; Load fills it.
 	EntrySources []EntrySource `yaml:"-" json:"-"`
+}
+
+// DCConnect is a datacenter's Connect (service mesh) settings.
+type DCConnect struct {
+	// CA is the certificate authority that signs the mesh's certificates.
+	CA *ConnectCA `yaml:"ca,omitempty"`
+}
+
+// ConnectCA picks the Connect CA provider.
+type ConnectCA struct {
+	// Vault makes a Vault cluster of the lab the CA (Vault's PKI secrets
+	// engine): Consul's servers join the cluster's network and mount
+	// their root and intermediate PKI paths in it.
+	Vault string `yaml:"vault,omitempty"`
 }
 
 // Partition is an Admin Partition (Consul Enterprise): Parker creates

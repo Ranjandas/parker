@@ -22,6 +22,7 @@ type fakeVault struct {
 	tokens   []string
 	created  int
 	notUpYet int
+	pki      map[string]string
 }
 
 func (f *fakeVault) Initialized(_ context.Context, addr string) (bool, error) {
@@ -48,6 +49,15 @@ func (f *fakeVault) CreateToken(_ context.Context, _, token, id string) error {
 	}
 	return nil
 }
+func (f *fakeVault) MountPKI(_ context.Context, _, token, path, bundle string) error {
+	if f.pki == nil {
+		f.pki = map[string]string{}
+	}
+	if _, ok := f.pki[path]; !ok {
+		f.pki[path] = token + " " + bundle
+	}
+	return nil
+}
 func (f *fakeVault) TokenExists(_ context.Context, _, token string) bool {
 	return slices.Contains(f.tokens, token)
 }
@@ -55,10 +65,14 @@ func (f *fakeVault) TokenExists(_ context.Context, _, token string) bool {
 func TestVaultInit(t *testing.T) {
 	addrs := []string{"http://a:8200", "http://b:8200", "http://c:8200"}
 	keys := filepath.Join(t.TempDir(), "keys.json")
-	s := expand.VaultInitSpec{Addrs: addrs, RootToken: "lab-root", KeysFile: keys}
+	s := expand.VaultInitSpec{Addrs: addrs, RootToken: "lab-root", KeysFile: keys,
+		PKIRoots: []expand.VaultPKIRoot{{Path: "connect-root/", Bundle: "CA"}}}
 	f := &fakeVault{sealed: map[string]bool{addrs[0]: true, addrs[1]: true, addrs[2]: true}, notUpYet: 2}
 	if err := vaultInit(context.Background(), f, s, 10*time.Second, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+	if f.pki["connect-root/"] != "lab-root CA" {
+		t.Errorf("pki %v", f.pki)
 	}
 	for _, a := range addrs {
 		if f.sealed[a] {

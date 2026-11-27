@@ -11,14 +11,16 @@ import (
 
 func TestVaultValidate(t *testing.T) {
 	for text, want := range map[string]string{
-		"vault:\n  clusters:\n    east: {}\n":                                                                                                 "versions.vault: required",
-		"versions: { vault: 1.21.1 }\nvault:\n  clusters: {}\n":                                                                               "at least one cluster",
-		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { dev: true, servers: 3 }\n":                                                "dev: true runs one server",
-		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: file, servers: 2 }\n":                                            "storage: file has no HA",
-		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 3 }\n":                                                           "needs Vault 1.4 or later",
-		"versions: { vault: 1.21.1, consul: 1.22.7 }\nconsul:\n  datacenters:\n    east: { servers: 1 }\nvault:\n  clusters:\n    east: {}\n": "names must be unique",
-		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 2, storage: { consul: dc9 } }\n":                                 "storage.consul: \"dc9\" is not a Consul datacenter",
-		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: s3 }\n":                                                          `storage: "s3" is not raft, file or {consul: DC}`,
+		"vault:\n  clusters:\n    east: {}\n":                                                                                                                               "versions.vault: required",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters: {}\n":                                                                                                             "at least one cluster",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { dev: true, servers: 3 }\n":                                                                              "dev: true runs one server",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: file, servers: 2 }\n":                                                                          "storage: file has no HA",
+		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 3 }\n":                                                                                         "needs Vault 1.4 or later",
+		"versions: { vault: 1.21.1, consul: 1.22.7 }\nconsul:\n  datacenters:\n    east: { servers: 1 }\nvault:\n  clusters:\n    east: {}\n":                               "names must be unique",
+		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 2, storage: { consul: dc9 } }\n":                                                               "storage.consul: \"dc9\" is not a Consul datacenter",
+		"versions: { vault: 1.21.1, consul: 1.22.7 }\nconsul:\n  datacenters:\n    dc1: { servers: 1, connect: { ca: { vault: west } } }\nvault:\n  clusters:\n    e: {}\n": `connect.ca.vault: "west" is not a Vault cluster`,
+		"versions: { consul: 1.22.7 }\nconsul:\n  datacenters:\n    dc1: { servers: 1, connect: { ca: { vault: e } } }\n":                                                   "the lab has no vault: section",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: s3 }\n":                                                                                        `storage: "s3" is not raft, file or {consul: DC}`,
 	} {
 		p := filepath.Join(t.TempDir(), "lab.yaml")
 		if err := os.WriteFile(p, []byte("parker: v1alpha1\n"+text), 0o644); err != nil {

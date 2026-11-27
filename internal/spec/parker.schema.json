@@ -101,6 +101,17 @@
       "type": "object",
       "description": "ConfigEntry is a Consul config entry, passed through as is."
     },
+    "ConnectCA": {
+      "properties": {
+        "vault": {
+          "type": "string",
+          "description": "Vault makes a Vault cluster of the lab the CA (Vault's PKI secrets\nengine): Consul's servers join the cluster's network and mount\ntheir root and intermediate PKI paths in it."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConnectCA picks the Connect CA provider."
+    },
     "Consul": {
       "properties": {
         "defaults": {
@@ -217,6 +228,17 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "DCConnect": {
+      "properties": {
+        "ca": {
+          "$ref": "#/$defs/ConnectCA",
+          "description": "CA is the certificate authority that signs the mesh's certificates."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "DCConnect is a datacenter's Connect (service mesh) settings."
+    },
     "Datacenter": {
       "properties": {
         "agents": {
@@ -291,6 +313,10 @@
             }
           ],
           "description": "Servers is the number of Consul servers, or {count, overrides}."
+        },
+        "connect": {
+          "$ref": "#/$defs/DCConnect",
+          "description": "Connect sets up the service mesh's certificate authority."
         },
         "nodes": {
           "additionalProperties": {

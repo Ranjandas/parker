@@ -167,6 +167,13 @@ func (c *VaultCluster) ServerCount() int {
 func (f *File) validateVault(add func(string, ...any)) {
 	v := f.Vault
 	if v == nil {
+		if f.Consul != nil {
+			for _, dc := range slices.Sorted(maps.Keys(f.Consul.Datacenters)) {
+				if d := f.Consul.Datacenters[dc]; d != nil && d.Connect != nil && d.Connect.CA != nil && d.Connect.CA.Vault != "" {
+					add("consul.datacenters.%s.connect.ca.vault: the lab has no vault: section", dc)
+				}
+			}
+		}
 		return
 	}
 	version := f.Versions["vault"]
@@ -175,6 +182,17 @@ func (f *File) validateVault(add func(string, ...any)) {
 	}
 	if len(v.Clusters) == 0 {
 		add("vault.clusters: at least one cluster is required")
+	}
+	if f.Consul != nil {
+		for _, dc := range slices.Sorted(maps.Keys(f.Consul.Datacenters)) {
+			d := f.Consul.Datacenters[dc]
+			if d == nil || d.Connect == nil || d.Connect.CA == nil || d.Connect.CA.Vault == "" {
+				continue
+			}
+			if _, ok := v.Clusters[d.Connect.CA.Vault]; !ok {
+				add("consul.datacenters.%s.connect.ca.vault: %q is not a Vault cluster of this lab (vault.clusters)", dc, d.Connect.CA.Vault)
+			}
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(v.Clusters)) {
 		c := v.Clusters[name]
