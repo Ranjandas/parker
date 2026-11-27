@@ -163,7 +163,7 @@ Fault steps are the same as [`parker fault`](faults.md):
 ```
 
 A `fake:` step takes `on`, `service`, `health`, `latency`, `errors`,
-`rate_limit` and `reset`, as in the [`fake:` block](fake-service.md#the-fake-block).
+`rate_limit`, `limits` and `reset`, as in the [`fake:` block](fake-service.md#the-fake-block).
 
 ## When a step fails
 

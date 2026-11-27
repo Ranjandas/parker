@@ -52,6 +52,9 @@ type Response struct {
 	// Injected names the fault injected into this answer, if any:
 	// error, delay or rate_limit.
 	Injected string `json:"injected,omitempty"`
+	// Limit names the limit that refused this request, if any, such as
+	// max_header_bytes; Error says by how much.
+	Limit string `json:"limit,omitempty"`
 	// Cycle is set when this service was already on the request's path:
 	// its upstreams aren't called again.
 	Cycle bool `json:"cycle,omitempty"`
@@ -163,7 +166,7 @@ func (s *Server) ListenAndServe() error {
 	if s.cfg.Protocol == "tcp" {
 		return s.serveTCP(addr)
 	}
-	srv := &http.Server{Addr: addr, Handler: s.Handler(), Protocols: new(http.Protocols)}
+	srv := &http.Server{Addr: addr, Handler: s.Handler(), Protocols: new(http.Protocols), MaxHeaderBytes: maxHeaderCap}
 	srv.Protocols.SetHTTP1(true)
 	srv.Protocols.SetUnencryptedHTTP2(true)
 	return srv.ListenAndServe()
@@ -212,7 +215,10 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 	if t := r.Header.Get(HeaderTrail); t != "" {
 		trail = strings.Split(t, ",")
 	}
-	if s.inject(r, resp) {
+	if rf := s.Faults().Limits.check(r); rf != nil {
+		// Refused before the app sees it, as a server's connector does.
+		resp.Code, resp.Error, resp.Limit = rf.code, rf.msg, rf.limit
+	} else if s.inject(r, resp) {
 		switch {
 		case len(s.cfg.Upstreams) == 0:
 		case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
@@ -422,6 +428,9 @@ func localIPs() []string {
 }
 
 func injectedNote(r *Response) string {
+	if r.Limit != "" {
+		return " limit=" + r.Limit + errNote(r.Error)
+	}
 	if r.Injected == "" {
 		return ""
 	}

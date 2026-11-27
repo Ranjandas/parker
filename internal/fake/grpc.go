@@ -1,10 +1,12 @@
 package fake
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -130,6 +132,8 @@ func (s *Server) grpcHandlers(mux *http.ServeMux) {
 			}
 			r.Header = req.Header().Clone()
 			r.RemoteAddr = req.Peer().Addr
+			// The message is the body, for max_body_bytes.
+			r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(req.Msg.Data)), int64(len(req.Msg.Data))
 			resp, id := s.handle(r, "gRPC")
 			out := connect.NewResponse(&handleResponse{Message: mustJSON(resp)})
 			out.Header().Set(HeaderRequestID, id)
@@ -155,8 +159,10 @@ func grpcCode(code int) connect.Code {
 	switch code {
 	case http.StatusBadRequest:
 		return connect.CodeInvalidArgument
-	case http.StatusTooManyRequests:
+	case http.StatusTooManyRequests, http.StatusRequestEntityTooLarge, http.StatusRequestHeaderFieldsTooLarge:
 		return connect.CodeResourceExhausted
+	case http.StatusRequestURITooLong:
+		return connect.CodeInvalidArgument
 	case http.StatusServiceUnavailable:
 		return connect.CodeUnavailable
 	case http.StatusGatewayTimeout:

@@ -70,7 +70,9 @@ console.log(JSON.stringify({
   labels: FakeUI.labelsOf(ok),
   stats: FakeUI.stats(recs),
   sums: [FakeUI.faultSummary({ health_code: 200, error_rate: 0.5, error_code: 503, p50: 180e6, p99: 180e6, rate_limit: 0 }),
-    FakeUI.faultSummary({ health_code: 503, p50: 100e6, p99: 2000e6, rate_limit: 5 }), FakeUI.faultSummary({ health_code: 200 })],
+    FakeUI.faultSummary({ health_code: 503, p50: 100e6, p99: 2000e6, rate_limit: 5 }), FakeUI.faultSummary({ health_code: 200 }),
+    FakeUI.faultSummary({ health_code: 200, limits: { max_header_bytes: 8192, max_body_bytes: 1048576, max_header_count: 100 } })],
+  limit: FakeUI.why({ name: "api", code: 400, limit: "max_header_bytes", error: "request headers too large: 9120 bytes > max_header_bytes 8KB" }, []),
   labs: [FakeUI.labFromHost("dc1-web-8080--peering.parker.localhost:35237"), FakeUI.labFromHost("127.0.0.1:8080")],
 }));
 `
@@ -89,7 +91,8 @@ console.log(JSON.stringify({
 		"labels": `{"api":"dc2 v1","db":"dc2"}`,
 		"stats":  `{"n":4,"ok":50,"p50":4,"p99":10,"split":[{"svc":"api","label":"dc2 v1","pct":67},{"svc":"api","label":"dc3","pct":33}]}`,
 		"labs":   `["peering","LAB"]`,
-		"sums":   `["errors 50% (503) · latency 180ms","health 503 · latency 100–2000ms · rate limit 5/s",""]`,
+		"sums":   `["errors 50% (503) · latency 180ms","health 503 · latency 100–2000ms · rate limit 5/s","","limits headers 8KB, 100 headers, body 1MB"]`,
+		"limit":  `{"kind":"own","text":"api refused it: request headers too large: 9120 bytes > max_header_bytes 8KB"}`,
 	}
 	for k, w := range want {
 		if string(got[k]) != w {

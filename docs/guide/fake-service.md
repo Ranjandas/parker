@@ -70,13 +70,14 @@ you prefer them. The `fake:` block wins over env vars.
 | `errors.delay` | `ERROR_DELAY` | `0s` | The wait for `type: delay`. |
 | `rate_limit.rps` | `RATE_LIMIT` | `0` (off) | Requests per second; a burst of one second's worth. |
 | `rate_limit.code` | `RATE_LIMIT_CODE` | `503` | Code for requests over the limit. |
+| `limits` | | none | Refuses requests over a size, as an app server does. See [request size limits](#request-size-limits). |
 | `seed` | `RAND_SEED` | random | Makes error and latency draws repeatable. |
 | `request_faults` | | `true` | Lets a caller ask for faults on one request (below). |
 | `facts` | | `true` | Adds a space fact to each answer. `false` keeps shared output clean. |
 | `log_level` | `LOG_LEVEL` | `info` | `debug` adds each request's headers and upstream calls; `info` logs every request; `warn` only failed or faulted ones; `error` only failed ones. Changes at runtime with a `log_level:` step or `parker logs --level`. |
 
-The order on each request is: rate limit, then errors, then latency, then
-the upstream calls.
+The order on each request is: limits, then rate limit, then errors, then
+latency, then the upstream calls.
 
 Parker also sets things up around the fake:
 
@@ -109,6 +110,8 @@ Parker also sets things up around the fake:
   `error`.
 - `injected` names a fault injected at that hop: `error`, `delay` or
   `rate_limit`. A failure deep in a chain shows where it came from.
+- `limit` names the [limit](#request-size-limits) that refused the
+  request, and `error` says by how much.
 - `cycle: true` means the service was already on the request's path, so
   it answered without calling its upstreams again. The path travels in
   `X-Parker-Trail`, and a chain stops at 16 hops.
@@ -130,6 +133,71 @@ Unless `request_faults: false`:
 ```console
 $ parker call lab.yaml dc1/web -H 'X-Parker-Fault: db=error-rate:100'
 ```
+
+## Request size limits
+
+App servers refuse requests that are too large before the app sees
+them, and each has its own limits and codes. Tomcat answers 400 to
+request headers over 8 KB, Nginx answers 413 to a body over 1 MB. Behind
+a mesh this looks like one hop failing for no clear reason. `limits:`
+makes a fake refuse requests the same way, so a lab can show it:
+
+```yaml
+parker: v1alpha1
+name: header-limit
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      nodes:
+        api:
+          service:
+            port: 9090
+            run: fake-service
+            connect: sidecar
+            fake:
+              limits:
+                max_header_bytes: 8KB   # Tomcat's maxHttpHeaderSize
+                codes: { header: 400 }  # Tomcat answers 400
+```
+
+```console
+$ parker call header-limit.yaml dc1/api -H "Cookie: session=$(head -c 9000 /dev/zero | tr '\0' a)"
+api  dc1-api · dc1  400  42µs  request headers too large: 9094 bytes > max_header_bytes 8KB
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `limits.max_header_bytes` | off | The request line and all headers together, as Tomcat's `maxHttpHeaderSize` and Node's `--max-http-header-size` count them. |
+| `limits.max_header_line_bytes` | off | Any one header, `Name: value`, as Nginx's `large_client_header_buffers` and Apache's `LimitRequestFieldSize` count them. |
+| `limits.max_header_count` | off | The number of headers, `Host` included (Tomcat's `maxHeaderCount`). |
+| `limits.max_url_bytes` | off | The path and query. |
+| `limits.max_body_bytes` | off | The request body (Nginx's `client_max_body_size`). With `protocol: grpc`, the request message, refused with `RESOURCE_EXHAUSTED`. |
+| `limits.max_form_params` | off | Query and form body parameters together (Tomcat's `maxParameterCount`). |
+| `limits.codes.header` | `431` | Code for header size and count. Tomcat, Nginx and Apache answer `400`; Node and Envoy `431`. |
+| `limits.codes.url` | `414` | Code for the URL. |
+| `limits.codes.body` | `413` | Code for the body. |
+| `limits.codes.form` | `400` | Code for form parameters. |
+
+Sizes are bytes, or a string such as `8KB` or `1MB` (a KB is 1024
+bytes). `0` turns a limit off. Headers are counted the way they are sent
+over HTTP/1.1, CRLFs included, so a limit means the same for every
+client.
+
+A refused request doesn't call the service's upstreams, and the fake
+logs it at `warn` with the limit's name. `limits:` works with `protocol:
+http` and `grpc`; a `tcp` fake has no requests to limit.
+
+Some things to know:
+
+- In the mesh the request passes the service's sidecar first, and Envoy
+  has its own limits: 60 KB of headers and 100 headers by default, both
+  answered `431`. A fake limit above those is never reached through the
+  sidecar.
+- A fake doesn't pass its caller's headers on to its upstreams, so a big
+  header sent to the front of a chain doesn't reach the service behind
+  it. Call the limited service directly, as above.
 
 ## Changing faults while it runs
 
@@ -153,6 +221,8 @@ A scenario step:
 ```yaml
 - fake: { on: dc1/api, health: { code: 503 } }
 - fake: { on: dc1/api, errors: { rate: 0.5 }, latency: { p50: 1s } }
+- fake: { on: dc1/api, limits: { max_header_bytes: 4KB } }
+- fake: { on: dc1/api, limits: { max_header_bytes: 0 } }   # off again
 - fake: { on: dc1/api, reset: true }
 ```
 

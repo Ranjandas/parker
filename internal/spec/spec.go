@@ -167,16 +167,18 @@ type FakeStep struct {
 	Errors *FakeErrors `yaml:"errors,omitempty" json:"errors,omitempty"`
 	// RateLimit, as under fake:. rps: 0 turns it off.
 	RateLimit *FakeRateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	// Limits, as under fake:. Set a limit to 0 to turn it off.
+	Limits *FakeLimits `yaml:"limits,omitempty" json:"limits,omitempty"`
 }
 
 // Change is the step's changes in a fake: block's shape.
 func (f *FakeStep) Change() *Fake {
-	return &Fake{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit}
+	return &Fake{Health: f.Health, Latency: f.Latency, Errors: f.Errors, RateLimit: f.RateLimit, Limits: f.Limits}
 }
 
 // Empty reports a step that changes nothing (it shows the current faults).
 func (f *FakeStep) Empty() bool {
-	return !f.Reset && f.Health == nil && f.Latency == nil && f.Errors == nil && f.RateLimit == nil
+	return !f.Reset && f.Health == nil && f.Latency == nil && f.Errors == nil && f.RateLimit == nil && f.Limits == nil
 }
 
 type UpgradeStep struct {
@@ -847,6 +849,10 @@ type Fake struct {
 	Errors *FakeErrors `yaml:"errors,omitempty" json:"errors,omitempty"`
 	// RateLimit answers requests over a rate with an error code.
 	RateLimit *FakeRateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	// Limits refuses requests over a size, the way an app server does
+	// (Tomcat answers 400 to headers over 8 KB, for example). Default: no
+	// limits.
+	Limits *FakeLimits `yaml:"limits,omitempty" json:"limits,omitempty"`
 	// Seed makes the random draws (errors, latency) repeatable
 	// (RAND_SEED); default: a new seed each start.
 	Seed int64 `yaml:"seed,omitempty" json:"seed,omitempty"`
@@ -892,6 +898,45 @@ type FakeRateLimit struct {
 	RPS *float64 `yaml:"rps,omitempty" json:"rps,omitempty" jsonschema:"minimum=0"`
 	// Code for requests over the limit (RATE_LIMIT_CODE); default 503.
 	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+}
+
+// FakeLimits are request size limits. Sizes are bytes, or a string like
+// 8KB or 1MB (KB is 1024 bytes). 0 turns a limit off.
+type FakeLimits struct {
+	// MaxHeaderBytes bounds the request line and all headers together,
+	// as Tomcat's maxHttpHeaderSize and Node's max header size do.
+	MaxHeaderBytes *ByteSize `yaml:"max_header_bytes,omitempty" json:"max_header_bytes,omitempty"`
+	// MaxHeaderLineBytes bounds any one header ("Name: value"), as
+	// Nginx's large_client_header_buffers and Apache's
+	// LimitRequestFieldSize do.
+	MaxHeaderLineBytes *ByteSize `yaml:"max_header_line_bytes,omitempty" json:"max_header_line_bytes,omitempty"`
+	// MaxHeaderCount bounds the number of headers, Host included
+	// (Tomcat's maxHeaderCount).
+	MaxHeaderCount *int `yaml:"max_header_count,omitempty" json:"max_header_count,omitempty" jsonschema:"minimum=0"`
+	// MaxURLBytes bounds the path and query (Nginx and Apache answer 414).
+	MaxURLBytes *ByteSize `yaml:"max_url_bytes,omitempty" json:"max_url_bytes,omitempty"`
+	// MaxBodyBytes bounds the request body (Nginx's
+	// client_max_body_size). With protocol: grpc it bounds the request
+	// message, answered RESOURCE_EXHAUSTED.
+	MaxBodyBytes *ByteSize `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
+	// MaxFormParams bounds the query and form body parameters together
+	// (Tomcat's maxParameterCount).
+	MaxFormParams *int `yaml:"max_form_params,omitempty" json:"max_form_params,omitempty" jsonschema:"minimum=0"`
+	// Codes are the status codes a refused request answers.
+	Codes *FakeLimitCodes `yaml:"codes,omitempty" json:"codes,omitempty"`
+}
+
+// FakeLimitCodes are the codes for each kind of limit.
+type FakeLimitCodes struct {
+	// Header is for header size and count; default 431. Tomcat, Nginx
+	// and Apache answer 400.
+	Header int `yaml:"header,omitempty" json:"header,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// URL; default 414.
+	URL int `yaml:"url,omitempty" json:"url,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// Body; default 413.
+	Body int `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// Form is for form parameters; default 400.
+	Form int `yaml:"form,omitempty" json:"form,omitempty" jsonschema:"minimum=100,maximum=599"`
 }
 
 type FakeHealth struct {

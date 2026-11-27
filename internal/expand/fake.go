@@ -143,8 +143,36 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		r.Code = cmp.Or(b.RateLimit.Code, r.Code)
 		out.RateLimit = &r
 	}
+	if b.Limits != nil {
+		l := spec.FakeLimits{}
+		if out.Limits != nil {
+			l = *out.Limits
+		}
+		bl := b.Limits
+		l.MaxHeaderBytes = cmp.Or(bl.MaxHeaderBytes, l.MaxHeaderBytes)
+		l.MaxHeaderLineBytes = cmp.Or(bl.MaxHeaderLineBytes, l.MaxHeaderLineBytes)
+		l.MaxHeaderCount = cmp.Or(bl.MaxHeaderCount, l.MaxHeaderCount)
+		l.MaxURLBytes = cmp.Or(bl.MaxURLBytes, l.MaxURLBytes)
+		l.MaxBodyBytes = cmp.Or(bl.MaxBodyBytes, l.MaxBodyBytes)
+		l.MaxFormParams = cmp.Or(bl.MaxFormParams, l.MaxFormParams)
+		if bl.Codes != nil {
+			c := spec.FakeLimitCodes{}
+			if l.Codes != nil {
+				c = *l.Codes
+			}
+			c.Header = cmp.Or(bl.Codes.Header, c.Header)
+			c.URL = cmp.Or(bl.Codes.URL, c.URL)
+			c.Body = cmp.Or(bl.Codes.Body, c.Body)
+			c.Form = cmp.Or(bl.Codes.Form, c.Form)
+			l.Codes = &c
+		}
+		out.Limits = &l
+	}
 	if b.Seed != 0 {
 		out.Seed = b.Seed
+	}
+	if b.LogLevel != "" {
+		out.LogLevel = b.LogLevel
 	}
 	if b.RequestFaults != nil {
 		v := *b.RequestFaults
@@ -193,6 +221,9 @@ func checkFake(where string, svc, own *spec.Service) []error {
 	}
 	if f.Protocol != "grpc" && svc.Check == "grpc" && isFake(svc) {
 		errs = append(errs, fmt.Errorf("%s: check: grpc needs fake.protocol: grpc", where))
+	}
+	if f.Protocol == "tcp" && f.Limits != nil {
+		errs = append(errs, fmt.Errorf("%s: fake.limits: needs protocol http or grpc (a tcp fake has no requests to limit)", where))
 	}
 	if err := fake.Validate(f); err != nil {
 		errs = append(errs, fmt.Errorf("%s: fake.%w", where, err))

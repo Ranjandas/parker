@@ -85,12 +85,14 @@ func TestFakeServiceOnlyForFakes(t *testing.T) {
 
 func TestFakeValidation(t *testing.T) {
 	for bad, want := range map[string]string{
-		"run: [sleep, infinity], fake: { version: v1 }": "fake: needs run: fake-service",
-		"fake: { upstream_failure: maybe }":             "fake.upstream_failure",
-		"fake: { workers: -1 }":                         "fake.workers",
-		"fake: { ready: { delay: soon } }":              "fake.ready.delay",
-		"fake: { errors: { rate: 20 } }":                "errors.rate",
-		"fake: { latency: { p50: fast } }":              "latency.p50",
+		"run: [sleep, infinity], fake: { version: v1 }":              "fake: needs run: fake-service",
+		"fake: { upstream_failure: maybe }":                          "fake.upstream_failure",
+		"fake: { workers: -1 }":                                      "fake.workers",
+		"fake: { ready: { delay: soon } }":                           "fake.ready.delay",
+		"fake: { errors: { rate: 20 } }":                             "errors.rate",
+		"fake: { latency: { p50: fast } }":                           "latency.p50",
+		"fake: { protocol: tcp, limits: { max_header_bytes: 8KB } }": "fake.limits: needs protocol http or grpc",
+		"fake: { limits: { max_header_bytes: 8MB } }":                "limits.max_header_bytes: want at most 4MB",
 	} {
 		lab := strings.Replace(fakeLab, "port: 7000, connect: none", "port: 7000, connect: none, "+bad, 1)
 		p := filepath.Join(t.TempDir(), "lab.yaml")
@@ -204,5 +206,22 @@ func TestFakeProtocols(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want %q", bad, err, want)
 		}
+	}
+}
+
+// A service's limits merge over its template's, key by key.
+func TestMergeFakeLimits(t *testing.T) {
+	kb := func(n int64) *spec.ByteSize { b := spec.ByteSize(n << 10); return &b }
+	tmpl := &spec.Fake{LogLevel: "warn", Limits: &spec.FakeLimits{MaxHeaderBytes: kb(8), Codes: &spec.FakeLimitCodes{Header: 400}}}
+	got := mergeFake(tmpl, &spec.Fake{LogLevel: "debug", Limits: &spec.FakeLimits{MaxBodyBytes: kb(1024), Codes: &spec.FakeLimitCodes{Body: 400}}})
+	l := got.Limits
+	if *l.MaxHeaderBytes != 8<<10 || *l.MaxBodyBytes != 1<<20 || l.Codes.Header != 400 || l.Codes.Body != 400 {
+		t.Errorf("limits: %+v %+v", l, l.Codes)
+	}
+	if got.LogLevel != "debug" {
+		t.Errorf("log_level: %q", got.LogLevel)
+	}
+	if *tmpl.Limits.Codes != (spec.FakeLimitCodes{Header: 400}) || tmpl.Limits.MaxBodyBytes != nil {
+		t.Error("merge changed the template")
 	}
 }

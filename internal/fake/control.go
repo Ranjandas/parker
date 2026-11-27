@@ -166,6 +166,9 @@ func (f Faults) Summary() string {
 	} else {
 		parts = append(parts, "rate limit off")
 	}
+	if f.Limits.On() {
+		parts = append(parts, "limits "+f.Limits.summary())
+	}
 	return strings.Join(parts, " · ")
 }
 
