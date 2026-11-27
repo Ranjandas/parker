@@ -1894,6 +1894,10 @@
         "seal": {
           "$ref": "#/$defs/VaultSeal",
           "description": "Seal is how the servers unseal. Leave it out for Shamir keys, which\nParker keeps and unseals with; {transit: CLUSTER} auto-unseals them\nwith the Transit secrets engine of another Vault cluster of the lab."
+        },
+        "secrets": {
+          "$ref": "#/$defs/VaultSecrets",
+          "description": "Secrets are secrets engines Parker sets up on the cluster."
         }
       },
       "additionalProperties": false,
@@ -1913,6 +1917,17 @@
         "transit"
       ],
       "description": "VaultSeal is a cluster's auto-unseal."
+    },
+    "VaultSecrets": {
+      "properties": {
+        "consul": {
+          "type": "string",
+          "description": "Consul mounts the Consul secrets engine at consul/, configured with\na management token of the Consul datacenter of that name (which\nneeds acl: true), and a role named management that mints tokens\nwith the global-management policy."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultSecrets are the secrets engines Parker mounts and configures."
     },
     "VaultSettings": {
       "properties": {

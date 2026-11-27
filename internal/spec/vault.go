@@ -63,6 +63,26 @@ type VaultCluster struct {
 	// Parker keeps and unseals with; {transit: CLUSTER} auto-unseals them
 	// with the Transit secrets engine of another Vault cluster of the lab.
 	Seal *VaultSeal `yaml:"seal,omitempty"`
+	// Secrets are secrets engines Parker sets up on the cluster.
+	Secrets *VaultSecrets `yaml:"secrets,omitempty"`
+}
+
+// VaultSecrets are the secrets engines Parker mounts and configures.
+type VaultSecrets struct {
+	// Consul mounts the Consul secrets engine at consul/, configured with
+	// a management token of the Consul datacenter of that name (which
+	// needs acl: true), and a role named management that mints tokens
+	// with the global-management policy.
+	Consul string `yaml:"consul,omitempty"`
+}
+
+// ConsulSecrets is the datacenter of the cluster's Consul secrets
+// engine; "" for none.
+func (c *VaultCluster) ConsulSecrets() string {
+	if c == nil || c.Secrets == nil {
+		return ""
+	}
+	return c.Secrets.Consul
 }
 
 // VaultSeal is a cluster's auto-unseal.
@@ -296,6 +316,14 @@ func (f *File) validateVault(add func(string, ...any)) {
 			}
 			if version != "" && !VaultAtLeast(version, 1, 1) {
 				add("%s.seal: transit auto-unseal needs Vault 1.1 or later (versions.vault is %s)", where, version)
+			}
+		}
+		if dc := c.ConsulSecrets(); dc != "" {
+			switch {
+			case c.Dev:
+				add("%s.secrets.consul: not supported with dev: true", where)
+			case f.Consul == nil || f.Consul.Datacenters[dc] == nil:
+				add("%s.secrets.consul: %q is not a Consul datacenter of this lab (consul.datacenters)", where, dc)
 			}
 		}
 		if s.Storage.Kind == VaultStorageFile && c.ServerCount() > 1 {

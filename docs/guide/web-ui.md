@@ -58,8 +58,10 @@ The link signs you in once, and only works while that `parker ui` runs.
   that is its [Connect CA](vault.md#vault-as-the-connect-ca), and
   `Consul storage` from a Vault cluster to the datacenter that holds
   its data, `registered` from a Vault cluster to the datacenter it
-  [registers in](vault.md#registering-in-consul), and `auto-unseal` from
-  a Vault cluster to the one it
+  [registers in](vault.md#registering-in-consul), `secrets engine` from
+  a Vault cluster to the datacenter whose
+  [ACL tokens it mints](vault.md#consul-secrets-engine), and
+  `auto-unseal` from a Vault cluster to the one it
   [auto-unseals with](vault.md#transit-auto-unseal). The **Product links**
   button hides them.
 - **Node pages**: processes, health checks, `describe`, and a streaming

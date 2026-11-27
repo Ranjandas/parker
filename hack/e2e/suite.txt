@@ -30,3 +30,4 @@ examples/vault-consul.yaml
 examples/vault-connect-ca.yaml
 examples/vault-register.yaml
 examples/vault-transit.yaml
+examples/vault-consul-secrets.yaml

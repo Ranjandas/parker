@@ -91,6 +91,9 @@ type vaultAPI interface {
 	// MountTransit mounts the Transit secrets engine at path, unless one
 	// is mounted there, and creates the keys that don't exist yet.
 	MountTransit(ctx context.Context, addr, token, path string, keys []string) error
+	// MountConsul mounts and configures the Consul secrets engine, unless
+	// one is mounted at its path, and writes its role.
+	MountConsul(ctx context.Context, addr, token string, e expand.VaultConsulEngine) error
 }
 
 // vaultKeys is the keys file.
@@ -216,6 +219,19 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 			return err
 		}
 		fmt.Fprintf(log, "vault-init: %s holds the keys %s\n", expand.VaultTransitMount, strings.Join(s.TransitKeys, ", "))
+	}
+	if e := s.ConsulEngine; e != nil {
+		token := s.RootToken
+		if token == "" {
+			token = keys.Root
+		}
+		if err := retry("mounting "+e.Path, func() (bool, error) {
+			err := v.MountConsul(ctx, first, token, *e)
+			return err == nil, err
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintf(log, "vault-init: %s mints tokens of %s\n", e.Path, e.Address)
 	}
 	return nil
 }
@@ -376,6 +392,28 @@ func (v vaultHTTP) MountTransit(ctx context.Context, addr, token, path string, k
 		}
 	}
 	return nil
+}
+
+func (v vaultHTTP) MountConsul(ctx context.Context, addr, token string, e expand.VaultConsulEngine) error {
+	path := strings.Trim(e.Path, "/")
+	var mounts map[string]any
+	if _, err := v.do(ctx, http.MethodGet, addr+"/v1/sys/mounts", token, nil, &mounts); err != nil {
+		return err
+	}
+	if _, ok := mounts[path+"/"]; !ok {
+		if _, err := v.do(ctx, http.MethodPost, addr+"/v1/sys/mounts/"+path, token, map[string]any{"type": "consul"}, nil); err != nil {
+			return err
+		}
+	}
+	access := map[string]any{"address": e.Address, "scheme": e.Scheme, "token": e.Token}
+	if e.CACert != "" {
+		access["ca_cert"] = e.CACert
+	}
+	if _, err := v.do(ctx, http.MethodPost, addr+"/v1/"+path+"/config/access", token, access, nil); err != nil {
+		return err
+	}
+	_, err := v.do(ctx, http.MethodPost, addr+"/v1/"+path+"/roles/"+e.Role, token, map[string]any{e.PolicyField: []string{e.Policy}}, nil)
+	return err
 }
 
 func (v vaultHTTP) TokenExists(ctx context.Context, addr, token string) bool {

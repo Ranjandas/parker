@@ -25,6 +25,7 @@ func TestVaultValidate(t *testing.T) {
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    d: { dev: true }\n    e: { seal: { transit: d } }\n":                                                                "d runs in dev mode",
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    a: { seal: { transit: b } }\n    b: { seal: { transit: a } }\n":                                                     "auto-unseals with transit itself",
 		"versions: { vault: 1.0.3 }\nvault:\n  clusters:\n    a: { storage: file }\n    b: { storage: file, seal: { transit: a } }\n":                                              "needs Vault 1.1 or later",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { secrets: { consul: dc9 } }\n":                                                                                  `secrets.consul: "dc9" is not a Consul datacenter`,
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { register: dc9 }\n":                                                                                             `register: "dc9" is not a Consul datacenter`,
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { dev: true, register: dc9 }\n":                                                                                  "register: not supported with dev: true",
 		"versions: { vault: 1.3.10, consul: 1.22.7 }\nconsul:\n  datacenters:\n    dc1: { servers: 1 }\nvault:\n  clusters:\n    e: { storage: { consul: dc1 }, register: dc1 }\n": "registers the servers in dc1 already",

@@ -60,7 +60,31 @@ type VaultInitSpec struct {
 	// TransitKeys are keys to create in the Transit secrets engine at
 	// transit/, for clusters that auto-unseal with this one.
 	TransitKeys []string `json:"transit_keys,omitempty"`
+	// ConsulEngine is a Consul secrets engine to mount and configure.
+	ConsulEngine *VaultConsulEngine `json:"consul_engine,omitempty"`
 }
+
+// VaultConsulEngine is the Consul secrets engine on a cluster.
+type VaultConsulEngine struct {
+	// Path of the mount, e.g. consul/.
+	Path string `json:"path"`
+	// Address of a Consul server's HTTP API (host:port), and its scheme.
+	Address string `json:"address"`
+	Scheme  string `json:"scheme"`
+	// Token is the datacenter's management token.
+	Token string `json:"token"`
+	// CACert verifies an https Consul, PEM.
+	CACert string `json:"ca_cert,omitempty"`
+	// Role is a role to create, minting tokens with the policy Policy;
+	// PolicyField is its key in the role (consul_policies, or policies
+	// before Vault 1.11).
+	Role        string `json:"role"`
+	Policy      string `json:"policy"`
+	PolicyField string `json:"policy_field"`
+}
+
+// VaultConsulMount is where the Consul secrets engine is mounted.
+const VaultConsulMount = "consul/"
 
 // VaultTransitMount is where a cluster that others auto-unseal with
 // mounts the Transit secrets engine.
@@ -117,7 +141,114 @@ func (vaultProduct) Wire(in, out *spec.File, facts Facts) error {
 			return fmt.Errorf("vault.clusters.%s.seal: %w", name, err)
 		}
 	}
+	for _, name := range slices.Sorted(maps.Keys(in.Vault.Clusters)) {
+		c := in.Vault.Clusters[name]
+		dc := c.ConsulSecrets()
+		if dc == "" || c.Dev {
+			continue
+		}
+		field := "consul_policies"
+		if !spec.VaultAtLeast(in.Versions[ProductVault], 1, 11) {
+			field = "policies"
+		}
+		if err := vaultConsulEngine(out, vf[name], dc, field); err != nil {
+			return fmt.Errorf("vault.clusters.%s.secrets.consul: %w", name, err)
+		}
+	}
 	return nil
+}
+
+// vaultConsulEngine sets up the Consul secrets engine on a cluster: its
+// vault-init mounts it with dc's management token once dc's first server
+// is ready, and servers not on dc's LAN yet join it.
+func vaultConsulEngine(out *spec.File, v VaultClusterFacts, dc, policyField string) error {
+	lan := dc + "-lan"
+	if out.Networks[lan] == nil {
+		return fmt.Errorf("no network %s", lan)
+	}
+	var server string
+	for _, key := range slices.Sorted(maps.Keys(out.Nodes)) {
+		if l := out.Nodes[key].Labels; l != nil && l.Product == ProductConsul && l.DC == dc && l.Role == "server" {
+			server = key
+			break
+		}
+	}
+	if server == "" {
+		return fmt.Errorf("%s has no servers", dc)
+	}
+	sn := out.Nodes[server]
+	var cfg struct {
+		ACL struct {
+			Enabled bool `json:"enabled"`
+			Tokens  struct {
+				Management string `json:"initial_management"`
+			} `json:"tokens"`
+		} `json:"acl"`
+		Ports struct {
+			HTTPS int `json:"https"`
+		} `json:"ports"`
+	}
+	if err := json.Unmarshal([]byte(sn.Files["consul.json"]), &cfg); err != nil {
+		return fmt.Errorf("%s: %w", server, err)
+	}
+	if !cfg.ACL.Enabled || cfg.ACL.Tokens.Management == "" {
+		return fmt.Errorf("the engine mints ACL tokens; turn on acl: true for %s", dc)
+	}
+	e := &VaultConsulEngine{
+		Path:    VaultConsulMount,
+		Address: sn.Networks[lan].IP + ":8500",
+		Scheme:  "http",
+		Token:   cfg.ACL.Tokens.Management,
+		Role:    "management", Policy: "global-management", PolicyField: policyField,
+	}
+	if cfg.Ports.HTTPS > 0 {
+		e.Address, e.Scheme, e.CACert = sn.Networks[lan].IP+":"+strconv.Itoa(HTTPSPort), "https", sn.Files[CAFile]
+	}
+	first := out.Nodes[v.Nodes[0]]
+	var is VaultInitSpec
+	if err := json.Unmarshal([]byte(first.Files[VaultInitManifest]), &is); err != nil {
+		return fmt.Errorf("no vault-init: %w", err)
+	}
+	is.ConsulEngine = e
+	first.Files[VaultInitManifest] = mustJSON(is)
+	p := first.Processes[VaultInit]
+	if p.DependsOn == nil {
+		p.DependsOn = map[string]*spec.Dep{}
+	}
+	p.DependsOn[server+"/consul"] = &spec.Dep{Condition: "ready"}
+	for _, key := range v.Nodes {
+		rn := out.Nodes[key]
+		if _, ok := rn.Networks[lan]; ok {
+			continue // its Consul agent put it there
+		}
+		ip, err := freeIP(out, lan, 200)
+		if err != nil {
+			return err
+		}
+		rn.Networks[lan] = &spec.Attachment{IP: ip}
+	}
+	return nil
+}
+
+// freeIP is the first address of network from host offset start up that
+// no node uses.
+func freeIP(out *spec.File, network string, start int) (string, error) {
+	pfx, err := netip.ParsePrefix(out.Networks[network].Subnet)
+	if err != nil {
+		return "", err
+	}
+	used := map[string]bool{}
+	for _, rn := range out.Nodes {
+		if a := rn.Networks[network]; a != nil {
+			used[a.IP] = true
+		}
+	}
+	for off := start; off < 255; off++ {
+		if ip := addrAt(pfx.Masked().Addr(), off); !used[ip] {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("no free address on %s", network)
 }
 
 // vaultTransit auto-unseals cluster's servers with a key in the Transit

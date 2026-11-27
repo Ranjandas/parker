@@ -25,6 +25,7 @@ type fakeVault struct {
 	pki      map[string]string
 	transit  []string
 	recovery bool
+	consul   []string
 }
 
 func (f *fakeVault) Initialized(_ context.Context, addr string) (bool, error) {
@@ -73,6 +74,10 @@ func (f *fakeVault) MountPKI(_ context.Context, _, token, path, bundle string) e
 	if _, ok := f.pki[path]; !ok {
 		f.pki[path] = token + " " + bundle
 	}
+	return nil
+}
+func (f *fakeVault) MountConsul(_ context.Context, _, token string, e expand.VaultConsulEngine) error {
+	f.consul = append(f.consul, token+" "+e.Path+" "+e.Address+" "+e.Role)
 	return nil
 }
 func (f *fakeVault) TokenExists(_ context.Context, _, token string) bool {
@@ -138,7 +143,8 @@ func TestVaultInitAutoUnseal(t *testing.T) {
 	addrs := []string{"http://a:8200", "http://b:8200"}
 	f := &fakeVault{sealed: map[string]bool{addrs[0]: true, addrs[1]: true}}
 	s := expand.VaultInitSpec{Addrs: addrs, RootToken: "lab-root", KeysFile: filepath.Join(t.TempDir(), "keys.json"),
-		Recovery: true, TransitKeys: []string{"autounseal-west"}}
+		Recovery: true, TransitKeys: []string{"autounseal-west"},
+		ConsulEngine: &expand.VaultConsulEngine{Path: "consul/", Address: "10.1.0.10:8500", Role: "management"}}
 	if err := vaultInit(context.Background(), f, s, 5*time.Second, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -148,5 +154,8 @@ func TestVaultInitAutoUnseal(t *testing.T) {
 	want := []string{"lab-root transit/autounseal-west"}
 	if !slices.Equal(f.transit, want) {
 		t.Errorf("transit %q, want %q", f.transit, want)
+	}
+	if want := []string{"lab-root consul/ 10.1.0.10:8500 management"}; !slices.Equal(f.consul, want) {
+		t.Errorf("consul %q, want %q", f.consul, want)
 	}
 }

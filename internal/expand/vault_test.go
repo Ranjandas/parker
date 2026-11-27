@@ -295,3 +295,97 @@ consul:
 		t.Errorf("dev with tls: %v", err)
 	}
 }
+
+// Transit auto-unseal: the transit cluster's vault-init makes the key,
+// and each server joins its LAN and names it in its seal stanza.
+func TestVaultTransit(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/vault-transit.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var is, own VaultInitSpec
+	if err := json.Unmarshal([]byte(low.Nodes["unsealer-vault-1"].Files[VaultInitManifest]), &is); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(is.TransitKeys, ",") != "autounseal-east" || is.Recovery {
+		t.Errorf("unsealer init %+v", is)
+	}
+	if err := json.Unmarshal([]byte(low.Nodes["east-vault-1"].Files[VaultInitManifest]), &own); err != nil {
+		t.Fatal(err)
+	}
+	if !own.Recovery {
+		t.Error("east doesn't init with a recovery key")
+	}
+	for i := range 3 {
+		key := "east-vault-" + strconv.Itoa(i+1)
+		n := low.Nodes[key]
+		if a := n.Networks["unsealer-lan"]; a == nil || a.IP != "10.65.0."+strconv.Itoa(150+i) {
+			t.Errorf("%s unsealer-lan %+v", key, a)
+		}
+		tr := vaultConfigOf(t, n.Files)["seal"].(map[string]any)["transit"].(map[string]any)
+		if tr["address"] != "http://10.65.0.10:8200" || tr["key_name"] != "autounseal-east" || tr["token"] == "" {
+			t.Errorf("%s transit %v", key, tr)
+		}
+		if d := n.Processes["vault"].DependsOn["unsealer-vault-1/"+VaultInit]; d == nil || d.Condition != "ready" {
+			t.Errorf("%s doesn't wait for the unsealer", key)
+		}
+	}
+}
+
+// The Consul secrets engine: vault-init configures it with the dc's
+// management token once the dc's server is ready; it needs ACLs.
+func TestVaultConsulSecrets(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/vault-consul-secrets.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := low.Nodes["east-vault-1"]
+	var is VaultInitSpec
+	if err := json.Unmarshal([]byte(n.Files[VaultInitManifest]), &is); err != nil {
+		t.Fatal(err)
+	}
+	e := is.ConsulEngine
+	if e == nil || e.Address != "10.1.0.10:8500" || e.Token == "" || e.Role != "management" || e.PolicyField != "consul_policies" {
+		t.Errorf("engine %+v", e)
+	}
+	if d := n.Processes[VaultInit].DependsOn["dc1-server-1/consul"]; d == nil || d.Condition != "ready" {
+		t.Error("vault-init doesn't wait for dc1")
+	}
+	if a := n.Networks["dc1-lan"]; a == nil || a.IP != "10.1.0.200" {
+		t.Errorf("dc1-lan %+v", a)
+	}
+	if _, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7, vault: 1.21.1 }
+consul:
+  datacenters:
+    dc1: { servers: 1 }
+vault:
+  clusters:
+    east: { secrets: { consul: dc1 } }
+`)); err == nil || !strings.Contains(err.Error(), "turn on acl: true for dc1") {
+		t.Errorf("no acl: %v", err)
+	}
+}
+
+// register: each server gets a client agent of the dc and registers
+// through it.
+func TestVaultRegister(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/vault-register.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		key := "east-vault-" + strconv.Itoa(i+1)
+		n := low.Nodes[key]
+		if n.Processes["consul"] == nil || n.Networks["dc1-lan"] == nil {
+			t.Errorf("%s has no dc1 agent", key)
+		}
+		sr, _ := vaultConfigOf(t, n.Files)["service_registration"].(map[string]any)
+		if c, _ := sr["consul"].(map[string]any); c["address"] != "127.0.0.1:8500" {
+			t.Errorf("%s service_registration %v", key, sr)
+		}
+		if _, ok := vaultConfigOf(t, n.Files)["storage"].(map[string]any)["raft"]; !ok {
+			t.Errorf("%s isn't on raft", key)
+		}
+	}
+}
