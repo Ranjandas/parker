@@ -159,8 +159,8 @@ func (vaultProduct) Wire(in, out *spec.File, facts Facts) error {
 }
 
 // vaultConsulEngine sets up the Consul secrets engine on a cluster: its
-// vault-init mounts it with dc's management token once dc's first server
-// is ready, and servers not on dc's LAN yet join it.
+// vault-init mounts it with dc's management token, and servers not on
+// dc's LAN yet join it.
 func vaultConsulEngine(out *spec.File, v VaultClusterFacts, dc, policyField string) error {
 	lan := dc + "-lan"
 	if out.Networks[lan] == nil {
@@ -210,12 +210,10 @@ func vaultConsulEngine(out *spec.File, v VaultClusterFacts, dc, policyField stri
 		return fmt.Errorf("no vault-init: %w", err)
 	}
 	is.ConsulEngine = e
+	// Vault doesn't reach Consul until a token is asked for, so vault-init
+	// doesn't wait for dc: a dc whose Connect CA is this cluster waits for
+	// vault-init instead.
 	first.Files[VaultInitManifest] = mustJSON(is)
-	p := first.Processes[VaultInit]
-	if p.DependsOn == nil {
-		p.DependsOn = map[string]*spec.Dep{}
-	}
-	p.DependsOn[server+"/consul"] = &spec.Dep{Condition: "ready"}
 	for _, key := range v.Nodes {
 		rn := out.Nodes[key]
 		if _, ok := rn.Networks[lan]; ok {
@@ -404,7 +402,10 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				Run:       spec.Command{"vault", "server", "-config=" + VarNodeDir + "/" + VaultConfigFile},
 				ReadyWhen: ready,
 			}
-			if _, ok := node.Processes["consul"]; ok {
+			// Consul storage needs the agent first; service registration
+			// retries until the agent is up, so it doesn't wait (a dc whose
+			// Connect CA is this cluster waits for Vault).
+			if _, ok := node.Processes["consul"]; ok && s.Storage.Kind == spec.VaultStorageConsul {
 				node.Processes["vault"].DependsOn = map[string]*spec.Dep{keys[k] + "/consul": {Condition: "ready"}}
 			}
 			if k == 0 {

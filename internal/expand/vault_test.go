@@ -333,7 +333,7 @@ func TestVaultTransit(t *testing.T) {
 }
 
 // The Consul secrets engine: vault-init configures it with the dc's
-// management token once the dc's server is ready; it needs ACLs.
+// management token; it needs ACLs.
 func TestVaultConsulSecrets(t *testing.T) {
 	low, err := Expand(load(t, "../../examples/vault-consul-secrets.yaml"))
 	if err != nil {
@@ -348,8 +348,9 @@ func TestVaultConsulSecrets(t *testing.T) {
 	if e == nil || e.Address != "10.1.0.10:8500" || e.Token == "" || e.Role != "management" || e.PolicyField != "consul_policies" {
 		t.Errorf("engine %+v", e)
 	}
-	if d := n.Processes[VaultInit].DependsOn["dc1-server-1/consul"]; d == nil || d.Condition != "ready" {
-		t.Error("vault-init doesn't wait for dc1")
+	// It doesn't wait for dc1, which may wait for it (connect.ca.vault).
+	if d := n.Processes[VaultInit].DependsOn["dc1-server-1/consul"]; d != nil {
+		t.Error("vault-init waits for dc1")
 	}
 	if a := n.Networks["dc1-lan"]; a == nil || a.IP != "10.1.0.200" {
 		t.Errorf("dc1-lan %+v", a)

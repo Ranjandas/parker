@@ -138,9 +138,6 @@ nodes:
           - vault
           - server
           - -config=${node_dir}/vault.json
-        depends_on:
-          east-vault-1/consul:
-            condition: ready
         ready_when:
           http:
             url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
@@ -242,9 +239,6 @@ nodes:
           - vault
           - server
           - -config=${node_dir}/vault.json
-        depends_on:
-          east-vault-2/consul:
-            condition: ready
         ready_when:
           http:
             url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
@@ -331,9 +325,6 @@ nodes:
           - vault
           - server
           - -config=${node_dir}/vault.json
-        depends_on:
-          east-vault-3/consul:
-            condition: ready
         ready_when:
           http:
             url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200

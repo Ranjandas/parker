@@ -1,0 +1,8 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up vault.yaml
+parker: v1alpha1
+name: vault
+versions: { vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3 }

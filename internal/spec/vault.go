@@ -252,6 +252,19 @@ func (f *File) validateVault(add func(string, ...any)) {
 			}
 		}
 	}
+	if f.Consul != nil {
+		// A dc can't keep the data of the cluster that is its Connect CA:
+		// each would wait for the other to start.
+		for _, dc := range slices.Sorted(maps.Keys(f.Consul.Datacenters)) {
+			d := f.Consul.Datacenters[dc]
+			if d == nil || d.Connect == nil || d.Connect.CA == nil || v.Clusters[d.Connect.CA.Vault] == nil {
+				continue
+			}
+			if s := v.Settings(d.Connect.CA.Vault); s.Storage.Kind == VaultStorageConsul && s.Storage.Consul == dc {
+				add("consul.datacenters.%s.connect.ca.vault: %s keeps its data in %s, so it can't be %s's Connect CA too; give it raft storage", dc, d.Connect.CA.Vault, dc, dc)
+			}
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(v.Clusters)) {
 		c := v.Clusters[name]
 		where := "vault.clusters." + name

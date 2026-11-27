@@ -127,3 +127,21 @@ for (const how of ["mesh-gateways", "peering"]) {
   B.setEntry(d, "", { Kind: "service-intentions", Name: "api", Sources: [{ Name: "web", Action: "allow" }, { Name: "*", Action: "deny" }] });
   write("entries", m);
 }
+
+// Vault: a cluster that auto-unseals with another, registers in dc1 and
+// mints its ACL tokens, and is dc1's Connect CA; a second datacenter
+// keeps an old cluster's data in Consul. Linked as on the canvas, with a
+// scenario made from the Vault step buttons.
+{
+  const m = B.starter("mesh"); m.name = "vault-links";
+  const d1 = m.dcs[0], d2 = B.dc("dc2", 1); m.dcs.push(d2);
+  const east = B.vault("east", 3), unsealer = B.vault("unsealer", 1), old = B.vault("old", 2);
+  m.vaults.push(east, unsealer, old);
+  B.link(m, east.id, unsealer.id);
+  B.link(m, d1.id, east.id);
+  B.joinVault(m, east.id, d1.id, "reg");
+  B.joinVault(m, east.id, d1.id, "secrets");
+  B.joinVault(m, old.id, d2.id, "store");
+  for (const [id, kind] of [[east.id, "wait"], [east.id, "unsealed"], [east.id, "stepdown"], [unsealer.id, "seal"], [unsealer.id, "unseal"]]) B.addStep(m, B.stepFor(m, id, kind));
+  write("vault-links", m);
+}
