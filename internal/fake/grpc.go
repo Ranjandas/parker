@@ -206,7 +206,7 @@ func h2cClient(timeout time.Duration) *http.Client {
 }
 
 // callGRPC calls a grpc:// upstream's FakeService.Handle.
-func (s *Server) callGRPC(ctx context.Context, uri string, hdr http.Header) *Response {
+func (s *Server) callGRPC(ctx context.Context, uri string, hdr http.Header, body int64) *Response {
 	start := s.now()
 	fail := func(code int, msg string) *Response {
 		r := &Response{URI: uri, Type: "gRPC", Code: code, Error: msg}
@@ -215,7 +215,7 @@ func (s *Server) callGRPC(ctx context.Context, uri string, hdr http.Header) *Res
 	}
 	target := "http://" + strings.TrimSuffix(strings.TrimPrefix(uri, "grpc://"), "/")
 	cl := connect.NewClient[handleRequest, handleResponse](s.h2c, target+procHandle, connect.WithGRPC(), connect.WithCodec(wireCodec{}))
-	req := connect.NewRequest(&handleRequest{})
+	req := connect.NewRequest(&handleRequest{Data: bytes.Repeat([]byte("x"), int(body))})
 	for k, v := range hdr {
 		req.Header()[k] = v
 	}

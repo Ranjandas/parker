@@ -2398,8 +2398,10 @@ type FakeRequest struct {
 	ChangeJson string `protobuf:"bytes,5,opt,name=change_json,json=changeJson,proto3" json:"change_json,omitempty"`
 	// call: the path to request (default /) and extra headers, such as
 	// X-Parker-Fault. call needs the selector to name one node.
-	Path          string            `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
-	Headers       map[string]string `protobuf:"bytes,7,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Path    string            `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
+	Headers map[string]string `protobuf:"bytes,7,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// call: a filler body of this many bytes, sent as a POST; 0 is none.
+	BodyBytes     int64 `protobuf:"varint,8,opt,name=body_bytes,json=bodyBytes,proto3" json:"body_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2481,6 +2483,13 @@ func (x *FakeRequest) GetHeaders() map[string]string {
 		return x.Headers
 	}
 	return nil
+}
+
+func (x *FakeRequest) GetBodyBytes() int64 {
+	if x != nil {
+		return x.BodyBytes
+	}
+	return 0
 }
 
 type FakeService struct {
@@ -2817,7 +2826,7 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"RunRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
 	"\bscenario\x18\x02 \x01(\tR\bscenario\x12\x16\n" +
-	"\x06inline\x18\x03 \x01(\tR\x06inline\"\x9d\x02\n" +
+	"\x06inline\x18\x03 \x01(\tR\x06inline\"\xbc\x02\n" +
 	"\vFakeRequest\x12\x10\n" +
 	"\x03lab\x18\x01 \x01(\tR\x03lab\x12\x1a\n" +
 	"\bselector\x18\x02 \x01(\tR\bselector\x12\x18\n" +
@@ -2826,7 +2835,9 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\vchange_json\x18\x05 \x01(\tR\n" +
 	"changeJson\x12\x12\n" +
 	"\x04path\x18\x06 \x01(\tR\x04path\x12=\n" +
-	"\aheaders\x18\a \x03(\v2#.parker.v1.FakeRequest.HeadersEntryR\aheaders\x1a:\n" +
+	"\aheaders\x18\a \x03(\v2#.parker.v1.FakeRequest.HeadersEntryR\aheaders\x12\x1d\n" +
+	"\n" +
+	"body_bytes\x18\b \x01(\x03R\tbodyBytes\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc0\x01\n" +

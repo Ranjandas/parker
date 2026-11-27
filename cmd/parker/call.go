@@ -15,11 +15,14 @@ import (
 	parkerv1 "github.com/Ranjandas/parker/internal/api/parkerv1"
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
 	"github.com/Ranjandas/parker/internal/fake"
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 type callFlags struct {
 	service string
 	headers []string
+	pads    []string
+	body    string
 	json    bool
 	fact    bool
 	every   time.Duration
@@ -38,6 +41,7 @@ func callCmd() *cobra.Command {
 			"split (which dc and version answered), as during a failover or a canary.",
 		Example: "  parker call lab.yaml dc1/web\n" +
 			"  parker call lab.yaml dc1/web /orders -H 'X-Parker-Fault: api=error-rate:100'\n" +
+			"  parker call lab.yaml dc1/web --pad-header Cookie=9KB\n" +
 			"  parker call lab.yaml dc1/web --every 1s\n" +
 			"  parker call lab.yaml dc1/web --json",
 		Args: cobra.RangeArgs(2, 3),
@@ -46,16 +50,9 @@ func callCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			req := &parkerv1.FakeRequest{Lab: name, Selector: args[1], Service: f.service, Action: "call", Headers: map[string]string{}}
-			if len(args) == 3 {
-				req.Path = args[2]
-			}
-			for _, h := range f.headers {
-				k, v, ok := strings.Cut(h, ":")
-				if !ok {
-					return fmt.Errorf("-H %q: want 'Name: value'", h)
-				}
-				req.Headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			req, err := f.request(name, args[1:])
+			if err != nil {
+				return err
 			}
 			ctx, stop := signalContext()
 			defer stop()
@@ -73,11 +70,43 @@ func callCmd() *cobra.Command {
 	fl := c.Flags()
 	fl.StringVar(&f.service, "service", "", "the fake service to call when the node runs several")
 	fl.StringArrayVarP(&f.headers, "header", "H", nil, "add a request header, 'Name: value' (repeatable)")
+	fl.StringArrayVar(&f.pads, "pad-header", nil, "add a header of a size, NAME=SIZE such as Cookie=9KB, to reach a header limit (repeatable)")
+	fl.StringVar(&f.body, "body-size", "", "send a filler body of this size, such as 2MB, as a POST")
 	fl.BoolVar(&f.json, "json", false, "print the raw JSON answer")
 	fl.BoolVar(&f.fact, "fact", false, "show each hop's space fact")
 	fl.DurationVar(&f.every, "every", 0, "send a request every interval, e.g. 1s, until interrupted")
 	fl.IntVar(&f.count, "count", 0, "with --every, stop after this many requests")
 	return c
+}
+
+// request builds the call from NODE [PATH] and the flags.
+func (f *callFlags) request(lab string, args []string) (*parkerv1.FakeRequest, error) {
+	req := &parkerv1.FakeRequest{Lab: lab, Selector: args[0], Service: f.service, Action: "call", Headers: map[string]string{}}
+	if len(args) == 2 {
+		req.Path = args[1]
+	}
+	for _, h := range f.headers {
+		k, v, ok := strings.Cut(h, ":")
+		if !ok {
+			return nil, fmt.Errorf("-H %q: want 'Name: value'", h)
+		}
+		req.Headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	for _, p := range f.pads {
+		k, n, err := fake.ParsePad(p)
+		if err != nil {
+			return nil, fmt.Errorf("--pad-header %w", err)
+		}
+		req.Headers[k] = fake.PadValue(k, n)
+	}
+	if f.body != "" {
+		n, err := spec.ParseByteSize(f.body)
+		if err != nil {
+			return nil, fmt.Errorf("--body-size: %w", err)
+		}
+		req.BodyBytes = int64(n)
+	}
+	return req, nil
 }
 
 func doCall(ctx context.Context, cl parkerv1connect.ParkerServiceClient, req *parkerv1.FakeRequest) (*parkerv1.FakeResponse, *fake.Response, error) {

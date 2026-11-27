@@ -225,3 +225,16 @@ func TestMergeFakeLimits(t *testing.T) {
 		t.Error("merge changed the template")
 	}
 }
+
+func TestMergeFakeUpstreamRequest(t *testing.T) {
+	kb := spec.ByteSize(1024)
+	tmpl := &spec.Fake{ForwardHeaders: []string{"Cookie"}, UpstreamRequest: &spec.FakeUpstreamRequest{Method: "PUT", Headers: map[string]string{"A": "1"}}}
+	got := mergeFake(tmpl, &spec.Fake{UpstreamRequest: &spec.FakeUpstreamRequest{Headers: map[string]string{"B": "2"}, BodyBytes: &kb}})
+	u := got.UpstreamRequest
+	if u.Method != "PUT" || u.Headers["A"] != "1" || u.Headers["B"] != "2" || *u.BodyBytes != 1024 || got.ForwardHeaders[0] != "Cookie" {
+		t.Errorf("merged: %+v", u)
+	}
+	if len(tmpl.UpstreamRequest.Headers) != 1 {
+		t.Error("merge changed the template's headers")
+	}
+}

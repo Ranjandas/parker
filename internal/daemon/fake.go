@@ -37,7 +37,7 @@ func (s *Server) Fake(ctx context.Context, req *connect.Request[parkerv1.FakeReq
 		if len(nodes) != 1 {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("call: %s matches %d nodes; name one", sel, len(nodes)))
 		}
-		status, body, err := lab.FakeCall(ctx, low, nodes[0], m.Service, m.Path, m.Headers)
+		status, body, err := lab.FakeCall(ctx, low, nodes[0], m.Service, m.Path, m.Headers, m.BodyBytes)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, err)
 		}

@@ -336,6 +336,8 @@ message FakeRequest {
   // X-Parker-Fault. call needs the selector to name one node.
   string path = 6;
   map<string, string> headers = 7;
+  // call: a filler body of this many bytes, sent as a POST; 0 is none.
+  int64 body_bytes = 8;
 }
 
 message FakeService {

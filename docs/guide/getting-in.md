@@ -82,6 +82,8 @@ web  dc1-web · dc1  200  2.887612ms
 | `--every 1s` | Keep calling, and show which datacenter and version answered each time. |
 | `--count N` | With `--every`, stop after N requests. |
 | `-H 'Name: value'` | Add a header, such as `X-Parker-Fault` for a [fault on one request](fake-service.md#faults-on-one-request). |
+| `--pad-header NAME=SIZE` | Add a header of that size, such as `Cookie=9KB`, to reach a [header limit](fake-service.md#request-size-limits). The size is the whole `Name: value` line. |
+| `--body-size SIZE` | Send a filler body of that size, such as `2MB`, as a POST. |
 | `--service NAME` | Which fake to call when the node runs several. |
 | `--json` | Print the raw answer. |
 | `--fact` | Show each hop's space fact. |

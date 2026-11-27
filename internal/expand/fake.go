@@ -104,6 +104,28 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 	if b.UpstreamFailure != "" {
 		out.UpstreamFailure = b.UpstreamFailure
 	}
+	if len(b.ForwardHeaders) > 0 {
+		out.ForwardHeaders = slices.Clone(b.ForwardHeaders)
+	}
+	if b.UpstreamRequest != nil {
+		u := spec.FakeUpstreamRequest{}
+		if out.UpstreamRequest != nil {
+			u = *out.UpstreamRequest
+		}
+		br := b.UpstreamRequest
+		u.Method = cmp.Or(br.Method, u.Method)
+		if len(br.Headers) > 0 {
+			h := maps.Clone(u.Headers)
+			if h == nil {
+				h = map[string]string{}
+			}
+			maps.Copy(h, br.Headers)
+			u.Headers = h
+		}
+		u.PadHeader = cmp.Or(br.PadHeader, u.PadHeader)
+		u.BodyBytes = cmp.Or(br.BodyBytes, u.BodyBytes)
+		out.UpstreamRequest = &u
+	}
 	if b.Health != nil {
 		h := *b.Health
 		out.Health = &h
