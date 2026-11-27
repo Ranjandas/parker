@@ -1,0 +1,30 @@
+package expand
+
+import "github.com/Ranjandas/parker/internal/spec"
+
+func init() { Register(consulProduct{}) }
+
+// consulProduct expands the consul: section (expandConsul and the files
+// next to it).
+type consulProduct struct{}
+
+func (consulProduct) Name() string { return "consul" }
+
+func (consulProduct) In(in *spec.File) bool { return in.Consul != nil }
+
+func (consulProduct) Expand(in, out *spec.File, _ Facts) error {
+	wanSubnet, wanAuto := WANSubnet, true
+	if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
+		wanSubnet, wanAuto = w.Subnet, false
+	}
+	if err := expandConsul(in.Consul, wanSubnet, out); err != nil {
+		return err
+	}
+	if w := out.Networks[WANNetwork]; w != nil && wanAuto {
+		w.Auto = true
+	}
+	return nil
+}
+
+// Wire: Consul reads nothing from other products yet.
+func (consulProduct) Wire(_, _ *spec.File, _ Facts) error { return nil }
