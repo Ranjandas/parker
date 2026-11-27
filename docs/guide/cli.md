@@ -196,6 +196,8 @@ it went through. See [calling services](getting-in.md#calling-services).
 | `--every` | Send a request every interval, such as `1s`, until stopped. |
 | `--count` | With `--every`, stop after this many requests. |
 | `-H`, `--header` | Add a request header, `'Name: value'`. Repeatable. |
+| `--pad-header` | Add a header of a size, `NAME=SIZE` such as `Cookie=9KB`. Repeatable. |
+| `--body-size` | Send a filler body of this size, such as `2MB`, as a POST. |
 | `--service` | The fake to call when the node runs several. |
 | `--json` | Print the raw answer. |
 | `--fact` | Show each hop's space fact. |

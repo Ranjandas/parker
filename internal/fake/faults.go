@@ -267,6 +267,9 @@ func (in *injector) latency(f Faults) time.Duration {
 type requestFaults struct {
 	errorRate float64 // 0 to 1
 	delay     time.Duration
+	// padUpstreams adds an X-Parker-Pad header of this size to the hop's
+	// upstream calls.
+	padUpstreams int64
 }
 
 // parseRequestFaults reads ?error-rate=50&delay=2s (for this hop) and
@@ -292,12 +295,18 @@ func parseRequestFaults(name string, q url.Values, h http.Header) (requestFaults
 				d = time.Duration(secs * float64(time.Second))
 			}
 			rf.delay = d
+		case "pad-upstreams":
+			b, err := spec.ParseByteSize(v)
+			if err != nil || int64(b) > maxHeaderCap {
+				return fmt.Errorf("pad-upstreams=%q: want a size up to 4MB, like 9KB", v)
+			}
+			rf.padUpstreams = int64(b)
 		default:
-			return fmt.Errorf("unknown fault %q (want error-rate or delay)", k)
+			return fmt.Errorf("unknown fault %q (want error-rate, delay or pad-upstreams)", k)
 		}
 		return nil
 	}
-	for _, k := range []string{"error-rate", "delay"} {
+	for _, k := range []string{"error-rate", "delay", "pad-upstreams"} {
 		if v := q.Get(k); v != "" {
 			if err := set(k, v); err != nil {
 				return rf, err

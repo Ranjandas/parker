@@ -83,3 +83,22 @@ func TestCallLoop(t *testing.T) {
 		t.Errorf("summary:\n%s", got)
 	}
 }
+
+func TestCallRequestFlags(t *testing.T) {
+	f := &callFlags{headers: []string{"X-A: 1"}, pads: []string{"Cookie=9KB"}, body: "2MB"}
+	req, err := f.request("lab", []string{"dc1/web", "/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len("Cookie: ") + len(req.Headers["Cookie"]); n != 9<<10 {
+		t.Errorf("pad header line is %d bytes, want 9KB", n)
+	}
+	if req.Headers["X-A"] != "1" || req.BodyBytes != 2<<20 || req.Path != "/a" || req.Selector != "dc1/web" {
+		t.Errorf("request = %+v", req)
+	}
+	for _, bad := range []*callFlags{{pads: []string{"Cookie"}}, {pads: []string{"Cookie=lots"}}, {body: "big"}} {
+		if _, err := bad.request("lab", []string{"dc1/web"}); err == nil {
+			t.Errorf("%+v: want an error", bad)
+		}
+	}
+}

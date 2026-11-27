@@ -487,6 +487,17 @@
           ],
           "description": "UpstreamFailure is fail (default: answer 500 when an upstream\nfails) or ignore."
         },
+        "forward_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "ForwardHeaders are headers passed on from each incoming request to\nevery upstream call, such as [Cookie, Authorization], the way an app\npasses a session cookie or token down a chain."
+        },
+        "upstream_request": {
+          "$ref": "#/$defs/FakeUpstreamRequest",
+          "description": "UpstreamRequest shapes the requests sent to the upstreams: method,\nextra headers, a large header and a body, to reach an upstream's\nlimits."
+        },
         "health": {
           "$ref": "#/$defs/FakeHealth",
           "description": "Health sets what /health answers; Parker's http check uses it."
@@ -709,6 +720,33 @@
       "type": "object",
       "description": "FakeLimits are request size limits."
     },
+    "FakePadHeader": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the header; default X-Parker-Pad. Cookie makes it look like\na big session cookie."
+        },
+        "bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "Bytes is the size of the whole \"Name: value\" line, as limits count\nit (9KB)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bytes"
+      ],
+      "description": "FakePadHeader is a header of a given size."
+    },
     "FakeRateLimit": {
       "properties": {
         "rps": {
@@ -789,6 +827,48 @@
         "on"
       ],
       "description": "FakeStep changes a running fake service's faults."
+    },
+    "FakeUpstreamRequest": {
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "description": "Method is GET (default), or POST when body_bytes is set; PUT, PATCH\nand DELETE work too."
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Headers added to each call."
+        },
+        "pad_header": {
+          "$ref": "#/$defs/FakePadHeader",
+          "description": "PadHeader adds a header of this size to each call, filled with x."
+        },
+        "body_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9.]+ *([kKmMgG](i?[bB])?|[bB])?$"
+            }
+          ],
+          "description": "BodyBytes sends a body of this size with each call (8KB, 2MB)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "FakeUpstreamRequest shapes each upstream call."
     },
     "Federation": {
       "properties": {

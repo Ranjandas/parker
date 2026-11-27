@@ -55,6 +55,11 @@ you prefer them. The `fake:` block wins over env vars.
 | `upstreams` | `UPSTREAM_URIS` | the service's `upstreams:` through its sidecar | URIs called on each request: `http://`, `grpc://` or `tcp://`. |
 | `workers` | `UPSTREAM_WORKERS` | `1` | Upstreams called at once. |
 | | `HTTP_CLIENT_REQUEST_TIMEOUT` | `30s` | Bound on each upstream call. |
+| `forward_headers` | | | Headers passed on from each incoming request to every upstream call, such as `[Cookie, Authorization]`. |
+| `upstream_request.method` | | `GET` | Method of each upstream call; `POST` when `body_bytes` is set. |
+| `upstream_request.headers` | | | Headers added to each upstream call. |
+| `upstream_request.pad_header` | | | `{ name, bytes }`: a header of that size on each upstream call (default name `X-Parker-Pad`). `bytes` is the whole `Name: value` line. |
+| `upstream_request.body_bytes` | | | A filler body of this size on each upstream call. |
 | `upstream_failure` | | `fail` | `fail` answers 500 when an upstream fails; `ignore` keeps 200. |
 | `health.code` | `HEALTH_CHECK_RESPONSE_CODE` | `200` | What `/health` answers. Parker's Consul check uses `/health`, so `503` makes the service critical while the process keeps running. |
 | `ready.delay` | `READY_CHECK_RESPONSE_DELAY` | `0s` | How long after start `/ready` keeps failing. `parker up` waits on `/ready`. |
@@ -129,6 +134,9 @@ Unless `request_faults: false`:
   percentage.
 - `X-Parker-Fault: api=error-rate:100;db=delay:2s` targets hops by name
   anywhere in the chain. The header is passed down with the request.
+- `pad-upstreams:9KB` makes that hop add a 9 KB `X-Parker-Pad` header to
+  its upstream calls, to reach a [header limit](#request-size-limits)
+  behind it: `X-Parker-Fault: web=pad-upstreams:9KB`.
 
 ```console
 $ parker call lab.yaml dc1/web -H 'X-Parker-Fault: db=error-rate:100'
@@ -195,9 +203,57 @@ Some things to know:
   has its own limits: 60 KB of headers and 100 headers by default, both
   answered `431`. A fake limit above those is never reached through the
   sidecar.
-- A fake doesn't pass its caller's headers on to its upstreams, so a big
-  header sent to the front of a chain doesn't reach the service behind
-  it. Call the limited service directly, as above.
+
+### Sending large requests
+
+In production the big header usually comes from the client, such as a
+session cookie that grew, and the front service passes it on to the one
+that refuses it. `forward_headers` passes headers down the chain, and
+`parker call --pad-header` sends one of a given size:
+
+```yaml
+parker: v1alpha1
+name: big-cookie
+versions: { consul: 1.22.7, envoy: 1.35.12 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      nodes:
+        web:
+          service:
+            port: 8080
+            run: fake-service
+            connect: sidecar
+            upstreams: { api: 9091 }
+            fake: { forward_headers: [Cookie] }
+        api:
+          service:
+            port: 9090
+            run: fake-service
+            connect: sidecar
+            fake:
+              limits: { max_header_bytes: 8KB, codes: { header: 400 } }
+```
+
+```console
+$ parker call big-cookie.yaml dc1/web --pad-header Cookie=9KB
+web  dc1-web · dc1  500  1.809866ms  upstream http://127.0.0.1:9091/ failed
+└─ api  dc1-api · dc1  400  20.763µs  request headers too large: 9384 bytes > max_header_bytes 8KB
+```
+
+Without `forward_headers`, `api` answers 200: the cookie stops at `web`.
+To pad every call a fake makes instead, whatever its caller sent, use
+`upstream_request`:
+
+```yaml
+fake:
+  upstream_request:
+    pad_header: { name: Cookie, bytes: 9KB }
+    body_bytes: 2MB   # and a 2 MB body, sent as a POST
+```
+
+`parker call --body-size 2MB` sends a body from the client the same way.
 
 ## Changing faults while it runs
 

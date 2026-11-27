@@ -839,6 +839,14 @@ type Fake struct {
 	// UpstreamFailure is fail (default: answer 500 when an upstream
 	// fails) or ignore.
 	UpstreamFailure string `yaml:"upstream_failure,omitempty" json:"upstream_failure,omitempty" jsonschema:"enum=fail,enum=ignore"`
+	// ForwardHeaders are headers passed on from each incoming request to
+	// every upstream call, such as [Cookie, Authorization], the way an app
+	// passes a session cookie or token down a chain.
+	ForwardHeaders []string `yaml:"forward_headers,omitempty" json:"forward_headers,omitempty"`
+	// UpstreamRequest shapes the requests sent to the upstreams: method,
+	// extra headers, a large header and a body, to reach an upstream's
+	// limits.
+	UpstreamRequest *FakeUpstreamRequest `yaml:"upstream_request,omitempty" json:"upstream_request,omitempty"`
 	// Health sets what /health answers; Parker's http check uses it.
 	Health *FakeHealth `yaml:"health,omitempty" json:"health,omitempty"`
 	// Ready sets what /ready answers; Parker waits on it at up.
@@ -898,6 +906,29 @@ type FakeRateLimit struct {
 	RPS *float64 `yaml:"rps,omitempty" json:"rps,omitempty" jsonschema:"minimum=0"`
 	// Code for requests over the limit (RATE_LIMIT_CODE); default 503.
 	Code int `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=100,maximum=599"`
+}
+
+// FakeUpstreamRequest shapes each upstream call.
+type FakeUpstreamRequest struct {
+	// Method is GET (default), or POST when body_bytes is set; PUT, PATCH
+	// and DELETE work too.
+	Method string `yaml:"method,omitempty" json:"method,omitempty" jsonschema:"enum=GET,enum=POST,enum=PUT,enum=PATCH,enum=DELETE"`
+	// Headers added to each call.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	// PadHeader adds a header of this size to each call, filled with x.
+	PadHeader *FakePadHeader `yaml:"pad_header,omitempty" json:"pad_header,omitempty"`
+	// BodyBytes sends a body of this size with each call (8KB, 2MB).
+	BodyBytes *ByteSize `yaml:"body_bytes,omitempty" json:"body_bytes,omitempty"`
+}
+
+// FakePadHeader is a header of a given size.
+type FakePadHeader struct {
+	// Name of the header; default X-Parker-Pad. Cookie makes it look like
+	// a big session cookie.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Bytes is the size of the whole "Name: value" line, as limits count
+	// it (9KB).
+	Bytes ByteSize `yaml:"bytes" json:"bytes"`
 }
 
 // FakeLimits are request size limits. Sizes are bytes, or a string like

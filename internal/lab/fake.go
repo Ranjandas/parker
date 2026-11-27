@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -95,7 +96,10 @@ func FakeControl(ctx context.Context, low *spec.File, f FakeInfo, change *spec.F
 
 // FakeCall sends one request to a fake service from inside its node, as
 // a client there would, and returns the status and body.
-func FakeCall(ctx context.Context, low *spec.File, node, svc, path string, hdr map[string]string) (int, []byte, error) {
+// maxCallBody bounds a call's filler body.
+const maxCallBody = 1 << 30
+
+func FakeCall(ctx context.Context, low *spec.File, node, svc, path string, hdr map[string]string, body int64) (int, []byte, error) {
 	fs, err := pickFakes(low, node, svc)
 	if err != nil {
 		return 0, nil, err
@@ -116,9 +120,19 @@ func FakeCall(ctx context.Context, low *spec.File, node, svc, path string, hdr m
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	cl := &http.Client{Transport: &http.Transport{DialContext: supervisor.DialerIn(netsetup.NetnsPath(low.Name, node)), DisableKeepAlives: true}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", f.Port, path), nil)
+	method, rd := http.MethodGet, io.Reader(nil)
+	if body > 0 {
+		if body > maxCallBody {
+			return 0, nil, fmt.Errorf("body of %s: want at most %s", spec.ByteSize(body), spec.ByteSize(maxCallBody))
+		}
+		method, rd = http.MethodPost, bytes.NewReader(bytes.Repeat([]byte("x"), int(body)))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("http://127.0.0.1:%d%s", f.Port, path), rd)
 	if err != nil {
 		return 0, nil, err
+	}
+	if body > 0 {
+		req.Header.Set("Content-Type", "application/octet-stream")
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -156,7 +170,7 @@ func (l *ScenarioLab) Fake(ctx context.Context, node string, st *spec.FakeStep) 
 
 // Call sends one request to a fake service on node.
 func (l *ScenarioLab) Call(ctx context.Context, node, svc, path string, hdr map[string]string) (int, []byte, error) {
-	return FakeCall(ctx, l.Low, node, svc, path, hdr)
+	return FakeCall(ctx, l.Low, node, svc, path, hdr, 0)
 }
 
 func list(xs []string) string {

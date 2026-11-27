@@ -38,6 +38,8 @@ type Config struct {
 	// Protocol is http (default), grpc (HTTP plus gRPC on the same port)
 	// or tcp (a line echo server).
 	Protocol string
+	// Upstream shapes the requests to the upstreams.
+	Upstream UpstreamRequest
 	// Faults are the faults injected at start (they can change later).
 	Faults Faults
 	// Seed for the random draws; 0 is a new one each start.
@@ -185,6 +187,9 @@ func (c *Config) apply(f *spec.Fake) error {
 		if r.FailureCode != 0 {
 			c.ReadyFailureCode = r.FailureCode
 		}
+	}
+	if err := c.Upstream.apply(f); err != nil {
+		return err
 	}
 	switch f.UpstreamFailure {
 	case "", "fail":

@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -218,14 +219,14 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 	if rf := s.Faults().Limits.check(r); rf != nil {
 		// Refused before the app sees it, as a server's connector does.
 		resp.Code, resp.Error, resp.Limit = rf.code, rf.msg, rf.limit
-	} else if s.inject(r, resp) {
+	} else if ok, rf := s.inject(r, resp); ok {
 		switch {
 		case len(s.cfg.Upstreams) == 0:
 		case slices.Contains(trail, s.cfg.Name) || len(trail) >= maxHops:
 			// Answer, but don't go round again.
 			resp.Cycle = true
 		default:
-			resp.UpstreamCalls = s.callUpstreams(r.Context(), id, strings.Join(append(trail, s.cfg.Name), ","), r.Header.Get(HeaderFault))
+			resp.UpstreamCalls = s.callUpstreams(r.Context(), s.outgoingFor(r, id, strings.Join(append(trail, s.cfg.Name), ","), rf.padUpstreams))
 			for _, u := range s.cfg.Upstreams {
 				if up := resp.UpstreamCalls[u]; up.Code < 0 || up.Code >= 400 {
 					if !s.cfg.IgnoreUpstreamErrors {
@@ -261,19 +262,19 @@ func (s *Server) handle(r *http.Request, typ string) (*Response, string) {
 // inject applies the request's faults: the rate limit, then an injected
 // error, then latency. It reports whether the request goes on to its
 // upstreams; when it doesn't, resp holds the error.
-func (s *Server) inject(r *http.Request, resp *Response) bool {
+func (s *Server) inject(r *http.Request, resp *Response) (bool, requestFaults) {
 	f := s.Faults()
 	var rf requestFaults
 	if s.cfg.RequestFaults {
 		var err error
 		if rf, err = parseRequestFaults(s.cfg.Name, r.URL.Query(), r.Header); err != nil {
 			resp.Code, resp.Error = http.StatusBadRequest, err.Error()
-			return false
+			return false, rf
 		}
 	}
 	if !s.inj.allow(f.RateLimit, s.now()) {
 		resp.Code, resp.Error, resp.Injected = f.RateLimitCode, "rate limit exceeded", "rate_limit"
-		return false
+		return false, rf
 	}
 	rate := f.ErrorRate
 	if rf.errorRate > 0 {
@@ -285,11 +286,11 @@ func (s *Server) inject(r *http.Request, resp *Response) bool {
 			resp.Injected = "delay"
 		} else {
 			resp.Code, resp.Error, resp.Injected = f.ErrorCode, "error injected", "error"
-			return false
+			return false, rf
 		}
 	}
 	s.sleep(r.Context(), s.inj.latency(f)+rf.delay)
-	return true
+	return true, rf
 }
 
 // health answers the health check: HealthCode.
@@ -324,7 +325,7 @@ func (s *Server) finish(resp *Response, start time.Time) {
 }
 
 // callUpstreams calls every upstream, Workers at a time, keyed by URI.
-func (s *Server) callUpstreams(ctx context.Context, id, trail, fault string) map[string]*Response {
+func (s *Server) callUpstreams(ctx context.Context, o outgoing) map[string]*Response {
 	out := make(map[string]*Response, len(s.cfg.Upstreams))
 	var mu sync.Mutex
 	sem := make(chan struct{}, max(1, s.cfg.Workers))
@@ -335,7 +336,7 @@ func (s *Server) callUpstreams(ctx context.Context, id, trail, fault string) map
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r := s.call(ctx, u, id, trail, fault)
+			r := s.call(ctx, u, o)
 			mu.Lock()
 			out[u] = r
 			mu.Unlock()
@@ -347,30 +348,40 @@ func (s *Server) callUpstreams(ctx context.Context, id, trail, fault string) map
 
 // call makes one upstream request. A fake upstream's JSON is nested as
 // is; anything else becomes a Response with the code and body.
-func (s *Server) call(ctx context.Context, uri, id, trail, fault string) *Response {
+func (s *Server) call(ctx context.Context, uri string, o outgoing) *Response {
 	start := s.now()
 	fail := func(code int, err string) *Response {
 		r := &Response{URI: uri, Type: "HTTP", Code: code, Error: err}
 		s.finish(r, start)
 		return r
 	}
-	hdr := http.Header{}
-	hdr.Set(HeaderRequestID, id)
-	hdr.Set(HeaderTrail, trail)
-	if fault != "" {
-		hdr.Set(HeaderFault, fault)
+	hdr := o.hdr.Clone()
+	if hdr == nil {
+		hdr = http.Header{}
+	}
+	hdr.Set(HeaderRequestID, o.id)
+	hdr.Set(HeaderTrail, o.trail)
+	if o.fault != "" {
+		hdr.Set(HeaderFault, o.fault)
 	}
 	switch {
 	case strings.HasPrefix(uri, "grpc://"):
-		return s.callGRPC(ctx, uri, hdr)
+		return s.callGRPC(ctx, uri, hdr, o.body)
 	case strings.HasPrefix(uri, "tcp://"):
 		return s.callTCP(ctx, uri)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
+	var body io.Reader
+	if o.body > 0 {
+		body = bytes.NewReader(bytes.Repeat([]byte("x"), int(o.body)))
+	}
+	req, err := http.NewRequestWithContext(ctx, s.cfg.Upstream.method(), uri, body)
 	if err != nil {
 		return fail(-1, err.Error())
 	}
 	req.Header = hdr
+	if o.body > 0 {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
 	res, err := s.client.Do(req)
 	if err != nil {
 		return fail(-1, err.Error())
