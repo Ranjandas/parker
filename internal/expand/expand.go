@@ -112,17 +112,8 @@ func Expand(in *spec.File) (*spec.File, error) {
 		Networks: map[string]*spec.Network{},
 		Nodes:    map[string]*spec.RawNode{},
 	}
-	if in.Consul != nil {
-		wanSubnet, wanAuto := WANSubnet, true
-		if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
-			wanSubnet, wanAuto = w.Subnet, false
-		}
-		if err := expandConsul(in.Consul, wanSubnet, out); err != nil {
-			return nil, err
-		}
-		if w := out.Networks[WANNetwork]; w != nil && wanAuto {
-			w.Auto = true
-		}
+	if err := expandProducts(in, out); err != nil {
+		return nil, err
 	}
 	for k, v := range in.Networks {
 		if cur, ok := out.Networks[k]; ok && v.Subnet == "" {
