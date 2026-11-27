@@ -7,6 +7,7 @@
 //	svc:api, svc:dc2/api         nodes that run service api
 //	part:team-a, part:dc1/team-a nodes in an admin partition (Enterprise)
 //	ns:payments, ns:dc1/payments nodes running a service in a namespace
+//	meta:zone=a, meta:dc1/zone=a nodes whose metadata has zone=a
 //	dc1/team-a/billing-1         a node, scoped to its partition
 //	dc1/leader, dc1/followers    raft roles, asked of the servers when resolved
 //	toxiproxy, dc1-server-1      a node by its expanded name
@@ -76,6 +77,11 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 	for prefix, match := range map[string]func(*spec.NodeLabels, string) bool{
 		"part:": func(l *spec.NodeLabels, v string) bool { return l.DC != "" && l.Role != "server" && partOf(l) == v },
 		"ns:":   func(l *spec.NodeLabels, v string) bool { return slices.Contains(l.Namespaces, v) },
+		"meta:": func(l *spec.NodeLabels, v string) bool {
+			k, want, _ := strings.Cut(v, "=")
+			got, ok := l.Meta[k]
+			return ok && got == want
+		},
 	} {
 		rest, ok := strings.CutPrefix(sel, prefix)
 		if !ok {
@@ -87,6 +93,11 @@ func Resolve(low *spec.File, sel string, raft Raft) ([]string, error) {
 		}
 		if dc != "" && !dcs[dc] {
 			return nil, fmt.Errorf("selector %q: no datacenter %q", sel, dc)
+		}
+		if prefix == "meta:" {
+			if k, _, ok := strings.Cut(v, "="); !ok || k == "" {
+				return nil, fmt.Errorf("selector %q: want meta:KEY=VALUE", sel)
+			}
 		}
 		return none(filter(func(_ string, l *spec.NodeLabels) bool { return (dc == "" || l.DC == dc) && match(l, v) }), nil)
 	}

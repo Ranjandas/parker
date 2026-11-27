@@ -151,6 +151,7 @@ nodes:
           log: "parker: partitions and namespaces ready"
           timeout: 60s
     labels:
+      product: consul
       dc: dc1
       name: server-1
       role: server
@@ -240,6 +241,7 @@ nodes:
             ca_file: ca.pem
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-2
       role: server
@@ -329,6 +331,7 @@ nodes:
             ca_file: ca.pem
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-3
       role: server
@@ -445,6 +448,7 @@ nodes:
             ca_file: ca.pem
           timeout: 60s
     labels:
+      product: consul
       dc: dc1
       name: web
       role: client

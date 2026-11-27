@@ -58,6 +58,7 @@ nodes:
             members: ">=4"
           timeout: 60s
     labels:
+      product: consul
       dc: dc1
       name: client
       role: client
@@ -112,6 +113,7 @@ nodes:
             wan_members: ">=4"
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-1
       role: server
@@ -165,6 +167,7 @@ nodes:
             wan_members: ">=4"
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-2
       role: server
@@ -218,6 +221,7 @@ nodes:
             wan_members: ">=4"
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-3
       role: server
@@ -292,6 +296,7 @@ nodes:
             members: ">=2"
           timeout: 60s
     labels:
+      product: consul
       dc: dc2
       name: api
       role: client
@@ -345,6 +350,7 @@ nodes:
             wan_members: ">=4"
           timeout: 90s
     labels:
+      product: consul
       dc: dc2
       name: server-1
       role: server

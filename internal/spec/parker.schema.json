@@ -251,6 +251,13 @@
           "type": "boolean",
           "description": "UI enables the Consul web UI on the servers."
         },
+        "meta": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Meta is metadata for every node of the datacenter, servers and\ngateways too: Consul node metadata, and labels the meta:KEY=VALUE\nselector matches. A partition's or node's own meta wins per key."
+        },
         "servers": {
           "oneOf": [
             {
@@ -1143,7 +1150,7 @@
             "type": "string"
           },
           "type": "object",
-          "description": "Meta is the node's Consul node metadata."
+          "description": "Meta is the node's Consul node metadata, over its partition's and\ndatacenter's; the meta:KEY=VALUE selector matches it too."
         },
         "service": {
           "$ref": "#/$defs/Service",
@@ -1169,8 +1176,13 @@
     },
     "NodeLabels": {
       "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product the node belongs to: consul (\"\" for a node of no product)."
+        },
         "dc": {
-          "type": "string"
+          "type": "string",
+          "description": "DC is the node's region: its Consul datacenter. Region names are\nunique across a lab's products, so selectors need no product prefix."
         },
         "name": {
           "type": "string",
@@ -1207,14 +1219,28 @@
           },
           "type": "array",
           "description": "Namespaces of the node's services, besides the default (Enterprise)."
+        },
+        "meta": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Meta is the node's metadata, matched by meta:KEY=VALUE selectors."
         }
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "NodeLabels place a node in the consul: tree."
+      "description": "NodeLabels say where a node sits in the lab: which product it belongs to and its region in that product."
     },
     "Partition": {
       "properties": {
+        "meta": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Meta is metadata for every node of the partition, over the\ndatacenter's: Consul node metadata, and labels the meta:KEY=VALUE\nselector matches."
+        },
         "client": {
           "$ref": "#/$defs/AgentSettings",
           "description": "Client settings apply to this partition's client agents."

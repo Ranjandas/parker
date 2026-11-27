@@ -60,6 +60,10 @@ LAN without picking an address, a Consul node with
 | `processes` | The processes to run, keyed by name. |
 | `labels` | Where an expanded node came from. Parker writes these; [selectors](selectors.md) match on them. |
 
+An expanded node's `labels` hold its `product` (`consul`), its datacenter
+`dc`, its `name`, `role` and `group` within the datacenter, the `services`
+it runs, its `partition` and `namespaces` (Enterprise), and its `meta`.
+
 ```yaml
 nodes:
   web:

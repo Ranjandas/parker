@@ -488,6 +488,10 @@ type Datacenter struct {
 	Subnet string `yaml:"subnet,omitempty"`
 	// UI enables the Consul web UI on the servers.
 	UI *bool `yaml:"ui,omitempty"`
+	// Meta is metadata for every node of the datacenter, servers and
+	// gateways too: Consul node metadata, and labels the meta:KEY=VALUE
+	// selector matches. A partition's or node's own meta wins per key.
+	Meta map[string]string `yaml:"meta,omitempty"`
 	// Servers is the number of Consul servers, or {count, overrides}.
 	Servers Servers `yaml:"servers"`
 
@@ -515,6 +519,10 @@ type Datacenter struct {
 // it, joins its nodes' client agents to it and writes its config entries
 // into it.
 type Partition struct {
+	// Meta is metadata for every node of the partition, over the
+	// datacenter's: Consul node metadata, and labels the meta:KEY=VALUE
+	// selector matches.
+	Meta map[string]string `yaml:"meta,omitempty"`
 	// Client settings apply to this partition's client agents.
 	Client *AgentSettings `yaml:"client,omitempty"`
 	// Service template: settings merged into this partition's services,
@@ -781,7 +789,8 @@ type Node struct {
 	Agent string `yaml:"agent,omitempty" jsonschema:"enum=client,enum=dataplane,enum=none"`
 	// Config is merged into this node's agent configuration.
 	Config map[string]any `yaml:"config,omitempty"`
-	// Meta is the node's Consul node metadata.
+	// Meta is the node's Consul node metadata, over its partition's and
+	// datacenter's; the meta:KEY=VALUE selector matches it too.
 	Meta map[string]string `yaml:"meta,omitempty"`
 	// Service is shorthand for one service named after the node.
 	Service *Service `yaml:"service,omitempty"`
@@ -1090,8 +1099,13 @@ type RawNode struct {
 	Labels *NodeLabels `yaml:"labels,omitempty"`
 }
 
-// NodeLabels place a node in the consul: tree.
+// NodeLabels say where a node sits in the lab: which product it belongs
+// to and its region in that product.
 type NodeLabels struct {
+	// Product the node belongs to: consul ("" for a node of no product).
+	Product string `yaml:"product,omitempty"`
+	// DC is the node's region: its Consul datacenter. Region names are
+	// unique across a lab's products, so selectors need no product prefix.
 	DC string `yaml:"dc,omitempty"`
 	// Name of the node within its dc, e.g. server-2 or web-1.
 	Name string `yaml:"name,omitempty"`
@@ -1106,6 +1120,8 @@ type NodeLabels struct {
 	Partition string `yaml:"partition,omitempty"`
 	// Namespaces of the node's services, besides the default (Enterprise).
 	Namespaces []string `yaml:"namespaces,omitempty"`
+	// Meta is the node's metadata, matched by meta:KEY=VALUE selectors.
+	Meta map[string]string `yaml:"meta,omitempty"`
 }
 
 type Attachment struct {

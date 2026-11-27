@@ -27,7 +27,7 @@ the `web` service, and `dc1-client`, a client agent with nothing else.
 | `count` | `1` | Make N copies, named `<name>-1` ... `<name>-N`. |
 | `agent` | `client` | `client` runs a Consul client agent; `dataplane` runs none and uses consul-dataplane for sidecars (see [dataplanes](dataplanes.md)); `none` runs no Consul at all. |
 | `service`, `services` | | The services the node runs (below). |
-| `meta` | | Consul node metadata. |
+| `meta` | | Consul node metadata, over the [partition's and datacenter's](datacenters.md#node-metadata). [`meta:` selectors](selectors.md#every-selector) match it. |
 | `config` | | Merged into this node's agent configuration, as in [agent configuration](datacenters.md#agent-configuration). |
 | `processes` | | Extra processes to run on the node (below). |
 | `from` | | Start from a [template](reuse.md#templates). |

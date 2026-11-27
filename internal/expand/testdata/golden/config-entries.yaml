@@ -98,6 +98,7 @@ nodes:
             leader: true
           timeout: 90s
     labels:
+      product: consul
       dc: dc1
       name: server-1
       role: server
@@ -172,6 +173,7 @@ nodes:
             service_healthy: web
           timeout: 60s
     labels:
+      product: consul
       dc: dc1
       name: web
       role: client
