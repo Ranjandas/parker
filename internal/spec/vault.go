@@ -26,6 +26,11 @@ type VaultSettings struct {
 	// (one server, no HA), or {consul: DC}: the Consul datacenter DC keeps
 	// the data, through a Consul client agent beside each server.
 	Storage VaultStorage `yaml:"storage,omitempty"`
+	// Register registers the servers in the Consul datacenter of that name
+	// as the vault service, tagged active or standby, through a Consul
+	// client agent beside each server. storage: {consul: DC} registers
+	// them in DC already. Dev clusters don't register.
+	Register string `yaml:"register,omitempty"`
 	// UI serves the Vault web UI; default true.
 	UI *bool `yaml:"ui,omitempty"`
 	// LogLevel of the servers: trace, debug, info, warn or error.
@@ -54,6 +59,25 @@ type VaultCluster struct {
 	// Meta is metadata for the cluster's nodes, matched by meta:KEY=VALUE
 	// selectors.
 	Meta map[string]string `yaml:"meta,omitempty"`
+	// Seal is how the servers unseal. Leave it out for Shamir keys, which
+	// Parker keeps and unseals with; {transit: CLUSTER} auto-unseals them
+	// with the Transit secrets engine of another Vault cluster of the lab.
+	Seal *VaultSeal `yaml:"seal,omitempty"`
+}
+
+// VaultSeal is a cluster's auto-unseal.
+type VaultSeal struct {
+	// Transit is the Vault cluster whose Transit secrets engine holds the
+	// key that unseals this one.
+	Transit string `yaml:"transit"`
+}
+
+// Transit is the cluster's transit seal cluster; "" for none.
+func (c *VaultCluster) Transit() string {
+	if c == nil || c.Seal == nil {
+		return ""
+	}
+	return c.Seal.Transit
 }
 
 // Vault storage backends.
@@ -97,9 +121,10 @@ func (s VaultStorage) MarshalYAML() (any, error) {
 // IsZero leaves an unset storage out of marshalled lab files.
 func (s VaultStorage) IsZero() bool { return s == VaultStorage{} }
 
-// ConsulStorage is each Consul datacenter's Vault servers that keep their
-// data in it: the servers' node keys, by datacenter.
-func (f *File) ConsulStorage() map[string][]string {
+// ConsulAgents is each Consul datacenter's Vault servers that run a client
+// agent of it, for consul storage or to register: the servers' node keys,
+// by datacenter.
+func (f *File) ConsulAgents() map[string][]string {
 	if f.Vault == nil {
 		return nil
 	}
@@ -107,11 +132,12 @@ func (f *File) ConsulStorage() map[string][]string {
 	for _, name := range slices.Sorted(maps.Keys(f.Vault.Clusters)) {
 		c := f.Vault.Clusters[name]
 		s := f.Vault.Settings(name)
-		if c == nil || c.Dev || s.Storage.Kind != VaultStorageConsul {
+		dc := s.ConsulDC()
+		if c == nil || c.Dev || dc == "" {
 			continue
 		}
 		for k := range c.ServerCount() {
-			out[s.Storage.Consul] = append(out[s.Storage.Consul], VaultNodeKey(name, k+1))
+			out[dc] = append(out[dc], VaultNodeKey(name, k+1))
 		}
 	}
 	return out
@@ -129,6 +155,9 @@ func (v *Vault) Settings(name string) VaultSettings {
 	}
 	if c.Storage.Kind != "" {
 		s.Storage = c.Storage
+	}
+	if c.Register != "" {
+		s.Register = c.Register
 	}
 	if c.UI != nil {
 		s.UI = c.UI
@@ -151,6 +180,15 @@ func (v *Vault) Settings(name string) VaultSettings {
 		s.Storage.Kind = VaultStorageRaft
 	}
 	return s
+}
+
+// ConsulDC is the Consul datacenter whose client agent runs beside each
+// server: the storage datacenter, or the one to register in; "" for none.
+func (s VaultSettings) ConsulDC() string {
+	if s.Storage.Kind == VaultStorageConsul {
+		return s.Storage.Consul
+	}
+	return s.Register
 }
 
 // TLSOn reports whether the settings turn TLS on.
@@ -230,6 +268,35 @@ func (f *File) validateVault(add func(string, ...any)) {
 			}
 		default:
 			add("%s.storage: %q is not raft, file or {consul: DC}", where, s.Storage.Kind)
+		}
+		if c.Dev && c.Register != "" {
+			add("%s.register: not supported with dev: true", where)
+		}
+		if s.Register != "" && !c.Dev {
+			switch {
+			case s.Storage.Kind == VaultStorageConsul:
+				add("%s.register: storage: {consul: %s} registers the servers in %s already; leave register out", where, s.Storage.Consul, s.Storage.Consul)
+			case f.Consul == nil || f.Consul.Datacenters[s.Register] == nil:
+				add("%s.register: %q is not a Consul datacenter of this lab (consul.datacenters)", where, s.Register)
+			}
+		}
+		if t := c.Transit(); c.Seal != nil {
+			tc, ok := v.Clusters[t]
+			switch {
+			case c.Dev:
+				add("%s.seal: not supported with dev: true", where)
+			case t == "" || !ok:
+				add("%s.seal.transit: %q is not a Vault cluster of this lab (vault.clusters)", where, t)
+			case t == name:
+				add("%s.seal.transit: a cluster can't unseal itself; name another cluster", where)
+			case tc != nil && tc.Dev:
+				add("%s.seal.transit: %s runs in dev mode; use a cluster that keeps its data", where, t)
+			case tc.Transit() != "":
+				add("%s.seal.transit: %s auto-unseals with transit itself; name a cluster that unseals with keys", where, t)
+			}
+			if version != "" && !VaultAtLeast(version, 1, 1) {
+				add("%s.seal: transit auto-unseal needs Vault 1.1 or later (versions.vault is %s)", where, version)
+			}
 		}
 		if s.Storage.Kind == VaultStorageFile && c.ServerCount() > 1 {
 			add("%s: storage: file has no HA, so one server only (got servers: %d); use raft, or storage: {consul: DC} for Vault before 1.4", where, c.Servers)

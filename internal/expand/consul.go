@@ -30,12 +30,12 @@ func (consulProduct) Expand(in, out *spec.File, facts Facts) error {
 	if w := in.Networks[WANNetwork]; w != nil && w.Subnet != "" {
 		wanSubnet, wanAuto = w.Subnet, false
 	}
-	if err := expandConsul(in.Consul, wanSubnet, out, facts, in.ConsulStorage()); err != nil {
+	if err := expandConsul(in.Consul, wanSubnet, out, facts, in.ConsulAgents()); err != nil {
 		return err
 	}
 	// A Vault server's client agent goes by the server's node name: the
 	// Vault product puts the server on it.
-	for dc, keys := range in.ConsulStorage() {
+	for dc, keys := range in.ConsulAgents() {
 		for _, k := range keys {
 			from := spec.NodeKey(dc, "", k)
 			out.Nodes[k] = out.Nodes[from]

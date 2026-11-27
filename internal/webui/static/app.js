@@ -1027,7 +1027,7 @@ function renderTopology() {
         <span><i style="background:var(--bad)"></i>Failing</span>${kinds.has("upstream") ? '<span><em style="border-color:var(--bad)"></em>Path broken</span>' : "<span></span>"}
         ${kinds.has("wan") && kinds.has("peering") ? '<span></span><span><em style="border-color:var(--peer);border-top-style:dotted"></em>Peering</span>' : ""}
         ${kinds.has("failover") ? '<span></span><span><em style="border-color:var(--fo);border-top-style:dotted"></em>Failover (flows when used)</span>' : ""}
-        ${kinds.has("integration") ? '<span></span><span><em style="border-color:var(--net);border-top-style:dashed"></em>Product link (Connect CA, storage)</span>' : ""}
+        ${kinds.has("integration") ? '<span></span><span><em style="border-color:var(--net);border-top-style:dashed"></em>Product link</span>' : ""}
       </div>
       <div class="seg zoom"><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit" class="${T.view && T.view.user ? "" : "on"}">Fit</button><button data-zoom="in" aria-label="Zoom in">+</button></div>
     </div>

@@ -49,15 +49,17 @@ cluster both called `east`. That keeps [selectors](selectors.md) short:
 |---|---|---|
 | `servers` | `1` | The number of Vault servers. |
 | `storage` | `raft` | `raft` is integrated storage (Vault 1.4 or later). `file` is one server with no HA, for a plain single-server repro. `{consul: DC}` keeps the data in a Consul datacenter of the lab; see [Consul storage](#consul-storage). |
+| `register` | | A Consul datacenter of the lab to register the servers in as the `vault` service; see [Registering in Consul](#registering-in-consul). |
 | `dev` | off | Run one server in dev mode: in memory, unsealed, no init. Its data is gone when it stops. |
 | `ui` | `true` | Serve the Vault web UI, linked from the [web UI](web-ui.md#open-links). |
 | `tls` | off | Serve the API over HTTPS, with a certificate from the lab's CA. See [TLS](#tls). |
 | `log_level` | `info` | `trace`, `debug`, `info`, `warn` or `error`. |
 | `config` | | Merged into every server's configuration as is, in Vault's JSON form. |
 | `subnet` | `10.<64+n>.0.0/24`, or a free subnet when that one is in use | The cluster's LAN. An explicit subnet never moves. |
+| `seal` | | `{transit: CLUSTER}` auto-unseals the servers with another Vault cluster of the lab; see [Transit auto-unseal](#transit-auto-unseal). Leave it out to unseal with keys. |
 | `meta` | | Metadata for the cluster's nodes, matched by [`meta:` selectors](selectors.md#every-selector). |
 
-`defaults:` takes `storage`, `ui`, `tls`, `log_level` and `config` for every
+`defaults:` takes `storage`, `register`, `ui`, `tls`, `log_level` and `config` for every
 cluster; a cluster's own settings win.
 
 ```yaml
@@ -148,7 +150,7 @@ Scenario steps act on Vault servers through [selectors](selectors.md):
 | Step | Does |
 |---|---|
 | `vault: { seal: SEL }` | Seals the servers. Vault seals only an active server through its API, so a standby is restarted instead, as Vault suggests, and comes back sealed. |
-| `vault: { unseal: SEL }` | Unseals them with the cluster's key. An unsealed server is left as is. |
+| `vault: { unseal: SEL }` | Unseals them with the cluster's key. An unsealed server is left as is. A server that [auto-unseals](#transit-auto-unseal) is restarted, and unseals itself. |
 | `vault: { step_down: SEL }` | The active server among them gives up being active, and a standby takes over. Standbys are left as they are. |
 
 `assert: { vault: ... }` checks them: `sealed`, `active` and
@@ -173,6 +175,74 @@ scenario:
     - vault: { unseal: east/vault-2 }
     - assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 60s }
 ```
+
+## Transit auto-unseal
+
+`seal: {transit: CLUSTER}` auto-unseals the cluster with a key in the
+Transit secrets engine of another Vault cluster of the lab, the way
+production clusters auto-unseal with a cloud KMS or a central Vault.
+Parker sets up `transit/` on `CLUSTER` with a key for each cluster that
+uses it (`autounseal-<cluster>`), and each server joins `CLUSTER`'s
+network and names it in its `seal "transit"` stanza. Servers unseal
+themselves as they start, so a restarted server comes back unsealed.
+
+```yaml
+parker: v1alpha1
+name: vault-transit
+versions: { vault: 1.21.1 }
+vault:
+  clusters:
+    unsealer: {}
+    east:
+      servers: 3
+      seal: { transit: unsealer }
+```
+
+```console
+$ parker status vault-transit
+lab vault-transit: supervised by parker daemon; run dir /run/parker/vault-transit
+NODE              IP                      PROCESS     PID   STATE  RESTARTS  ROLE
+east-vault-1      10.64.0.10,10.65.0.150  vault       5076  ready  0         active (raft 3 voters)
+east-vault-1      10.64.0.10,10.65.0.150  vault-init  5077  ready  0         -
+east-vault-2      10.64.0.11,10.65.0.151  vault       5074  ready  0         standby (raft 3 voters)
+east-vault-3      10.64.0.12,10.65.0.152  vault       5075  ready  0         standby (raft 3 voters)
+unsealer-vault-1  10.65.0.10              vault       5056  ready  0         active (raft 1 voters)
+unsealer-vault-1  10.65.0.10              vault-init  5057  ready  0         -
+$ parker exec vault-transit east/vault-2 -- vault status
+Key                      Value
+---                      -----
+Seal Type                transit
+Recovery Seal Type       shamir
+Initialized              true
+Sealed                   false
+Total Recovery Shares    1
+Threshold                1
+...
+```
+
+Seal the transit cluster and running servers carry on, but a server
+that starts can't unseal, and exits:
+
+```console
+$ parker exec vault-transit unsealer/vault-1 -- vault operator seal
+Success! Vault is sealed.
+$ parker fault vault-transit restart east/vault-3
+...
+$ parker logs vault-transit east/vault-3
+error parsing Seal configuration: Error making API request.
+URL: PUT http://10.65.0.10:8200/v1/transit/encrypt/autounseal-east
+Code: 503. Errors:
+* Vault is sealed
+```
+
+- The cluster is initialised with a recovery key instead of an unseal
+  key; `PARKER_VAULT_UNSEAL_KEY` holds it.
+- A [`vault: {seal: ...}` step](#seal-unseal-and-step-down) seals an
+  active server; a standby that auto-unseals can't be sealed by a
+  restart, so the step says so. `vault: {unseal: ...}` restarts the
+  server.
+- The transit cluster can't be a `dev: true` cluster, and can't
+  auto-unseal with transit itself. Needs Vault 1.1 or later.
 
 ## Consul storage
 
@@ -220,6 +290,53 @@ vault-east/sys/
 
 Faults on the datacenter reach Vault: stop its servers, or partition a
 Vault server from them, and Vault loses its storage and its lock.
+
+## Registering in Consul
+
+`register: DC` registers the cluster's servers in the lab's Consul
+datacenter `DC` as the `vault` service, the way Vault's
+`service_registration "consul"` does in production. Each Vault server
+runs a Consul client agent of `DC` beside it, and Vault keeps the
+service's tags current: `active` on the active server, `standby` on the
+others, and `initialized` once the cluster is. A health check fails
+while a server is sealed. Clients find the active server at
+`active.vault.service.consul`.
+
+```yaml
+parker: v1alpha1
+name: vault-register
+versions: { consul: 1.22.7, vault: 1.21.1 }
+consul:
+  datacenters:
+    dc1: { servers: 1 }
+vault:
+  clusters:
+    east:
+      servers: 3
+      register: dc1
+```
+
+```console
+$ parker exec vault-register dc1/server-1 -- consul catalog services -tags
+consul      
+vault       active,initialized,standby
+$ parker exec vault-register dc1/server-1 -- consul catalog nodes -service vault
+Node          ID        Address     DC
+east-vault-1  fed25658  10.1.0.100  dc1
+east-vault-2  4a3edd76  10.1.0.101  dc1
+east-vault-3  7fc61f3b  10.1.0.102  dc1
+```
+
+When the active server [steps down](#seal-unseal-and-step-down), the
+`active` tag moves to the new active server.
+
+- The data stays in the cluster's own storage (raft by default).
+  [Consul storage](#consul-storage) registers the servers in its
+  datacenter already, so `register` and `storage: {consul: DC}` don't go
+  together.
+- With [ACLs or TLS](acl-and-tls.md) on the datacenter, Vault uses the
+  agent's token, and HTTPS with the lab CA.
+- `dev: true` clusters don't register.
 
 ## Vault as the Connect CA
 
@@ -295,4 +412,4 @@ vault:
 
 ## Limits
 
-- Replication, Enterprise builds, and other links to Consul (service registration, the Consul secrets engine) are planned.
+- Replication, Enterprise builds, and the Consul secrets engine are planned.

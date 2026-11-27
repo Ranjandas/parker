@@ -608,7 +608,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File, facts Facts,
 			return strings.Compare(a.Name+"\x00"+a.Partition, b.Name+"\x00"+b.Partition)
 		})
 		// Client agents for the Vault servers that keep their data in this
-		// dc, after the dc's own nodes so their addresses don't move.
+		// dc or register in it, after the dc's own nodes so their addresses
+		// don't move.
 		for _, vk := range vaultAgents[dcName] {
 			nodes = append(nodes, spec.PlacedNode{Name: vk, Node: &spec.Node{}})
 		}
