@@ -112,7 +112,10 @@ firewall rules. Logs are kept.
 $ parker status [FILE|LAB] [flags]
 ```
 
-A lab's nodes and processes, or with no argument, every lab.
+A lab's nodes and processes, or with no argument, every lab. ROLE shows
+what each product says about its node: a Consul agent's raft role
+(`leader`, `follower`, `client`), or a [Vault server](vault.md#status)'s
+`active`, `standby` or `sealed` with the cluster's raft voters.
 
 | Flag | Effect |
 |---|---|

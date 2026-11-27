@@ -92,6 +92,25 @@ hand is one command:
 $ parker exec vault east/vault-2 -- sh -c 'vault operator unseal "$PARKER_VAULT_UNSEAL_KEY"'
 ```
 
+## Status
+
+`parker status`, the [TUI](tui.md) and the [web UI](web-ui.md) show
+each server's seal and HA state, and the cluster's raft voters:
+
+```console
+$ parker status vault
+lab vault: supervised by parker daemon; run dir /run/parker/vault
+NODE          IP          PROCESS     PID    STATE  RESTARTS  ROLE
+east-vault-1  10.64.0.10  vault       14910  ready  0         active (raft 3 voters)
+east-vault-1  10.64.0.10  vault-init  14915  ready  0         -
+east-vault-2  10.64.0.11  vault       14911  ready  0         standby (raft 3 voters)
+east-vault-3  10.64.0.12  vault       14964  ready  1         sealed
+```
+
+Here `east-vault-3` was sealed by a scenario's `vault: { seal: ... }`
+step, which restarted it. A server is `active`, `standby`,
+`perf-standby` (Enterprise), `sealed` or `uninitialized`.
+
 ## TLS
 
 `tls: true` serves each server's API over HTTPS. Parker signs every
@@ -172,4 +191,4 @@ vault:
 ## Limits
 
 - Replication, Enterprise builds, and links to Consul (Connect CA, Consul storage) are planned.
-- The TUI and the topology view show Vault servers as nodes, but don't show seal or HA state yet.
+- The topology view shows Vault servers as nodes, without their seal or HA state yet.

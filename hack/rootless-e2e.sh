@@ -39,6 +39,8 @@ if [ -z "$first" ] && grep "^vault:" "$F" >/dev/null; then
     $P exec "$F" "$n" -- vault status </dev/null | grep -E "^Sealed +false" >/dev/null || { echo "$n is sealed" >&2; exit 1; }
   done
   echo "every server unsealed"
+  $P status "$F" | grep -E " vault .* active \(raft [0-9]+ voters\)" >/dev/null || { $P status "$F"; echo "status shows no active server" >&2; exit 1; }
+  echo "status shows the active server"
   $P exec "$F" "$v1" -- sh -c 'vault token lookup >/dev/null && echo "root token works"' </dev/null
   if grep "^scenario:" "$F" >/dev/null; then
     echo "--- scenario"

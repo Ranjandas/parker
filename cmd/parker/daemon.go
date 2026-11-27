@@ -30,6 +30,7 @@ import (
 	"github.com/Ranjandas/parker/internal/api/parkerv1/parkerv1connect"
 	"github.com/Ranjandas/parker/internal/compat"
 	"github.com/Ranjandas/parker/internal/daemon"
+	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/fetch"
 	"github.com/Ranjandas/parker/internal/lab"
 	"github.com/Ranjandas/parker/internal/license"
@@ -676,8 +677,17 @@ func printStatus(w io.Writer, st *parkerv1.StatusResponse) {
 				pid = fmt.Sprint(p.Pid)
 			}
 			role := "-"
-			if p.Name == "consul" && n.Role != "" {
-				role = n.Role
+			// The product's own process carries its state: leader,
+			// follower, client; active, standby, sealed.
+			ps := n.State
+			if ps == "" && p.Name == "consul" {
+				ps = n.Role // a daemon from before the summary
+			}
+			if (p.Name == "consul" || p.Name == n.Product) && ps != "" {
+				role = ps
+				if n.Detail != "" && n.Product == expand.ProductVault {
+					role += " (" + n.Detail + ")"
+				}
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", n.Name, ip, p.Name, pid, state, p.Restarts, role)
 		}
