@@ -8,6 +8,7 @@ package graph
 import (
 	"encoding/json"
 	"maps"
+	"net/url"
 	"path"
 	"slices"
 	"sort"
@@ -22,6 +23,8 @@ type Node struct {
 	Name      string
 	DC        string
 	Partition string // "" outside partitions:
+	// Product the node runs: consul, vault; "" for a low-level node.
+	Product string
 	// Role: server, client, gateway, dataplane or none.
 	Role string
 	// Services registered for the node (not sidecars).
@@ -63,6 +66,10 @@ const (
 	// Failover: where a service-resolver sends a caller's upstream when
 	// its own instances are down (another dc, partition or peer).
 	Failover = "failover"
+	// Integration: one product using another, from the user to the one
+	// it uses: a Consul dc's Connect CA in Vault, Vault's storage in
+	// Consul. The label says which.
+	Integration = "integration"
 )
 
 // Edge connects two nodes.
@@ -201,7 +208,7 @@ func Build(f *spec.File) *Graph {
 		if l := rn.Labels; l != nil {
 			n.DC, n.Partition = l.DC, l.Partition
 			if l.Role != "" {
-				n.Role = l.Role
+				n.Role, n.Product = l.Role, l.Product
 			}
 			n.Services = append(n.Services, l.Services...)
 		}
@@ -648,8 +655,70 @@ func Build(f *spec.File) *Graph {
 			g.Edges = append(g.Edges, e)
 		}
 	}
+	g.Edges = append(g.Edges, integrations(f, g, firstServer)...)
 	sort.SliceStable(g.Edges, func(i, j int) bool { return g.Edges[i].Kind < g.Edges[j].Kind })
 	return g
+}
+
+// integrations are the links between products, read from the agents'
+// configs: a Consul dc whose servers use a Vault cluster as their Connect
+// CA, and a Vault cluster that keeps its data in a Consul dc. One edge
+// per pair, between their first servers.
+func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edge {
+	byIP := map[string]string{}
+	for _, n := range g.Nodes {
+		for _, ip := range n.IPs {
+			byIP[ip] = n.Name
+		}
+	}
+	var out []Edge
+	seen := map[string]bool{}
+	add := func(from, to, label string) {
+		if from == "" || to == "" || seen[from+"|"+to+"|"+label] {
+			return
+		}
+		seen[from+"|"+to+"|"+label] = true
+		out = append(out, Edge{Kind: Integration, From: from, To: to, Label: label})
+	}
+	for _, name := range slices.Sorted(maps.Keys(f.Nodes)) {
+		rn := f.Nodes[name]
+		l := rn.Labels
+		if l == nil {
+			continue
+		}
+		if l.Product == expand.ProductConsul && l.Role == "server" {
+			var cfg struct {
+				Connect struct {
+					Provider string `json:"ca_provider"`
+					Config   struct {
+						Address string `json:"address"`
+					} `json:"ca_config"`
+				} `json:"connect"`
+			}
+			if json.Unmarshal([]byte(rn.Files["consul.json"]), &cfg) == nil && cfg.Connect.Provider == "vault" {
+				if u, err := url.Parse(cfg.Connect.Config.Address); err == nil {
+					if v := byIP[u.Hostname()]; v != "" {
+						add(firstServer(l.DC), firstServer(f.Nodes[v].Labels.DC), "Connect CA")
+					}
+				}
+			}
+		}
+		if l.Product == expand.ProductVault {
+			var vc struct {
+				Storage struct {
+					Consul *struct{} `json:"consul"`
+				} `json:"storage"`
+			}
+			var cc struct {
+				Datacenter string `json:"datacenter"`
+			}
+			if json.Unmarshal([]byte(rn.Files[expand.VaultConfigFile]), &vc) == nil && vc.Storage.Consul != nil &&
+				json.Unmarshal([]byte(rn.Files["consul.json"]), &cc) == nil {
+				add(firstServer(l.DC), firstServer(cc.Datacenter), "Consul storage")
+			}
+		}
+	}
+	return out
 }
 
 // links are the web UIs an agent's config says the node serves: the Consul

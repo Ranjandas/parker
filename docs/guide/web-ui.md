@@ -50,6 +50,14 @@ The link signs you in once, and only works while that `parker ui` runs.
   (*internet*: browsers, curl) sits beside each datacenter that has
   them, with one line into each gateway labelled with its listeners
   (such as `:8081 http`).
+
+  [Vault](vault.md) clusters are drawn like datacenters, each server
+  with its active, standby or sealed state. When products use each
+  other, a dashed *product link* joins them, from the user to the one
+  it uses: `Connect CA` from a Consul datacenter to the Vault cluster
+  that is its [Connect CA](vault.md#vault-as-the-connect-ca), and
+  `Consul storage` from a Vault cluster to the datacenter that holds
+  its data. The **Product links** button hides them.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
   level control. The header shows the node's IPs,

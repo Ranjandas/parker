@@ -296,4 +296,3 @@ vault:
 ## Limits
 
 - Replication, Enterprise builds, and other links to Consul (service registration, the Consul secrets engine) are planned.
-- The topology view shows Vault servers as nodes, without their seal or HA state yet.
