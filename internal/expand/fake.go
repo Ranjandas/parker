@@ -181,6 +181,13 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		l.MaxURLBytes = cmp.Or(bl.MaxURLBytes, l.MaxURLBytes)
 		l.MaxBodyBytes = cmp.Or(bl.MaxBodyBytes, l.MaxBodyBytes)
 		l.MaxFormParams = cmp.Or(bl.MaxFormParams, l.MaxFormParams)
+		l.MaxConcurrent = cmp.Or(bl.MaxConcurrent, l.MaxConcurrent)
+		l.Queue = cmp.Or(bl.Queue, l.Queue)
+		l.WhenFull = cmp.Or(bl.WhenFull, l.WhenFull)
+		l.MaxRequestsPerConn = cmp.Or(bl.MaxRequestsPerConn, l.MaxRequestsPerConn)
+		l.IdleTimeout = cmp.Or(bl.IdleTimeout, l.IdleTimeout)
+		l.HeaderTimeout = cmp.Or(bl.HeaderTimeout, l.HeaderTimeout)
+		l.H2MaxStreams = cmp.Or(bl.H2MaxStreams, l.H2MaxStreams)
 		if bl.Codes != nil {
 			c := spec.FakeLimitCodes{}
 			if l.Codes != nil {
@@ -190,6 +197,7 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 			c.URL = cmp.Or(bl.Codes.URL, c.URL)
 			c.Body = cmp.Or(bl.Codes.Body, c.Body)
 			c.Form = cmp.Or(bl.Codes.Form, c.Form)
+			c.Full = cmp.Or(bl.Codes.Full, c.Full)
 			l.Codes = &c
 		}
 		out.Limits = &l

@@ -126,6 +126,13 @@ func (s *Server) grpcHandlers(mux *http.ServeMux) {
 	opts := []connect.HandlerOption{connect.WithCodec(wireCodec{})}
 	mux.Handle(procHandle, connect.NewUnaryHandler(procHandle,
 		func(ctx context.Context, req *connect.Request[handleRequest]) (*connect.Response[handleResponse], error) {
+			if l := s.Faults().Limits; !s.gate.enter(ctx, l) {
+				in, q := s.gate.busy()
+				msg := fmt.Sprintf("server busy: %d requests at once and %d queued (%s %d, queue %d)", in, q, l.name("max_concurrent"), l.Concurrent, l.Queue)
+				s.logf(LevelWarn, "request from %s refused: %s", req.Peer().Addr, msg)
+				return nil, connect.NewError(connect.CodeUnavailable, errors.New(msg))
+			}
+			defer s.gate.leave()
 			r, err := http.NewRequestWithContext(ctx, http.MethodGet, procHandle, nil)
 			if err != nil {
 				return nil, err

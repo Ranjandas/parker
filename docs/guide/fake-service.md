@@ -211,15 +211,15 @@ api  dc1-api · dc1  400  49.842µs  request headers too large: 9294 bytes > tom
 
 | Profile | Server | Limits (code) | Settings |
 | --- | --- | --- | --- |
-| `alb` | [AWS Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html) | headers 64KB (400), header line 16KB (400), url 16KB (414) | `request header quota`, `single header quota`, `request line quota` |
-| `apache` | [Apache httpd](https://httpd.apache.org/docs/2.4/mod/core.html) | header line 8190B (400), 100 headers (400), url 8190B (414), body 1GB (413) | `LimitRequestFieldSize`, `LimitRequestFields`, `LimitRequestLine`, `LimitRequestBody` |
+| `alb` | [AWS Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html) | headers 64KB (400), header line 16KB (400), url 16KB (414), idle 1m | `request header quota`, `single header quota`, `request line quota`, `idle timeout` |
+| `apache` | [Apache httpd](https://httpd.apache.org/docs/2.4/mod/core.html) | header line 8190B (400), 100 headers (400), url 8190B (414), body 1GB (413), 100 requests per connection, idle 5s | `LimitRequestFieldSize`, `LimitRequestFields`, `LimitRequestLine`, `LimitRequestBody`, `MaxKeepAliveRequests`, `KeepAliveTimeout` |
 | `envoy` | [Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto) | headers 60KB (431), 100 headers (431) | `max_request_headers_kb`, `max_headers_count` |
 | `go` | [Go net/http](https://pkg.go.dev/net/http#DefaultMaxHeaderBytes) | headers 1MB (431) | `MaxHeaderBytes` |
-| `gunicorn` | [Gunicorn](https://docs.gunicorn.org/en/stable/settings.html) | header line 8190B (400), 100 headers (400), url 4094B (400) | `limit_request_field_size`, `limit_request_fields`, `limit_request_line` |
-| `kestrel` | [ASP.NET Core Kestrel](https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits) | headers 32KB (431), 100 headers (431), url 8KB (414), body 30000000B (413) | `MaxRequestHeadersTotalSize`, `MaxRequestHeaderCount`, `MaxRequestLineSize`, `MaxRequestBodySize` |
-| `nginx` | [nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html) | headers 32KB (400), header line 8KB (400), url 8KB (414), body 1MB (413) | `large_client_header_buffers`, `client_max_body_size` |
-| `node` | [Node.js http server](https://nodejs.org/api/http.html#httpmaxheadersize) | headers 16KB (431) | `maxHeaderSize` |
-| `tomcat` | [Apache Tomcat HTTP connector](https://tomcat.apache.org/tomcat-11.0-doc/config/http.html) | headers 8KB (400), 100 headers (400), 10000 params (400) | `maxHttpHeaderSize`, `maxHeaderCount`, `maxParameterCount` |
+| `gunicorn` | [Gunicorn](https://docs.gunicorn.org/en/stable/settings.html) | header line 8190B (400), 100 headers (400), url 4094B (400), idle 2s | `limit_request_field_size`, `limit_request_fields`, `limit_request_line`, `keep_alive` |
+| `kestrel` | [ASP.NET Core Kestrel](https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits) | headers 32KB (431), 100 headers (431), url 8KB (414), body 30000000B (413), idle 2m, header timeout 30s | `MaxRequestHeadersTotalSize`, `MaxRequestHeaderCount`, `MaxRequestLineSize`, `MaxRequestBodySize`, `KeepAliveTimeout`, `RequestHeadersTimeout` |
+| `nginx` | [nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html) | headers 32KB (400), header line 8KB (400), url 8KB (414), body 1MB (413), 1000 requests per connection, idle 75s, header timeout 1m | `large_client_header_buffers`, `client_max_body_size`, `keepalive_requests`, `keepalive_timeout`, `client_header_timeout` |
+| `node` | [Node.js http server](https://nodejs.org/api/http.html#httpmaxheadersize) | headers 16KB (431), idle 5s, header timeout 1m | `maxHeaderSize`, `keepAliveTimeout`, `headersTimeout` |
+| `tomcat` | [Apache Tomcat HTTP connector](https://tomcat.apache.org/tomcat-11.0-doc/config/http.html) | headers 8KB (400), 100 headers (400), 10000 params (400), 200 at once + 100 queued (refused), 100 requests per connection, idle 20s, header timeout 20s | `maxHttpHeaderSize`, `maxHeaderCount`, `maxParameterCount`, `maxThreads`, `maxKeepAliveRequests`, `keepAliveTimeout`, `connectionTimeout` |
 
 The values are each server's defaults as its documentation gives them
 (follow the link). A profile copies the limits and codes only, not every
@@ -251,6 +251,57 @@ Some things to know:
   has its own limits: 60 KB of headers and 100 headers by default, both
   answered `431`. A fake limit above those is never reached through the
   sidecar.
+
+### Connection and time limits
+
+The other common app server limit is capacity: a full worker pool, a
+keep-alive connection closed after so many requests, an idle timeout
+shorter than the load balancer's. Through the sidecar these show up as
+503s that only happen under load or after a quiet spell.
+
+```yaml
+fake:
+  latency: { p50: 1s }
+  limits:
+    max_concurrent: 5           # Tomcat's maxThreads
+    queue: 2                    # acceptCount: waiting beyond that
+    max_requests_per_conn: 100  # maxKeepAliveRequests
+    idle_timeout: 20s           # keepAliveTimeout
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `limits.max_concurrent` | off | Requests handled at once, like a server's worker threads. `/health`, `/ready` and `/ui` don't count, so the Consul check stays passing. |
+| `limits.queue` | `0` | Requests that wait for a free worker; the rest are refused. |
+| `limits.when_full` | `refuse` | `refuse` resets the connection unanswered, as a full accept queue does (over HTTP/2, such as `protocol: grpc`, it answers `codes.full` instead). `answer` answers `codes.full`. |
+| `limits.codes.full` | `503` | Code for a refused request with `when_full: answer`. gRPC gets `UNAVAILABLE`. |
+| `limits.max_requests_per_conn` | off | Closes a keep-alive connection after this many requests, with `Connection: close` on the last answer. HTTP/1.1 only. |
+| `limits.idle_timeout` | none | Closes a keep-alive connection idle this long. |
+| `limits.header_timeout` | none | Closes a connection that hasn't sent its headers in this long, a slow client. |
+| `limits.h2_max_streams` | Go's (at least 100) | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS`, for `protocol: grpc`. |
+
+`idle_timeout`, `header_timeout` and `h2_max_streams` are set when the
+fake starts, so they go in the `fake:` block; a `fake:` step can change
+the others while the lab runs.
+
+With five workers and a one second latency, a few `parker call --every
+100ms` loops fill the pool. A refused request looks like this from a
+client in the node:
+
+```console
+$ curl localhost:9090/
+curl: (56) Recv failure: Connection reset by peer
+```
+
+and the fake logs it:
+
+```text
+[WARN] request from 127.0.0.1:54140 refused: server busy: 1 requests at once and 0 queued (max_concurrent 1, queue 0)
+```
+
+Through the sidecar the caller sees Envoy's 503 for a reset upstream
+connection, and Envoy's retries, circuit breakers and outlier detection
+react to it.
 
 ### Sending large requests
 

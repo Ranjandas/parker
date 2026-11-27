@@ -957,6 +957,29 @@ type FakeLimits struct {
 	// MaxFormParams bounds the query and form body parameters together
 	// (Tomcat's maxParameterCount).
 	MaxFormParams *int `yaml:"max_form_params,omitempty" json:"max_form_params,omitempty" jsonschema:"minimum=0"`
+	// MaxConcurrent is how many requests are handled at once, like a
+	// server's worker threads (Tomcat's maxThreads). Health checks and the
+	// fake's page don't count.
+	MaxConcurrent *int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty" jsonschema:"minimum=0"`
+	// Queue is how many requests wait for a free worker beyond
+	// max_concurrent (Tomcat's acceptCount); the rest are refused.
+	Queue *int `yaml:"queue,omitempty" json:"queue,omitempty" jsonschema:"minimum=0"`
+	// WhenFull is what a refused request gets: refuse (default: the
+	// connection is closed unanswered, as a full accept queue does; over
+	// HTTP/2 it answers codes.full) or answer (codes.full).
+	WhenFull string `yaml:"when_full,omitempty" json:"when_full,omitempty" jsonschema:"enum=refuse,enum=answer"`
+	// MaxRequestsPerConn closes a keep-alive connection after this many
+	// requests (Tomcat's maxKeepAliveRequests); HTTP/1.1 only.
+	MaxRequestsPerConn *int `yaml:"max_requests_per_conn,omitempty" json:"max_requests_per_conn,omitempty" jsonschema:"minimum=0"`
+	// IdleTimeout closes a keep-alive connection idle this long, e.g. 20s.
+	// Set at start only.
+	IdleTimeout string `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
+	// HeaderTimeout closes a connection that hasn't sent its headers in
+	// this long (a slow client), e.g. 60s. Set at start only.
+	HeaderTimeout string `yaml:"header_timeout,omitempty" json:"header_timeout,omitempty"`
+	// H2MaxStreams is HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS, for
+	// protocol: grpc (default 100 or more, Go's own). Set at start only.
+	H2MaxStreams *int `yaml:"h2_max_streams,omitempty" json:"h2_max_streams,omitempty" jsonschema:"minimum=0"`
 	// Codes are the status codes a refused request answers.
 	Codes *FakeLimitCodes `yaml:"codes,omitempty" json:"codes,omitempty"`
 }
@@ -972,6 +995,9 @@ type FakeLimitCodes struct {
 	Body int `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"minimum=100,maximum=599"`
 	// Form is for form parameters; default 400.
 	Form int `yaml:"form,omitempty" json:"form,omitempty" jsonschema:"minimum=100,maximum=599"`
+	// Full is for a request refused because every worker and queue slot
+	// is busy, with when_full: answer or over HTTP/2; default 503.
+	Full int `yaml:"full,omitempty" json:"full,omitempty" jsonschema:"minimum=100,maximum=599"`
 }
 
 type FakeHealth struct {

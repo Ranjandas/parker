@@ -430,6 +430,7 @@ func TestFakeStep(t *testing.T) {
 		"fake: { on: dc1, errors: { rate: 5 } }":                          "errors.rate",
 		"fake: { on: dc1, reset: true, limits: { max_header_bytes: 0 } }": "takes no other changes",
 		"fake: { on: dc1, limits: { codes: { header: 42 } } }":            "limits.codes.header",
+		"fake: { on: dc1, limits: { idle_timeout: 5s } }":                 "set at start only",
 	} {
 		if err := Validate(parse(t, "steps:\n  - "+bad+"\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", bad, err)

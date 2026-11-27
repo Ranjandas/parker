@@ -209,6 +209,9 @@ func validateStep(st *spec.Step) error {
 		if err := fake.Validate(f.Change()); err != nil {
 			return fmt.Errorf("fake: %w", err)
 		}
+		if l := f.Limits; l != nil && (l.IdleTimeout != "" || l.HeaderTimeout != "" || l.H2MaxStreams != nil) {
+			return errors.New("fake: limits.idle_timeout, header_timeout and h2_max_streams are set at start only: put them in the service's fake: block")
+		}
 	}
 	if ll := st.LogLevel; ll != nil {
 		if err := ValidateLogLevel(ll); err != nil {

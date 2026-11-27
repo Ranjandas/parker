@@ -24,7 +24,7 @@ func TestProfiles(t *testing.T) {
 			t.Errorf("%s: needs a title, a source and setting names", n)
 		}
 		for k := range p.settings {
-			if !slices.Contains([]string{"max_header_bytes", "max_header_line_bytes", "max_header_count", "max_url_bytes", "max_body_bytes", "max_form_params"}, k) {
+			if !slices.Contains(limitKeys, k) {
 				t.Errorf("%s: unknown limit %q", n, k)
 			}
 		}
