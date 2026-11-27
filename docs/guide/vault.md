@@ -48,7 +48,7 @@ cluster both called `east`. That keeps [selectors](selectors.md) short:
 | Key | Default | Meaning |
 |---|---|---|
 | `servers` | `1` | The number of Vault servers. |
-| `storage` | `raft` | `raft` is integrated storage (Vault 1.4 or later). `file` is one server with no HA, for older Vault releases or a plain single-server repro. |
+| `storage` | `raft` | `raft` is integrated storage (Vault 1.4 or later). `file` is one server with no HA, for a plain single-server repro. `{consul: DC}` keeps the data in a Consul datacenter of the lab; see [Consul storage](#consul-storage). |
 | `dev` | off | Run one server in dev mode: in memory, unsealed, no init. Its data is gone when it stops. |
 | `ui` | `true` | Serve the Vault web UI, linked from the [web UI](web-ui.md#open-links). |
 | `tls` | off | Serve the API over HTTPS, with a certificate from the lab's CA. See [TLS](#tls). |
@@ -174,11 +174,59 @@ scenario:
     - assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 60s }
 ```
 
+## Consul storage
+
+`storage: {consul: DC}` keeps the cluster's data in the lab's Consul
+datacenter `DC`, the way Vault ran before integrated storage. Each Vault
+server also runs a Consul client agent of `DC`, joined to its LAN, and
+Vault talks to that local agent. High availability comes from Consul
+locks, so a cluster can have several servers.
+
+```yaml
+parker: v1alpha1
+name: vault-consul
+versions: { consul: 1.22.7, vault: 1.3.10 }
+consul:
+  datacenters:
+    dc1: { servers: 3 }
+vault:
+  clusters:
+    east:
+      servers: 2
+      storage: { consul: dc1 }
+```
+
+```console
+$ parker exec vault-consul dc1/server-1 -- consul members
+Node          Address          Status  Type    Build   Protocol  DC   Partition  Segment
+server-1      10.1.0.10:8301   alive   server  1.22.7  2         dc1  default    <all>
+server-2      10.1.0.11:8301   alive   server  1.22.7  2         dc1  default    <all>
+server-3      10.1.0.12:8301   alive   server  1.22.7  2         dc1  default    <all>
+east-vault-1  10.1.0.100:8301  alive   client  1.22.7  2         dc1  default    <default>
+east-vault-2  10.1.0.101:8301  alive   client  1.22.7  2         dc1  default    <default>
+$ parker exec vault-consul dc1/server-1 -- consul kv get -keys vault-east/
+vault-east/core/
+vault-east/logical/
+vault-east/sys/
+```
+
+- The data lives under the KV path `vault-<cluster>/`.
+- When the datacenter has [ACLs or TLS](acl-and-tls.md), Vault uses the
+  agent's token, and HTTPS with the lab CA.
+- `parker exec` on a Vault server sets both the Vault and the Consul
+  variables, so `vault` and `consul` both work there.
+- The servers stay in their cluster for [selectors](selectors.md)
+  (`east/vault-1`); `dc1` doesn't match them.
+
+Faults on the datacenter reach Vault: stop its servers, or partition a
+Vault server from them, and Vault loses its storage and its lock.
+
 ## Old Vault releases
 
 Integrated storage needs Vault 1.4 or later, and `parker validate` refuses
-`storage: raft` on anything older. For an old release, use one server with
-`storage: file`:
+`storage: raft` on anything older. For HA on an old release, use
+[Consul storage](#consul-storage). For one server, `storage: file` is
+enough:
 
 ```yaml
 parker: v1alpha1
@@ -190,5 +238,5 @@ vault:
 
 ## Limits
 
-- Replication, Enterprise builds, and links to Consul (Connect CA, Consul storage) are planned.
+- Replication, Enterprise builds, and other links to Consul (Vault as the Connect CA, service registration) are planned.
 - The topology view shows Vault servers as nodes, without their seal or HA state yet.

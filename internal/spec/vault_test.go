@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 func TestVaultValidate(t *testing.T) {
@@ -15,6 +17,8 @@ func TestVaultValidate(t *testing.T) {
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: file, servers: 2 }\n":                                            "storage: file has no HA",
 		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 3 }\n":                                                           "needs Vault 1.4 or later",
 		"versions: { vault: 1.21.1, consul: 1.22.7 }\nconsul:\n  datacenters:\n    east: { servers: 1 }\nvault:\n  clusters:\n    east: {}\n": "names must be unique",
+		"versions: { vault: 1.3.10 }\nvault:\n  clusters:\n    e: { servers: 2, storage: { consul: dc9 } }\n":                                 "storage.consul: \"dc9\" is not a Consul datacenter",
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: s3 }\n":                                                          `storage: "s3" is not raft, file or {consul: DC}`,
 	} {
 		p := filepath.Join(t.TempDir(), "lab.yaml")
 		if err := os.WriteFile(p, []byte("parker: v1alpha1\n"+text), 0o644); err != nil {
@@ -34,6 +38,24 @@ func TestVaultAtLeast(t *testing.T) {
 	} {
 		if got := VaultAtLeast(v, 1, 4); got != want {
 			t.Errorf("%s: %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestVaultStorageShapes(t *testing.T) {
+	for in, want := range map[string]VaultStorage{
+		"raft":          {Kind: VaultStorageRaft},
+		"file":          {Kind: VaultStorageFile},
+		"{consul: dc1}": {Kind: VaultStorageConsul, Consul: "dc1"},
+	} {
+		var s VaultStorage
+		if err := yaml.Unmarshal([]byte(in), &s); err != nil || s != want {
+			t.Errorf("%s: %+v %v", in, s, err)
+		}
+		b, _ := yaml.Marshal(s)
+		var back VaultStorage
+		if err := yaml.Unmarshal(b, &back); err != nil || back != want {
+			t.Errorf("%s round trip: %s", in, b)
 		}
 	}
 }

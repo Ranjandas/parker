@@ -1794,12 +1794,29 @@
     "VaultCluster": {
       "properties": {
         "storage": {
-          "type": "string",
-          "enum": [
-            "raft",
-            "file"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "raft",
+                "file"
+              ]
+            },
+            {
+              "properties": {
+                "consul": {
+                  "type": "string",
+                  "description": "The Consul datacenter that keeps the data."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "consul"
+              ]
+            }
           ],
-          "description": "Storage is raft (integrated storage, the default; Vault 1.4+) or\nfile (one server, no HA)."
+          "description": "Storage is raft (integrated storage, the default; Vault 1.4+), file\n(one server, no HA), or {consul: DC}: the Consul datacenter DC keeps\nthe data, through a Consul client agent beside each server."
         },
         "ui": {
           "type": "boolean",
@@ -1852,12 +1869,29 @@
     "VaultSettings": {
       "properties": {
         "storage": {
-          "type": "string",
-          "enum": [
-            "raft",
-            "file"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "raft",
+                "file"
+              ]
+            },
+            {
+              "properties": {
+                "consul": {
+                  "type": "string",
+                  "description": "The Consul datacenter that keeps the data."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "consul"
+              ]
+            }
           ],
-          "description": "Storage is raft (integrated storage, the default; Vault 1.4+) or\nfile (one server, no HA)."
+          "description": "Storage is raft (integrated storage, the default; Vault 1.4+), file\n(one server, no HA), or {consul: DC}: the Consul datacenter DC keeps\nthe data, through a Consul client agent beside each server."
         },
         "ui": {
           "type": "boolean",

@@ -187,3 +187,45 @@ vault:
 		t.Error(err)
 	}
 }
+
+// Consul storage: each Vault server is also a client agent of the
+// storage dc, placed after the dc's own nodes, and keeps its data through
+// it with the agent's token and TLS.
+func TestVaultConsulStorage(t *testing.T) {
+	low, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7, vault: 1.3.10 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      acl: true
+      tls: true
+      nodes: { web: {} }
+vault:
+  clusters:
+    east: { servers: 2, storage: { consul: dc1 } }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if low.Nodes["dc1-web"].Networks["dc1-lan"].IP != "10.1.0.100" {
+		t.Error("the Vault agents moved the dc's own node")
+	}
+	if _, ok := low.Nodes["dc1-east-vault-1"]; ok {
+		t.Error("the agent kept its Consul node key")
+	}
+	n := low.Nodes["east-vault-2"]
+	if n.Labels.Product != ProductVault || n.Labels.DC != "east" {
+		t.Errorf("labels %+v", n.Labels)
+	}
+	if n.Networks["dc1-lan"] == nil || n.Networks["east-lan"] == nil || n.Processes["consul"] == nil {
+		t.Fatalf("not an agent of dc1: %+v", n.Networks)
+	}
+	if d := n.Processes["vault"].DependsOn["east-vault-2/consul"]; d == nil || d.Condition != "ready" {
+		t.Error("vault doesn't wait for its agent")
+	}
+	c := vaultConfigOf(t, n.Files)["storage"].(map[string]any)["consul"].(map[string]any)
+	if c["address"] != "127.0.0.1:8501" || c["scheme"] != "https" || c["token"] == nil || c["path"] != "vault-east/" {
+		t.Errorf("storage %v", c)
+	}
+}

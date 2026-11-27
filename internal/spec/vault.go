@@ -22,9 +22,10 @@ type Vault struct {
 
 // VaultSettings are the settings a cluster can inherit from defaults.
 type VaultSettings struct {
-	// Storage is raft (integrated storage, the default; Vault 1.4+) or
-	// file (one server, no HA).
-	Storage string `yaml:"storage,omitempty" jsonschema:"enum=raft,enum=file"`
+	// Storage is raft (integrated storage, the default; Vault 1.4+), file
+	// (one server, no HA), or {consul: DC}: the Consul datacenter DC keeps
+	// the data, through a Consul client agent beside each server.
+	Storage VaultStorage `yaml:"storage,omitempty"`
 	// UI serves the Vault web UI; default true.
 	UI *bool `yaml:"ui,omitempty"`
 	// LogLevel of the servers: trace, debug, info, warn or error.
@@ -57,9 +58,64 @@ type VaultCluster struct {
 
 // Vault storage backends.
 const (
-	VaultStorageRaft = "raft"
-	VaultStorageFile = "file"
+	VaultStorageRaft   = "raft"
+	VaultStorageFile   = "file"
+	VaultStorageConsul = "consul"
 )
+
+// VaultStorage is raft, file, or {consul: DC}.
+type VaultStorage struct {
+	// Kind is raft, file or consul; "" when unset.
+	Kind string
+	// Consul is the datacenter of consul storage.
+	Consul string
+}
+
+func (s *VaultStorage) UnmarshalYAML(unmarshal func(any) error) error {
+	var k string
+	if err := unmarshal(&k); err == nil {
+		*s = VaultStorage{Kind: k}
+		return nil
+	}
+	var m struct {
+		Consul string `yaml:"consul"`
+	}
+	if err := unmarshal(&m); err != nil {
+		return fmt.Errorf("storage: want raft, file or {consul: DC}")
+	}
+	*s = VaultStorage{Kind: VaultStorageConsul, Consul: m.Consul}
+	return nil
+}
+
+func (s VaultStorage) MarshalYAML() (any, error) {
+	if s.Kind == VaultStorageConsul {
+		return map[string]string{"consul": s.Consul}, nil
+	}
+	return s.Kind, nil
+}
+
+// IsZero leaves an unset storage out of marshalled lab files.
+func (s VaultStorage) IsZero() bool { return s == VaultStorage{} }
+
+// ConsulStorage is each Consul datacenter's Vault servers that keep their
+// data in it: the servers' node keys, by datacenter.
+func (f *File) ConsulStorage() map[string][]string {
+	if f.Vault == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(f.Vault.Clusters)) {
+		c := f.Vault.Clusters[name]
+		s := f.Vault.Settings(name)
+		if c == nil || c.Dev || s.Storage.Kind != VaultStorageConsul {
+			continue
+		}
+		for k := range c.ServerCount() {
+			out[s.Storage.Consul] = append(out[s.Storage.Consul], VaultNodeKey(name, k+1))
+		}
+	}
+	return out
+}
 
 // Settings is the cluster's settings over the defaults.
 func (v *Vault) Settings(name string) VaultSettings {
@@ -71,7 +127,7 @@ func (v *Vault) Settings(name string) VaultSettings {
 	if c == nil {
 		return s
 	}
-	if c.Storage != "" {
+	if c.Storage.Kind != "" {
 		s.Storage = c.Storage
 	}
 	if c.UI != nil {
@@ -91,8 +147,8 @@ func (v *Vault) Settings(name string) VaultSettings {
 		maps.Copy(merged, c.Config)
 		s.Config = merged
 	}
-	if s.Storage == "" {
-		s.Storage = VaultStorageRaft
+	if s.Storage.Kind == "" {
+		s.Storage.Kind = VaultStorageRaft
 	}
 	return s
 }
@@ -141,11 +197,27 @@ func (f *File) validateVault(add func(string, ...any)) {
 		if c.Dev && c.Servers > 1 {
 			add("%s: dev: true runs one server (got servers: %d)", where, c.Servers)
 		}
-		if s.Storage == VaultStorageFile && c.ServerCount() > 1 {
-			add("%s: storage: file has no HA, so one server only (got servers: %d); use raft, or consul storage for Vault before 1.4", where, c.Servers)
+		switch s.Storage.Kind {
+		case VaultStorageRaft, VaultStorageFile:
+		case VaultStorageConsul:
+			if c.Dev {
+				add("%s: dev: true keeps its data in memory; leave storage out", where)
+			}
+			var dc *Datacenter
+			if f.Consul != nil {
+				dc = f.Consul.Datacenters[s.Storage.Consul]
+			}
+			if s.Storage.Consul == "" || dc == nil {
+				add("%s.storage.consul: %q is not a Consul datacenter of this lab (consul.datacenters)", where, s.Storage.Consul)
+			}
+		default:
+			add("%s.storage: %q is not raft, file or {consul: DC}", where, s.Storage.Kind)
 		}
-		if s.Storage == VaultStorageRaft && !c.Dev && version != "" && !VaultAtLeast(version, 1, 4) {
-			add("%s: integrated storage (raft) needs Vault 1.4 or later (versions.vault is %s); use storage: file for one server", where, version)
+		if s.Storage.Kind == VaultStorageFile && c.ServerCount() > 1 {
+			add("%s: storage: file has no HA, so one server only (got servers: %d); use raft, or storage: {consul: DC} for Vault before 1.4", where, c.Servers)
+		}
+		if s.Storage.Kind == VaultStorageRaft && !c.Dev && version != "" && !VaultAtLeast(version, 1, 4) {
+			add("%s: integrated storage (raft) needs Vault 1.4 or later (versions.vault is %s); use storage: {consul: DC} for HA, or storage: file for one server", where, version)
 		}
 	}
 }
