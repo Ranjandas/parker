@@ -48,7 +48,7 @@ func newRoot() *cobra.Command {
 	root.PersistentFlags().StringArrayVar(&overlayFlags, "overlay", nil, "merge an overlay file over FILE (maps merge, lists replace); repeatable, in order")
 	root.PersistentFlags().StringArrayVar(&setFlags, "set", nil, "set a value over FILE and overlays: PATH=VALUE or SELECTOR:PATH=VALUE (dc1/web:service.port=9000); repeatable")
 	root.PersistentFlags().StringVar(&hostFlag, "host", "", "daemon to use: unix:///path or https://host:port (default $PARKER_HOST, else the local socket)")
-	root.AddCommand(versionCmd(), tuiCmd(), uiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), dataplaneHealthCmd(), runCmd(), faultCmd(), fakeCmd(), callCmd(), sidecarCmd(), machineCmd())
+	root.AddCommand(versionCmd(), tuiCmd(), uiCmd(), describeCmd(), initCmd(), schemaCmd(), upCmd(), downCmd(), pruneCmd(), expandCmd(), validateCmd(), execCmd(), statusCmd(), logsCmd(), proxyCmd(), portForwardCmd(), daemonCmd(), fetchCmd(), fakeServiceCmd(), aclSetupCmd(), configEntriesCmd(), tenancyCmd(), vaultInitCmd(), dataplaneHealthCmd(), runCmd(), faultCmd(), fakeCmd(), callCmd(), sidecarCmd(), machineCmd())
 	return root
 }
 

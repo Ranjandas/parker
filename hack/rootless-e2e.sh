@@ -30,6 +30,34 @@ $P daemon status
 echo "--- status"
 $P status "$F"
 first=$($P status "$F" | awk 'NR>2 && $3=="consul" && !n++ {print $1}')   # a node with an agent
+if [ -z "$first" ] && grep "^vault:" "$F" >/dev/null; then
+  # A Vault-only lab: its own checks, then the scenario and a re-up.
+  v1=$($P status "$F" | awk 'NR>2 && $3=="vault" && !n++ {print $1}')
+  echo "--- vault status (from $v1)"
+  $P exec "$F" "$v1" -- vault status </dev/null
+  for n in $($P status "$F" | awk 'NR>2 && $3=="vault" {print $1}'); do
+    $P exec "$F" "$n" -- vault status </dev/null | grep -E "^Sealed +false" >/dev/null || { echo "$n is sealed" >&2; exit 1; }
+  done
+  echo "every server unsealed"
+  $P exec "$F" "$v1" -- sh -c 'vault token lookup >/dev/null && echo "root token works"' </dev/null
+  if grep "^scenario:" "$F" >/dev/null; then
+    echo "--- scenario"
+    $P run --no-up "$F"
+  fi
+  echo "--- re-up is idempotent"
+  $P up "$F" >/dev/null && echo ok
+  echo "--- down and resume: the cluster unseals again, its data kept"
+  lab=$($P status "$F" | awk 'NR==1 {sub(":", "", $2); print $2}')
+  $P exec "$F" "$v1" -- vault secrets enable -path=kept kv </dev/null >/dev/null
+  $P down "$lab" >/dev/null
+  $P up "$lab" >/dev/null
+  $P exec "$lab" "$v1" -- vault status </dev/null | grep -E "^Sealed +false" >/dev/null
+  $P exec "$lab" "$v1" -- vault secrets list </dev/null | grep "^kept/" >/dev/null
+  echo "resumed, unsealed, data kept"
+  $P down "$lab"
+  echo PASS
+  exit 0
+fi
 echo "--- consul members (from $first)"
 $P exec "$F" "$first" -- consul members
 echo "--- selectors"

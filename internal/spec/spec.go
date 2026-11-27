@@ -43,6 +43,8 @@ type File struct {
 
 	// Consul is the high-level description: datacenters, nodes, services.
 	Consul *Consul `yaml:"consul,omitempty"`
+	// Vault describes Vault clusters, each on its own network.
+	Vault *Vault `yaml:"vault,omitempty"`
 
 	// Networks are extra low-level bridges, keyed by name.
 	Networks map[string]*Network `yaml:"networks,omitempty"`

@@ -1731,6 +1731,115 @@
         "on",
         "to"
       ]
+    },
+    "Vault": {
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/VaultSettings",
+          "description": "Defaults apply to every cluster unless it sets its own."
+        },
+        "clusters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/VaultCluster"
+          },
+          "type": "object",
+          "description": "Clusters keyed by name (e.g. east). Cluster names and Consul\ndatacenter names share one name space, so selectors such as\neast/vault-2 need no product prefix."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "clusters"
+      ],
+      "description": "Vault is the vault: section: Vault clusters, each on its own network."
+    },
+    "VaultCluster": {
+      "properties": {
+        "storage": {
+          "type": "string",
+          "enum": [
+            "raft",
+            "file"
+          ],
+          "description": "Storage is raft (integrated storage, the default; Vault 1.4+) or\nfile (one server, no HA)."
+        },
+        "ui": {
+          "type": "boolean",
+          "description": "UI serves the Vault web UI; default true."
+        },
+        "log_level": {
+          "type": "string",
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "LogLevel of the servers: trace, debug, info, warn or error."
+        },
+        "config": {
+          "type": "object",
+          "description": "Config is merged into every server's configuration as is, in\nVault's JSON form (e.g. {default_lease_ttl: 1h})."
+        },
+        "servers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Servers is the number of Vault servers (default 1). Parker\ninitialises the cluster and unseals every server."
+        },
+        "dev": {
+          "type": "boolean",
+          "description": "Dev runs one server in dev mode: in memory, unsealed, no init."
+        },
+        "subnet": {
+          "type": "string",
+          "description": "Subnet of the cluster's LAN, e.g. 10.64.0.0/24. Leave it out and\nParker picks one, moving it to a free subnet when another running\nlab or the host already uses it."
+        },
+        "meta": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Meta is metadata for the cluster's nodes, matched by meta:KEY=VALUE\nselectors."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultCluster is one Vault cluster."
+    },
+    "VaultSettings": {
+      "properties": {
+        "storage": {
+          "type": "string",
+          "enum": [
+            "raft",
+            "file"
+          ],
+          "description": "Storage is raft (integrated storage, the default; Vault 1.4+) or\nfile (one server, no HA)."
+        },
+        "ui": {
+          "type": "boolean",
+          "description": "UI serves the Vault web UI; default true."
+        },
+        "log_level": {
+          "type": "string",
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "LogLevel of the servers: trace, debug, info, warn or error."
+        },
+        "config": {
+          "type": "object",
+          "description": "Config is merged into every server's configuration as is, in\nVault's JSON form (e.g. {default_lease_ttl: 1h})."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultSettings are the settings a cluster can inherit from defaults."
     }
   },
   "properties": {
@@ -1772,6 +1881,10 @@
     "consul": {
       "$ref": "#/$defs/Consul",
       "description": "Consul is the high-level description: datacenters, nodes, services."
+    },
+    "vault": {
+      "$ref": "#/$defs/Vault",
+      "description": "Vault describes Vault clusters, each on its own network."
     },
     "networks": {
       "additionalProperties": {
