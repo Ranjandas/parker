@@ -85,6 +85,7 @@ type Server struct {
 	faults Faults
 	inj    *injector
 	facts  *factTeller
+	gate   *gate
 }
 
 func New(cfg *Config) *Server {
@@ -100,6 +101,7 @@ func New(cfg *Config) *Server {
 		faults:  cfg.Faults,
 		inj:     newInjector(cfg.Seed),
 		facts:   newFactTeller(cfg.Version, uint64(cfg.Seed)),
+		gate:    newGate(),
 	}
 	s.level.Store(int32(cfg.LogLevel))
 	return s
@@ -148,7 +150,7 @@ func (s *Server) SetFaults(f Faults) {
 // health check, over HTTP/2 without TLS.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.serve)
+	mux.HandleFunc("/", s.pooled(s.serve))
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/ready", s.ready)
 	mux.HandleFunc("/ui", s.ui)
@@ -167,7 +169,8 @@ func (s *Server) ListenAndServe() error {
 	if s.cfg.Protocol == "tcp" {
 		return s.serveTCP(addr)
 	}
-	srv := &http.Server{Addr: addr, Handler: s.Handler(), Protocols: new(http.Protocols), MaxHeaderBytes: maxHeaderCap}
+	srv := &http.Server{Addr: addr, Handler: s.Handler(), Protocols: new(http.Protocols)}
+	s.configure(srv)
 	srv.Protocols.SetHTTP1(true)
 	srv.Protocols.SetUnencryptedHTTP2(true)
 	return srv.ListenAndServe()
@@ -194,8 +197,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(HeaderRequestID, id)
 	w.WriteHeader(resp.Code)
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = writeBody(w, resp)
 }
+
+func writeBody(w http.ResponseWriter, r *Response) error { return json.NewEncoder(w).Encode(r) }
 
 // handle answers one request (HTTP or gRPC): faults, then upstreams.
 func (s *Server) handle(r *http.Request, typ string) (*Response, string) {

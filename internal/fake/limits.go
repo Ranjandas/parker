@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -34,17 +35,35 @@ type Limits struct {
 	URLCode         int    `json:"url_code"`
 	BodyCode        int    `json:"body_code"`
 	FormCode        int    `json:"form_code"`
+	// Concurrent requests at once, Queue waiting beyond that, and what
+	// a refused one gets (WhenFull refuse or answer, with FullCode).
+	Concurrent int    `json:"max_concurrent,omitempty"`
+	Queue      int    `json:"queue,omitempty"`
+	WhenFull   string `json:"when_full,omitempty"`
+	FullCode   int    `json:"full_code"`
+	// PerConn closes a keep-alive connection after this many requests.
+	PerConn int `json:"max_requests_per_conn,omitempty"`
+	// IdleTimeout, HeaderTimeout and H2Streams are the server's, set at
+	// start.
+	IdleTimeout   time.Duration `json:"idle_timeout,omitempty"`
+	HeaderTimeout time.Duration `json:"header_timeout,omitempty"`
+	H2Streams     int           `json:"h2_max_streams,omitempty"`
 }
 
 // DefaultLimits is no limits, with the codes a limit answers once set.
 func DefaultLimits() Limits {
 	return Limits{HeaderCode: http.StatusRequestHeaderFieldsTooLarge, URLCode: http.StatusRequestURITooLong,
-		BodyCode: http.StatusRequestEntityTooLarge, FormCode: http.StatusBadRequest}
+		BodyCode: http.StatusRequestEntityTooLarge, FormCode: http.StatusBadRequest, FullCode: http.StatusServiceUnavailable, WhenFull: "refuse"}
 }
 
 // On reports whether any limit is set.
 func (l Limits) On() bool {
-	return l.Profile != "" || l.HeaderBytes > 0 || l.HeaderLineBytes > 0 || l.HeaderCount > 0 || l.URLBytes > 0 || l.BodyBytes > 0 || l.FormParams > 0
+	return l.Profile != "" || l.sizeOn() || l.Concurrent > 0 || l.PerConn > 0 || l.IdleTimeout > 0 || l.HeaderTimeout > 0 || l.H2Streams > 0
+}
+
+// sizeOn reports whether any request size limit is set.
+func (l Limits) sizeOn() bool {
+	return l.HeaderBytes > 0 || l.HeaderLineBytes > 0 || l.HeaderCount > 0 || l.URLBytes > 0 || l.BodyBytes > 0 || l.FormParams > 0
 }
 
 func (l *Limits) apply(sl *spec.FakeLimits) error {
@@ -84,7 +103,9 @@ func (l *Limits) apply(sl *spec.FakeLimits) error {
 		name string
 		v    *int
 		dst  *int
-	}{{"max_header_count", sl.MaxHeaderCount, &l.HeaderCount}, {"max_form_params", sl.MaxFormParams, &l.FormParams}} {
+	}{{"max_header_count", sl.MaxHeaderCount, &l.HeaderCount}, {"max_form_params", sl.MaxFormParams, &l.FormParams},
+		{"max_concurrent", sl.MaxConcurrent, &l.Concurrent}, {"queue", sl.Queue, &l.Queue},
+		{"max_requests_per_conn", sl.MaxRequestsPerConn, &l.PerConn}, {"h2_max_streams", sl.H2MaxStreams, &l.H2Streams}} {
 		if c.v == nil {
 			continue
 		}
@@ -93,12 +114,32 @@ func (l *Limits) apply(sl *spec.FakeLimits) error {
 		}
 		*c.dst = *c.v
 	}
+	switch sl.WhenFull {
+	case "":
+	case "refuse", "answer":
+		l.WhenFull = sl.WhenFull
+	default:
+		return fmt.Errorf("limits.when_full: want refuse or answer, got %q", sl.WhenFull)
+	}
+	for _, d := range []struct {
+		name, v string
+		dst     *time.Duration
+	}{{"idle_timeout", sl.IdleTimeout, &l.IdleTimeout}, {"header_timeout", sl.HeaderTimeout, &l.HeaderTimeout}} {
+		if d.v == "" {
+			continue
+		}
+		v, err := parseDur("limits."+d.name, d.v)
+		if err != nil {
+			return err
+		}
+		*d.dst = v
+	}
 	if c := sl.Codes; c != nil {
 		for _, k := range []struct {
 			name string
 			v    int
 			dst  *int
-		}{{"header", c.Header, &l.HeaderCode}, {"url", c.URL, &l.URLCode}, {"body", c.Body, &l.BodyCode}, {"form", c.Form, &l.FormCode}} {
+		}{{"header", c.Header, &l.HeaderCode}, {"url", c.URL, &l.URLCode}, {"body", c.Body, &l.BodyCode}, {"form", c.Form, &l.FormCode}, {"full", c.Full, &l.FullCode}} {
 			if err := checkCode("limits.codes."+k.name, k.v); err != nil {
 				return err
 			}
@@ -124,6 +165,25 @@ func (l Limits) summary() string {
 	add(l.URLBytes > 0, "url "+spec.ByteSize(l.URLBytes).String(), l.URLCode)
 	add(l.BodyBytes > 0, "body "+spec.ByteSize(l.BodyBytes).String(), l.BodyCode)
 	add(l.FormParams > 0, fmt.Sprintf("%d params", l.FormParams), l.FormCode)
+	if l.Concurrent > 0 {
+		full := "refused"
+		if l.WhenFull == "answer" {
+			full = fmt.Sprint(l.FullCode)
+		}
+		parts = append(parts, fmt.Sprintf("%d at once + %d queued (%s)", l.Concurrent, l.Queue, full))
+	}
+	if l.PerConn > 0 {
+		parts = append(parts, fmt.Sprintf("%d requests per connection", l.PerConn))
+	}
+	if l.IdleTimeout > 0 {
+		parts = append(parts, "idle "+shortDur(l.IdleTimeout))
+	}
+	if l.HeaderTimeout > 0 {
+		parts = append(parts, "header timeout "+shortDur(l.HeaderTimeout))
+	}
+	if l.H2Streams > 0 {
+		parts = append(parts, fmt.Sprintf("%d h2 streams", l.H2Streams))
+	}
 	if l.Profile != "" {
 		return l.Profile + ": " + strings.Join(parts, ", ")
 	}
@@ -153,7 +213,7 @@ func (l Limits) name(key string) string {
 // body or form limit needs it: a form body is put back for whoever reads
 // it next, any other is consumed.
 func (l Limits) check(r *http.Request) *refusal {
-	if !l.On() {
+	if !l.sizeOn() {
 		return nil
 	}
 	uri := r.RequestURI
@@ -253,4 +313,15 @@ func params(s string) int {
 		}
 	}
 	return n
+}
+
+// shortDur writes 75s as 75s and 2m as 2m, not 1m15s or 2m0s.
+func shortDur(d time.Duration) string {
+	switch {
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	case d%time.Second == 0:
+		return fmt.Sprintf("%ds", d/time.Second)
+	}
+	return d.String()
 }

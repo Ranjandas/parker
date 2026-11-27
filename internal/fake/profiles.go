@@ -4,6 +4,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // profile is a server's stock request limits, with the names of its own
@@ -21,65 +22,70 @@ type profile struct {
 var profiles = map[string]profile{
 	"tomcat": {
 		title:  "Apache Tomcat HTTP connector",
-		limits: Limits{HeaderBytes: 8192, HeaderCount: 100, FormParams: 10000, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderBytes: 8192, HeaderCount: 100, FormParams: 10000, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400, Concurrent: 200, Queue: 100, WhenFull: "refuse", FullCode: 503, PerConn: 100, IdleTimeout: 20 * time.Second, HeaderTimeout: 20 * time.Second},
 		settings: map[string]string{"max_header_bytes": "maxHttpHeaderSize", "max_header_count": "maxHeaderCount",
-			"max_form_params": "maxParameterCount"},
+			"max_form_params": "maxParameterCount", "max_concurrent": "maxThreads", "max_requests_per_conn": "maxKeepAliveRequests", "idle_timeout": "keepAliveTimeout", "header_timeout": "connectionTimeout"},
 		source: "https://tomcat.apache.org/tomcat-11.0-doc/config/http.html",
 	},
 	"nginx": {
 		title:  "nginx",
-		limits: Limits{HeaderLineBytes: 8192, HeaderBytes: 4 * 8192, URLBytes: 8192, BodyBytes: 1 << 20, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderLineBytes: 8192, HeaderBytes: 4 * 8192, URLBytes: 8192, BodyBytes: 1 << 20, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", PerConn: 1000, IdleTimeout: 75 * time.Second, HeaderTimeout: 60 * time.Second},
 		settings: map[string]string{"max_header_line_bytes": "large_client_header_buffers", "max_header_bytes": "large_client_header_buffers",
-			"max_url_bytes": "large_client_header_buffers", "max_body_bytes": "client_max_body_size"},
+			"max_url_bytes": "large_client_header_buffers", "max_body_bytes": "client_max_body_size", "max_requests_per_conn": "keepalive_requests", "idle_timeout": "keepalive_timeout", "header_timeout": "client_header_timeout"},
 		source: "https://nginx.org/en/docs/http/ngx_http_core_module.html",
 	},
 	"apache": {
 		title:  "Apache httpd",
-		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 8190, BodyBytes: 1 << 30, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 8190, BodyBytes: 1 << 30, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", PerConn: 100, IdleTimeout: 5 * time.Second},
 		settings: map[string]string{"max_header_line_bytes": "LimitRequestFieldSize", "max_header_count": "LimitRequestFields",
-			"max_url_bytes": "LimitRequestLine", "max_body_bytes": "LimitRequestBody"},
+			"max_url_bytes": "LimitRequestLine", "max_body_bytes": "LimitRequestBody", "max_requests_per_conn": "MaxKeepAliveRequests", "idle_timeout": "KeepAliveTimeout"},
 		source: "https://httpd.apache.org/docs/2.4/mod/core.html",
 	},
 	"node": {
 		title:    "Node.js http server",
-		limits:   Limits{HeaderBytes: 16 << 10, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
-		settings: map[string]string{"max_header_bytes": "maxHeaderSize"},
+		limits:   Limits{HeaderBytes: 16 << 10, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", IdleTimeout: 5 * time.Second, HeaderTimeout: 60 * time.Second},
+		settings: map[string]string{"max_header_bytes": "maxHeaderSize", "idle_timeout": "keepAliveTimeout", "header_timeout": "headersTimeout"},
 		source:   "https://nodejs.org/api/http.html#httpmaxheadersize",
 	},
 	"envoy": {
 		title:    "Envoy",
-		limits:   Limits{HeaderBytes: 60 << 10, HeaderCount: 100, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits:   Limits{HeaderBytes: 60 << 10, HeaderCount: 100, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse"},
 		settings: map[string]string{"max_header_bytes": "max_request_headers_kb", "max_header_count": "max_headers_count"},
 		source:   "https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto",
 	},
 	"go": {
 		title:    "Go net/http",
-		limits:   Limits{HeaderBytes: 1 << 20, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits:   Limits{HeaderBytes: 1 << 20, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse"},
 		settings: map[string]string{"max_header_bytes": "MaxHeaderBytes"},
 		source:   "https://pkg.go.dev/net/http#DefaultMaxHeaderBytes",
 	},
 	"alb": {
 		title:  "AWS Application Load Balancer",
-		limits: Limits{HeaderLineBytes: 16 << 10, HeaderBytes: 64 << 10, URLBytes: 16 << 10, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderLineBytes: 16 << 10, HeaderBytes: 64 << 10, URLBytes: 16 << 10, HeaderCode: 400, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", IdleTimeout: 60 * time.Second},
 		settings: map[string]string{"max_header_line_bytes": "single header quota", "max_header_bytes": "request header quota",
-			"max_url_bytes": "request line quota"},
+			"max_url_bytes": "request line quota", "idle_timeout": "idle timeout"},
 		source: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html",
 	},
 	"kestrel": {
 		title:  "ASP.NET Core Kestrel",
-		limits: Limits{HeaderBytes: 32 << 10, HeaderCount: 100, URLBytes: 8 << 10, BodyBytes: 30_000_000, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderBytes: 32 << 10, HeaderCount: 100, URLBytes: 8 << 10, BodyBytes: 30_000_000, HeaderCode: 431, URLCode: 414, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", IdleTimeout: 2 * time.Minute, HeaderTimeout: 30 * time.Second},
 		settings: map[string]string{"max_header_bytes": "MaxRequestHeadersTotalSize", "max_header_count": "MaxRequestHeaderCount",
-			"max_url_bytes": "MaxRequestLineSize", "max_body_bytes": "MaxRequestBodySize"},
+			"max_url_bytes": "MaxRequestLineSize", "max_body_bytes": "MaxRequestBodySize", "idle_timeout": "KeepAliveTimeout", "header_timeout": "RequestHeadersTimeout"},
 		source: "https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserverlimits",
 	},
 	"gunicorn": {
 		title:  "Gunicorn",
-		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 4094, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400},
+		limits: Limits{HeaderLineBytes: 8190, HeaderCount: 100, URLBytes: 4094, HeaderCode: 400, URLCode: 400, BodyCode: 413, FormCode: 400, FullCode: 503, WhenFull: "refuse", IdleTimeout: 2 * time.Second},
 		settings: map[string]string{"max_header_line_bytes": "limit_request_field_size", "max_header_count": "limit_request_fields",
-			"max_url_bytes": "limit_request_line"},
+			"max_url_bytes": "limit_request_line", "idle_timeout": "keep_alive"},
 		source: "https://docs.gunicorn.org/en/stable/settings.html",
 	},
 }
+
+// limitKeys are the limits a profile can name a setting for, in the
+// guide's order.
+var limitKeys = []string{"max_header_bytes", "max_header_line_bytes", "max_header_count", "max_url_bytes", "max_body_bytes", "max_form_params",
+	"max_concurrent", "max_requests_per_conn", "idle_timeout", "header_timeout"}
 
 // ProfileNames lists the profiles, sorted.
 func ProfileNames() []string { return slices.Sorted(maps.Keys(profiles)) }
@@ -90,7 +96,7 @@ func profileRow(name string) string {
 	p := profiles[name]
 	l := p.limits
 	var sets []string
-	for _, k := range []string{"max_header_bytes", "max_header_line_bytes", "max_header_count", "max_url_bytes", "max_body_bytes", "max_form_params"} {
+	for _, k := range limitKeys {
 		if s := p.settings[k]; s != "" && !slices.Contains(sets, "`"+s+"`") {
 			sets = append(sets, "`"+s+"`")
 		}

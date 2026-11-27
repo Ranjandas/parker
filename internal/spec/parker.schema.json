@@ -641,6 +641,12 @@
           "maximum": 599,
           "minimum": 100,
           "description": "Form is for form parameters; default 400."
+        },
+        "full": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100,
+          "description": "Full is for a request refused because every worker and queue slot\nis busy, with when_full: answer or over HTTP/2; default 503."
         }
       },
       "additionalProperties": false,
@@ -726,6 +732,42 @@
           "type": "integer",
           "minimum": 0,
           "description": "MaxFormParams bounds the query and form body parameters together\n(Tomcat's maxParameterCount)."
+        },
+        "max_concurrent": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "MaxConcurrent is how many requests are handled at once, like a\nserver's worker threads (Tomcat's maxThreads). Health checks and the\nfake's page don't count."
+        },
+        "queue": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Queue is how many requests wait for a free worker beyond\nmax_concurrent (Tomcat's acceptCount); the rest are refused."
+        },
+        "when_full": {
+          "type": "string",
+          "enum": [
+            "refuse",
+            "answer"
+          ],
+          "description": "WhenFull is what a refused request gets: refuse (default: the\nconnection is closed unanswered, as a full accept queue does; over\nHTTP/2 it answers codes.full) or answer (codes.full)."
+        },
+        "max_requests_per_conn": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "MaxRequestsPerConn closes a keep-alive connection after this many\nrequests (Tomcat's maxKeepAliveRequests); HTTP/1.1 only."
+        },
+        "idle_timeout": {
+          "type": "string",
+          "description": "IdleTimeout closes a keep-alive connection idle this long, e.g. 20s.\nSet at start only."
+        },
+        "header_timeout": {
+          "type": "string",
+          "description": "HeaderTimeout closes a connection that hasn't sent its headers in\nthis long (a slow client), e.g. 60s. Set at start only."
+        },
+        "h2_max_streams": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "H2MaxStreams is HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS, for\nprotocol: grpc (default 100 or more, Go's own). Set at start only."
         },
         "codes": {
           "$ref": "#/$defs/FakeLimitCodes",
