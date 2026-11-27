@@ -29,6 +29,9 @@ type VaultSettings struct {
 	UI *bool `yaml:"ui,omitempty"`
 	// LogLevel of the servers: trace, debug, info, warn or error.
 	LogLevel string `yaml:"log_level,omitempty" jsonschema:"enum=trace,enum=debug,enum=info,enum=warn,enum=error"`
+	// TLS serves the Vault API over HTTPS with a certificate from the lab
+	// CA (the one Consul's TLS uses too); default off.
+	TLS *bool `yaml:"tls,omitempty"`
 	// Config is merged into every server's configuration as is, in
 	// Vault's JSON form (e.g. {default_lease_ttl: 1h}).
 	Config map[string]any `yaml:"config,omitempty"`
@@ -77,6 +80,9 @@ func (v *Vault) Settings(name string) VaultSettings {
 	if c.LogLevel != "" {
 		s.LogLevel = c.LogLevel
 	}
+	if c.TLS != nil {
+		s.TLS = c.TLS
+	}
 	if c.Config != nil {
 		merged := maps.Clone(s.Config)
 		if merged == nil {
@@ -90,6 +96,9 @@ func (v *Vault) Settings(name string) VaultSettings {
 	}
 	return s
 }
+
+// TLSOn reports whether the settings turn TLS on.
+func (s VaultSettings) TLSOn() bool { return s.TLS != nil && *s.TLS }
 
 // ServerCount is the cluster's number of servers (1 when unset).
 func (c *VaultCluster) ServerCount() int {
@@ -126,6 +135,9 @@ func (f *File) validateVault(add func(string, ...any)) {
 			continue
 		}
 		s := v.Settings(name)
+		if c.Dev && s.TLSOn() {
+			add("%s: tls is not supported with dev: true", where)
+		}
 		if c.Dev && c.Servers > 1 {
 			add("%s: dev: true runs one server (got servers: %d)", where, c.Servers)
 		}

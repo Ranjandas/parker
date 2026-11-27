@@ -66,12 +66,16 @@ down. The [lab builder](lab-builder.md) writes and edits lab files.
 ## Open links
 
 Nodes that serve a web UI get **Open** links: the Consul UI on each
-server, and each service's port. The daemon proxies them from inside the
+server, the Vault UI on each [Vault server](vault.md), and each
+service's port. The daemon proxies them from inside the
 lab, so they work with a rootless or remote daemon too.
 
 - With [TLS](acl-and-tls.md#tls), the Consul UI opens over HTTPS with
   the lab's CA. With ACLs, a *Copy token* button copies the management
   token to paste into its login.
+- The Vault UI opens over HTTPS when its cluster has `tls: true`. Its
+  *Copy token* button copies the cluster's root token, for the UI's
+  Token login.
 - Each app opens on an address of its own,
   `<node>-<port>--<lab>.parker.localhost`, which browsers send to your
   own machine. That keeps apps apart from each other and from Parker's

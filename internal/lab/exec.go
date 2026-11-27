@@ -65,7 +65,11 @@ func ExecEnv(low *spec.File, node string, base []string, log io.Writer) (path st
 		env = append(env, "CONSUL_HTTP_TOKEN="+tok)
 	}
 	if n := low.Nodes[node]; n != nil && n.Labels != nil && n.Labels.Product == expand.ProductVault {
-		env = append(env, fmt.Sprintf("VAULT_ADDR=http://127.0.0.1:%d", expand.VaultPort))
+		addr, ca := VaultAPI(low, node)
+		env = append(env, "VAULT_ADDR="+addr)
+		if ca != "" {
+			env = append(env, "VAULT_CACERT="+ca)
+		}
 		if tok := VaultToken(low, n.Labels.DC); tok != "" {
 			env = append(env, "VAULT_TOKEN="+tok)
 		}
@@ -227,28 +231,7 @@ func promptEscape(s string) string {
 // VaultToken is the root token Parker made for a Vault cluster, from
 // its first server's vault-init manifest, or a dev server's command line;
 // "" when the lab has no such cluster.
-func VaultToken(low *spec.File, cluster string) string {
-	for _, name := range slices.Sorted(maps.Keys(low.Nodes)) {
-		n := low.Nodes[name]
-		if l := n.Labels; l == nil || l.Product != expand.ProductVault || l.DC != cluster {
-			continue
-		}
-		if m, ok := n.Files[expand.VaultInitManifest]; ok {
-			var s expand.VaultInitSpec
-			if json.Unmarshal([]byte(m), &s) == nil {
-				return s.RootToken
-			}
-		}
-		if p := n.Processes["vault"]; p != nil {
-			for _, a := range p.Run {
-				if tok, ok := strings.CutPrefix(a, "-dev-root-token-id="); ok {
-					return tok
-				}
-			}
-		}
-	}
-	return ""
-}
+func VaultToken(low *spec.File, cluster string) string { return expand.VaultRootToken(low, cluster) }
 
 // VaultUnsealKey is a Vault cluster's unseal key, from the keys file
 // vault-init keeps in its first server's directory; "" before init or

@@ -50,13 +50,14 @@ cluster both called `east`. That keeps [selectors](selectors.md) short:
 | `servers` | `1` | The number of Vault servers. |
 | `storage` | `raft` | `raft` is integrated storage (Vault 1.4 or later). `file` is one server with no HA, for older Vault releases or a plain single-server repro. |
 | `dev` | off | Run one server in dev mode: in memory, unsealed, no init. Its data is gone when it stops. |
-| `ui` | `true` | Serve the Vault web UI. |
+| `ui` | `true` | Serve the Vault web UI, linked from the [web UI](web-ui.md#open-links). |
+| `tls` | off | Serve the API over HTTPS, with a certificate from the lab's CA. See [TLS](#tls). |
 | `log_level` | `info` | `trace`, `debug`, `info`, `warn` or `error`. |
 | `config` | | Merged into every server's configuration as is, in Vault's JSON form. |
 | `subnet` | `10.<64+n>.0.0/24`, or a free subnet when that one is in use | The cluster's LAN. An explicit subnet never moves. |
 | `meta` | | Metadata for the cluster's nodes, matched by [`meta:` selectors](selectors.md#every-selector). |
 
-`defaults:` takes `storage`, `ui`, `log_level` and `config` for every
+`defaults:` takes `storage`, `ui`, `tls`, `log_level` and `config` for every
 cluster; a cluster's own settings win.
 
 ```yaml
@@ -90,6 +91,34 @@ hand is one command:
 ```console
 $ parker exec vault east/vault-2 -- sh -c 'vault operator unseal "$PARKER_VAULT_UNSEAL_KEY"'
 ```
+
+## TLS
+
+`tls: true` serves each server's API over HTTPS. Parker signs every
+server's certificate with the lab's CA, which is the same CA that
+Consul's [TLS](acl-and-tls.md#tls) uses when both are on. The servers
+join each other over HTTPS, and `parker exec` sets `VAULT_ADDR` to
+`https://127.0.0.1:8200` and `VAULT_CACERT` to the CA, so the CLI works
+as before.
+
+```yaml
+parker: v1alpha1
+name: vault-tls
+versions: { vault: 1.21.1 }
+vault:
+  clusters:
+    east: { servers: 3, tls: true }
+```
+
+```console
+$ parker exec vault-tls east/vault-1 -- sh -c 'echo $VAULT_ADDR; vault status -format=json | grep sealed'
+https://127.0.0.1:8200
+  "sealed": false,
+```
+
+A certificate names the server's IP, `localhost`, its short and full node
+names (`vault-1`, `east-vault-1`) and its `parker proxy` names. A dev
+server (`dev: true`) has no TLS.
 
 ## Seal, unseal and step down
 
@@ -142,6 +171,5 @@ vault:
 
 ## Limits
 
-- TLS on the Vault listener isn't there yet: the API is plain HTTP inside the lab.
 - Replication, Enterprise builds, and links to Consul (Connect CA, Consul storage) are planned.
 - The TUI and the topology view show Vault servers as nodes, but don't show seal or HA state yet.

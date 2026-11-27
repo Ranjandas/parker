@@ -491,7 +491,11 @@ func checkOnce(ctx context.Context, r *spec.Ready, dial func(context.Context, st
 		c.Close()
 	}
 	if r.HTTP != nil {
-		resp, err := httpc.Get(r.HTTP.URL)
+		hc, err := withCA(httpc, r.HTTP.CAFile, filepath.Dir(logPath))
+		if err != nil {
+			return err
+		}
+		resp, err := hc.Get(r.HTTP.URL)
 		if err != nil {
 			return err
 		}
@@ -715,13 +719,31 @@ func ConsulConfig(cc *spec.ConsulCheck, httpc *http.Client, nodeDir string) (*ap
 	if !filepath.IsAbs(ca) {
 		ca = filepath.Join(nodeDir, ca)
 	}
-	pemBytes, err := os.ReadFile(ca)
+	hc, err := withCA(httpc, ca, nodeDir)
 	if err != nil {
 		return nil, fmt.Errorf("consul check: %w", err)
 	}
+	cfg.HttpClient = hc
+	cfg.Scheme = "https"
+	return cfg, nil
+}
+
+// withCA is httpc trusting the CA in caFile (relative to nodeDir), or
+// httpc itself when caFile is empty.
+func withCA(httpc *http.Client, caFile, nodeDir string) (*http.Client, error) {
+	if caFile == "" {
+		return httpc, nil
+	}
+	if !filepath.IsAbs(caFile) {
+		caFile = filepath.Join(nodeDir, caFile)
+	}
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("consul check: no certificates in %s", ca)
+		return nil, fmt.Errorf("no certificates in %s", caFile)
 	}
 	t, ok := httpc.Transport.(*http.Transport)
 	if !ok {
@@ -731,7 +753,5 @@ func ConsulConfig(cc *spec.ConsulCheck, httpc *http.Client, nodeDir string) (*ap
 	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	hc := *httpc
 	hc.Transport = t
-	cfg.HttpClient = &hc
-	cfg.Scheme = "https"
-	return cfg, nil
+	return &hc, nil
 }

@@ -265,6 +265,9 @@ func Build(f *spec.File) *Graph {
 				}
 			}
 		}
+		if l, ok := vaultLink(f, rn); ok {
+			n.Links = append(n.Links, l)
+		}
 		// The manifest says which partition each entry is written into.
 		entryPart := map[string]string{}
 		var refs []expand.EntryRef
@@ -672,6 +675,34 @@ func links(cfg agentConfig) []Link {
 		}
 	}
 	return out
+}
+
+// vaultLink is the Vault UI a Vault server serves, signed in with the
+// cluster's root token.
+func vaultLink(f *spec.File, rn *spec.RawNode) (Link, bool) {
+	if rn.Labels == nil || rn.Labels.Product != expand.ProductVault {
+		return Link{}, false
+	}
+	l := Link{Name: "Vault UI", Port: expand.VaultPort, Scheme: "http", Path: "/ui/", Token: expand.VaultRootToken(f, rn.Labels.DC)}
+	raw, ok := rn.Files[expand.VaultConfigFile]
+	if !ok {
+		return l, true // dev mode: the UI is on, over HTTP
+	}
+	var cfg struct {
+		UI       bool `json:"ui"`
+		Listener struct {
+			TCP struct {
+				TLSDisable bool `json:"tls_disable"`
+			} `json:"tcp"`
+		} `json:"listener"`
+	}
+	if json.Unmarshal([]byte(raw), &cfg) != nil || !cfg.UI {
+		return Link{}, false
+	}
+	if !cfg.Listener.TCP.TLSDisable {
+		l.Scheme = "https"
+	}
+	return l, true
 }
 
 // setNS records the namespace of a node's service or gateway, keeping the

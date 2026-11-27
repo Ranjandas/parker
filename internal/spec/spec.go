@@ -1180,6 +1180,9 @@ type HTTPCheck struct {
 	URL string `yaml:"url"`
 	// Status expected; default 200.
 	Status int `yaml:"status,omitempty"`
+	// CAFile verifies an https:// URL's server with this CA; a relative
+	// path is in the node's directory.
+	CAFile string `yaml:"ca_file,omitempty"`
 }
 
 type ConsulCheck struct {

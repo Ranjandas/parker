@@ -3,12 +3,16 @@ package lab
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -54,13 +58,26 @@ func vaultDo(ctx context.Context, low *spec.File, node, method, path string, bod
 	if n == nil || n.Labels == nil || n.Labels.Product != expand.ProductVault {
 		return fmt.Errorf("%s is not a Vault server", node)
 	}
-	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DialContext: supervisor.DialerIn(netsetup.NetnsPath(low.Name, node)), DisableKeepAlives: true}}
+	base, caFile := VaultAPI(low, node)
+	tr := &http.Transport{DialContext: supervisor.DialerIn(netsetup.NetnsPath(low.Name, node)), DisableKeepAlives: true}
+	if caFile != "" {
+		b, err := os.ReadFile(caFile)
+		if err != nil {
+			return fmt.Errorf("%s: %w", node, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(b) {
+			return fmt.Errorf("%s: no certificates in %s", node, caFile)
+		}
+		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
+	cl := &http.Client{Timeout: 5 * time.Second, Transport: tr}
 	var r io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1:"+strconv.Itoa(expand.VaultPort)+path, r)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, r)
 	if err != nil {
 		return err
 	}
@@ -87,6 +104,26 @@ func vaultDo(ctx context.Context, low *spec.File, node, method, path string, bod
 		return json.Unmarshal(b, out)
 	}
 	return nil
+}
+
+// VaultAPI is the address of node's Vault API from inside the node
+// (http or https) and, for https, the CA file that verifies it, both read
+// from the server's readiness check.
+func VaultAPI(low *spec.File, node string) (addr, caFile string) {
+	addr = "http://127.0.0.1:" + strconv.Itoa(expand.VaultPort)
+	n := low.Nodes[node]
+	if n == nil {
+		return addr, ""
+	}
+	p := n.Processes["vault"]
+	if p == nil || p.ReadyWhen == nil || p.ReadyWhen.HTTP == nil || !strings.HasPrefix(p.ReadyWhen.HTTP.URL, "https://") {
+		return addr, ""
+	}
+	addr = "https://127.0.0.1:" + strconv.Itoa(expand.VaultPort)
+	if caFile = p.ReadyWhen.HTTP.CAFile; caFile != "" && !filepath.IsAbs(caFile) {
+		caFile = filepath.Join(supervisor.NodeDir(RunDir(low.Name), node), caFile)
+	}
+	return addr, caFile
 }
 
 // VaultStatus asks node's Vault server for its state.

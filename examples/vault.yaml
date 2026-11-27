@@ -1,6 +1,7 @@
-# A Vault cluster on its own: three servers on integrated storage (raft).
-# Parker initialises the cluster, unseals every server and gives
-# `parker exec` VAULT_ADDR and a root VAULT_TOKEN.
+# Vault on its own: east is three servers on integrated storage (raft)
+# with TLS, west one plain-HTTP server. Parker initialises each cluster,
+# unseals every server and gives `parker exec` VAULT_ADDR, VAULT_CACERT
+# and a root VAULT_TOKEN.
 parker: v1alpha1
 name: vault
 versions: { vault: 1.21.1 }
@@ -8,10 +9,15 @@ vault:
   clusters:
     east:
       servers: 3
+      tls: true
+    west: {}
 
 scenario:
   steps:
     - wait: east ready
+    - assert:
+        exec: { on: west/vault-1, run: "vault status -format=json", output: "\"sealed\": false" }
+        within: 30s
     - exec: { on: east/vault-1, run: "vault operator raft list-peers" }
     - exec: { on: east/vault-2, run: "vault secrets enable -path=secret kv-v2" }
     - exec: { on: east/vault-3, run: "vault kv put secret/hello who=parker" }

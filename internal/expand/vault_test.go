@@ -56,7 +56,7 @@ func TestVaultCluster(t *testing.T) {
 	if err := json.Unmarshal([]byte(low.Nodes["east-vault-1"].Files[VaultInitManifest]), &m); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Addrs) != 3 || m.Addrs[0] != "http://10.64.0.10:8200" || m.RootToken == "" {
+	if len(m.Addrs) != 3 || m.Addrs[0] != "https://10.64.0.10:8200" || m.RootToken == "" || m.CAFile == "" {
 		t.Errorf("manifest %+v", m)
 	}
 }
@@ -109,5 +109,81 @@ vault:
 	}
 	if low.Networks["dc1-lan"].Subnet == low.Networks["east-lan"].Subnet {
 		t.Error("the dc and the cluster share a subnet")
+	}
+}
+
+// TLS: every east server serves a lab-CA certificate for its names and
+// IP, joins over HTTPS trusting the CA, and is checked over HTTPS; west
+// stays plain HTTP.
+func TestVaultTLS(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/vault.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := low.Nodes["east-vault-2"]
+	cert, err := parseCertPEM(n.Files[CertFile])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := parseCertPEM(n.Files[CAFile])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cert.CheckSignatureFrom(ca); err != nil {
+		t.Error(err)
+	}
+	if err := cert.VerifyHostname("10.64.0.11"); err != nil {
+		t.Error(err)
+	}
+	if err := cert.VerifyHostname("vault-2.east.vault.parker"); err != nil {
+		t.Error(err)
+	}
+	cfg := vaultConfigOf(t, n.Files)
+	tcp := cfg["listener"].(map[string]any)["tcp"].(map[string]any)
+	if tcp["tls_disable"] != false || tcp["tls_cert_file"] == nil || tcp["tls_key_file"] == nil {
+		t.Errorf("listener %v", tcp)
+	}
+	for _, j := range cfg["storage"].(map[string]any)["raft"].(map[string]any)["retry_join"].([]any) {
+		j := j.(map[string]any)
+		if !strings.HasPrefix(j["leader_api_addr"].(string), "https://") || j["leader_ca_cert_file"] == nil {
+			t.Errorf("retry_join %v", j)
+		}
+	}
+	if r := n.Processes["vault"].ReadyWhen.HTTP; !strings.HasPrefix(r.URL, "https://") || r.CAFile != CAFile {
+		t.Errorf("ready %+v", r)
+	}
+	w := low.Nodes["west-vault-1"]
+	if _, ok := w.Files[CertFile]; ok || !strings.HasPrefix(w.Processes["vault"].ReadyWhen.HTTP.URL, "http://") {
+		t.Error("west has TLS")
+	}
+}
+
+// One lab CA: Consul's TLS and Vault's chain to the same root, and moving
+// the lab re-signs the Vault certificates too.
+func TestVaultTLSSharesCA(t *testing.T) {
+	low, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7, vault: 1.21.1 }
+consul:
+  defaults: { tls: true }
+  datacenters:
+    dc1: { servers: 1 }
+vault:
+  defaults: { tls: true }
+  clusters:
+    east: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if low.Nodes["dc1-server-1"].Files[CAFile] != low.Nodes["east-vault-1"].Files[CAFile] {
+		t.Error("Consul and Vault have different CAs")
+	}
+	fix := func(ip string) string { return strings.Replace(ip, "10.64.0.", "10.99.0.", 1) }
+	if err := ReissueServerCerts(low, fix); err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := parseCertPEM(low.Nodes["east-vault-1"].Files[CertFile])
+	if err := cert.VerifyHostname("10.99.0.10"); err != nil {
+		t.Error(err)
 	}
 }
