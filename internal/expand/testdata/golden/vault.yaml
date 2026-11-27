@@ -60,7 +60,7 @@ nodes:
           - -config=${node_dir}/vault.json
         ready_when:
           http:
-            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
           timeout: 90s
       vault-init:
         run:
@@ -125,7 +125,7 @@ nodes:
           - -config=${node_dir}/vault.json
         ready_when:
           http:
-            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
           timeout: 90s
     labels:
       product: vault
@@ -175,7 +175,7 @@ nodes:
           - -config=${node_dir}/vault.json
         ready_when:
           http:
-            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
           timeout: 90s
     labels:
       product: vault
@@ -201,3 +201,36 @@ scenario:
           run: vault kv get -field=who secret/hello
           output: parker
         within: 10s
+    - assert:
+        vault:
+          "on": east/active
+          raft_peers: ">=3"
+        within: 60s
+    - vault:
+        step_down: east/active
+    - assert:
+        vault:
+          "on": east/active
+          sealed: false
+        within: 30s
+    - vault:
+        seal: east/standbys
+    - assert:
+        vault:
+          "on": east/standbys
+          sealed: true
+        within: 30s
+    - vault:
+        unseal: east
+    - assert:
+        vault:
+          "on": east
+          sealed: false
+          raft_peers: ">=3"
+        within: 60s
+    - assert:
+        exec:
+          "on": east/active
+          run: vault kv get -field=who secret/hello
+          output: parker
+        within: 30s

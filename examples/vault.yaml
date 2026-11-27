@@ -18,3 +18,16 @@ scenario:
     - assert:
         exec: { on: east/vault-1, run: "vault kv get -field=who secret/hello", output: parker }
         within: 10s
+    # Fail over: the active server steps down, a standby is sealed and
+    # unsealed again, and the secret survives it all.
+    # New servers join as non-voters; wait until all three can lead.
+    - assert: { vault: { on: east/active, raft_peers: ">=3" }, within: 60s }
+    - vault: { step_down: east/active }
+    - assert: { vault: { on: east/active, sealed: false }, within: 30s }
+    - vault: { seal: east/standbys }
+    - assert: { vault: { on: east/standbys, sealed: true }, within: 30s }
+    - vault: { unseal: east }
+    - assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 60s }
+    - assert:
+        exec: { on: east/active, run: "vault kv get -field=who secret/hello", output: parker }
+        within: 30s

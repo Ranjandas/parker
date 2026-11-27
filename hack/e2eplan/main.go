@@ -55,6 +55,7 @@ var (
 		{"internal/expand/vault.go", []string{"examples/vault.yaml"}},
 		{"internal/spec/vault.go", []string{"examples/vault.yaml"}},
 		{"cmd/parker/vaultinit.go", []string{"examples/vault.yaml"}},
+		{"internal/lab/vault.go", []string{"examples/vault.yaml"}},
 		{"internal/expand/dataplane.go", []string{"examples/dataplane.yaml", "hack/e2e/dataplane-secure.yaml"}},
 		{"cmd/parker/dataplanehealth.go", []string{"examples/dataplane.yaml", "hack/e2e/dataplane-secure.yaml", "examples/terminating-failover.yaml"}},
 		{"cmd/parker/aclsetup.go", secure},

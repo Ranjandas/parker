@@ -163,3 +163,40 @@ func VaultAtLeast(version string, major, minor int) bool {
 func VaultNodeKey(cluster string, i int) string {
 	return fmt.Sprintf("%s-vault-%d", cluster, i)
 }
+
+// VaultStep acts on the Vault servers a selector matches. Set one action.
+type VaultStep struct {
+	// Seal seals the servers. Vault seals an active server through its
+	// API; a standby is restarted, as Vault asks, and comes back sealed.
+	Seal string `yaml:"seal,omitempty" json:"seal,omitempty"`
+	// Unseal unseals them with the cluster's key.
+	Unseal string `yaml:"unseal,omitempty" json:"unseal,omitempty"`
+	// StepDown makes the active server among them give up leadership.
+	StepDown string `yaml:"step_down,omitempty" json:"step_down,omitempty"`
+}
+
+// Action is the step's action and selector.
+func (v *VaultStep) Action() (action, sel string) {
+	switch {
+	case v.Seal != "":
+		return "seal", v.Seal
+	case v.Unseal != "":
+		return "unseal", v.Unseal
+	case v.StepDown != "":
+		return "step_down", v.StepDown
+	}
+	return "", ""
+}
+
+// VaultAssert checks the Vault servers a selector matches: each must
+// match every field set.
+type VaultAssert struct {
+	// On is a selector: east, east/vault-2, east/active, ...
+	On string `yaml:"on"`
+	// Sealed: the servers are sealed (true) or unsealed (false).
+	Sealed *bool `yaml:"sealed,omitempty"`
+	// Active: the servers are the active one (true) or standbys (false).
+	Active *bool `yaml:"active,omitempty"`
+	// RaftPeers, e.g. ">=3": voting raft peers, asked of the servers.
+	RaftPeers string `yaml:"raft_peers,omitempty"`
+}

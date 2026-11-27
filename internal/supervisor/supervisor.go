@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -44,6 +45,11 @@ type Options struct {
 	// Life bounds supervision after Run returns: restart policies apply
 	// until it is done or Handle.Stop is called. Nil means Background.
 	Life context.Context
+
+	// runID tells one supervision run from the next: every process gets it
+	// as PARKER_RUN, so a one-shot setup process restarted by a fault can
+	// tell it already ran in this run.
+	runID string
 }
 
 type proc struct {
@@ -148,6 +154,7 @@ func Run(ctx context.Context, f *spec.File, o Options) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
+	o.runID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
 	// Resolve binaries up front so downloads don't count against timeouts.
 	bins := map[string]string{}
@@ -290,7 +297,7 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return err
 	}
-	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node}
+	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node, "PARKER_RUN=" + o.runID}
 	if o.LicensePath != "" {
 		env = append(env, "CONSUL_LICENSE_PATH="+o.LicensePath)
 	}
