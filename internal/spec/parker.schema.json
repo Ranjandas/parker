@@ -769,6 +769,23 @@
           "minimum": 0,
           "description": "H2MaxStreams is HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS, for\nprotocol: grpc (default 100 or more, Go's own). Set at start only."
         },
+        "underscore_headers": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "drop",
+            "reject"
+          ],
+          "description": "UnderscoreHeaders is what happens to a request header with an\nunderscore in its name, such as X_Tenant_Id: allow (default), drop\n(Nginx's default: the app never sees it) or reject (400). A dropped\nheader is named in the answer's dropped_headers."
+        },
+        "strict_cookies": {
+          "type": "boolean",
+          "description": "StrictCookies drops cookies whose name or value breaks RFC 6265\n(a space, comma, backslash or quote inside the value), as Tomcat's\ncookie processor does. They're named in the answer's\ndropped_cookies."
+        },
+        "strict_path_chars": {
+          "type": "boolean",
+          "description": "StrictPathChars answers 400 to a request whose path or query has\none of \" \u003c \u003e [ \\ ] ^ ` { | } unencoded, as Tomcat does unless\nrelaxedPathChars or relaxedQueryChars allow it."
+        },
         "codes": {
           "$ref": "#/$defs/FakeLimitCodes",
           "description": "Codes are the status codes a refused request answers."

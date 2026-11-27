@@ -188,6 +188,9 @@ func mergeFake(a, b *spec.Fake) *spec.Fake {
 		l.IdleTimeout = cmp.Or(bl.IdleTimeout, l.IdleTimeout)
 		l.HeaderTimeout = cmp.Or(bl.HeaderTimeout, l.HeaderTimeout)
 		l.H2MaxStreams = cmp.Or(bl.H2MaxStreams, l.H2MaxStreams)
+		l.UnderscoreHeaders = cmp.Or(bl.UnderscoreHeaders, l.UnderscoreHeaders)
+		l.StrictCookies = cmp.Or(bl.StrictCookies, l.StrictCookies)
+		l.StrictPathChars = cmp.Or(bl.StrictPathChars, l.StrictPathChars)
 		if bl.Codes != nil {
 			c := spec.FakeLimitCodes{}
 			if l.Codes != nil {

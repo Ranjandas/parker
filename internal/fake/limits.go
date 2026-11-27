@@ -48,6 +48,13 @@ type Limits struct {
 	IdleTimeout   time.Duration `json:"idle_timeout,omitempty"`
 	HeaderTimeout time.Duration `json:"header_timeout,omitempty"`
 	H2Streams     int           `json:"h2_max_streams,omitempty"`
+	// Underscores is allow (""), drop or reject for a header with an
+	// underscore in its name; StrictCookies drops cookies outside RFC
+	// 6265; StrictPath refuses unencoded " < > [ \ ] ^ ` { | } in the
+	// request target.
+	Underscores   string `json:"underscore_headers,omitempty"`
+	StrictCookies bool   `json:"strict_cookies,omitempty"`
+	StrictPath    bool   `json:"strict_path_chars,omitempty"`
 }
 
 // DefaultLimits is no limits, with the codes a limit answers once set.
@@ -58,8 +65,11 @@ func DefaultLimits() Limits {
 
 // On reports whether any limit is set.
 func (l Limits) On() bool {
-	return l.Profile != "" || l.sizeOn() || l.Concurrent > 0 || l.PerConn > 0 || l.IdleTimeout > 0 || l.HeaderTimeout > 0 || l.H2Streams > 0
+	return l.Profile != "" || l.sizeOn() || l.Concurrent > 0 || l.PerConn > 0 || l.IdleTimeout > 0 || l.HeaderTimeout > 0 || l.H2Streams > 0 || l.strictOn()
 }
+
+// strictOn reports whether any parsing quirk is on.
+func (l Limits) strictOn() bool { return l.Underscores != "" || l.StrictCookies || l.StrictPath }
 
 // sizeOn reports whether any request size limit is set.
 func (l Limits) sizeOn() bool {
@@ -120,6 +130,21 @@ func (l *Limits) apply(sl *spec.FakeLimits) error {
 		l.WhenFull = sl.WhenFull
 	default:
 		return fmt.Errorf("limits.when_full: want refuse or answer, got %q", sl.WhenFull)
+	}
+	switch sl.UnderscoreHeaders {
+	case "":
+	case "allow":
+		l.Underscores = ""
+	case "drop", "reject":
+		l.Underscores = sl.UnderscoreHeaders
+	default:
+		return fmt.Errorf("limits.underscore_headers: want allow, drop or reject, got %q", sl.UnderscoreHeaders)
+	}
+	if sl.StrictCookies != nil {
+		l.StrictCookies = *sl.StrictCookies
+	}
+	if sl.StrictPathChars != nil {
+		l.StrictPath = *sl.StrictPathChars
 	}
 	for _, d := range []struct {
 		name, v string
@@ -183,6 +208,18 @@ func (l Limits) summary() string {
 	}
 	if l.H2Streams > 0 {
 		parts = append(parts, fmt.Sprintf("%d h2 streams", l.H2Streams))
+	}
+	switch l.Underscores {
+	case "drop":
+		parts = append(parts, "underscore headers dropped")
+	case "reject":
+		parts = append(parts, "underscore headers refused (400)")
+	}
+	if l.StrictCookies {
+		parts = append(parts, "strict cookies")
+	}
+	if l.StrictPath {
+		parts = append(parts, "strict path chars (400)")
 	}
 	if l.Profile != "" {
 		return l.Profile + ": " + strings.Join(parts, ", ")
