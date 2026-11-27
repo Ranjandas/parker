@@ -154,7 +154,7 @@ func (xs externals) nodes(out *spec.File) error {
 		if ns := x.svc.Namespace; ns != "" && ns != spec.DefaultNamespace {
 			nss = []string{ns}
 		}
-		rn.Labels = &spec.NodeLabels{Name: x.name, Role: ExternalRole, Group: x.name, Services: []string{x.name}, Namespaces: nss}
+		rn.Labels = &spec.NodeLabels{Product: ProductConsul, Name: x.name, Role: ExternalRole, Group: x.name, Services: []string{x.name}, Namespaces: nss}
 		out.Nodes[x.name] = rn
 	}
 	return nil

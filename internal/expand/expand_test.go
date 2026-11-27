@@ -440,9 +440,9 @@ func TestNodeLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	for node, want := range map[string]spec.NodeLabels{
-		"dc1-server-2": {DC: "dc1", Name: "server-2", Role: "server"},
-		"dc1-web-2":    {DC: "dc1", Name: "web-2", Role: "client", Group: "web", Services: []string{"web"}},
-		"dc1-client":   {DC: "dc1", Name: "client", Role: "client", Group: "client"},
+		"dc1-server-2": {Product: "consul", DC: "dc1", Name: "server-2", Role: "server"},
+		"dc1-web-2":    {Product: "consul", DC: "dc1", Name: "web-2", Role: "client", Group: "web", Services: []string{"web"}, Meta: map[string]string{"zone": "a"}},
+		"dc1-client":   {Product: "consul", DC: "dc1", Name: "client", Role: "client", Group: "client"},
 	} {
 		if got := low.Nodes[node].Labels; got == nil || !reflect.DeepEqual(*got, want) {
 			t.Errorf("%s labels %+v, want %+v", node, got, want)
@@ -696,5 +696,36 @@ func TestPartitionChecks(t *testing.T) {
 	dc.Partitions["default"].Nodes["team-b-billing"] = &spec.Node{}
 	if _, err := Expand(f); err == nil || !strings.Contains(err.Error(), "two nodes expand to dc1-team-b-billing") {
 		t.Errorf("expanded name clash: %v", err)
+	}
+}
+
+func TestMetaLayers(t *testing.T) {
+	low, err := Expand(loadText(t, `parker: v1alpha1
+versions: { consul: 1.22.7 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      meta: { region: us-east, zone: a }
+      nodes:
+        web: { meta: { zone: b } }
+        api: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for node, want := range map[string]map[string]string{
+		"dc1-server-1": {"region": "us-east", "zone": "a"},
+		"dc1-web":      {"region": "us-east", "zone": "b"},
+		"dc1-api":      {"region": "us-east", "zone": "a"},
+	} {
+		if got := low.Nodes[node].Labels.Meta; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s label meta %v, want %v", node, got, want)
+		}
+		cfg := agentConfig(t, low.Nodes[node])
+		nm, _ := cfg["node_meta"].(map[string]any)
+		if len(nm) != len(want) || nm["region"] != want["region"] || nm["zone"] != want["zone"] {
+			t.Errorf("%s node_meta %v, want %v", node, nm, want)
+		}
 	}
 }

@@ -91,6 +91,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: mesh
       role: gateway
@@ -210,6 +211,7 @@ nodes:
           timeout: 120s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: server-1
       role: server
@@ -326,6 +328,7 @@ nodes:
           timeout: 60s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: web
       role: client
@@ -437,6 +440,7 @@ nodes:
             members: ">=2"
           timeout: 60s
     labels:
+      product: consul
       dc: dc2
       name: api
       role: client
@@ -517,6 +521,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc2
       name: mesh
       role: gateway
@@ -633,6 +638,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc2
       name: server-1
       role: server

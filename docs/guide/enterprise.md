@@ -80,6 +80,7 @@ Each partition takes:
 | `gateways` | Its gateways. Mesh gateways are per partition. |
 | `client` | [Agent configuration](datacenters.md#agent-configuration) for its client agents. |
 | `service_template` | Merged into its services. |
+| `meta` | [Node metadata](datacenters.md#node-metadata) for every node of the partition, over the datacenter's. |
 | `config_entries` | [Config entries](config-entries.md) written into the partition, after the datacenter's. |
 
 Parker creates the partitions as soon as the servers have a leader,

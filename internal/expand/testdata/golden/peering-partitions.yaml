@@ -107,6 +107,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: mesh
       role: gateway
@@ -352,6 +353,7 @@ nodes:
           log: "parker: partitions and namespaces ready"
           timeout: 60s
     labels:
+      product: consul
       dc: dc1
       name: server-1
       role: server
@@ -489,6 +491,7 @@ nodes:
           timeout: 60s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: frontend
       role: client
@@ -588,6 +591,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc1
       name: mesh
       role: gateway
@@ -683,6 +687,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc2
       name: mesh
       role: gateway
@@ -951,6 +956,7 @@ nodes:
           log: "parker: partitions and namespaces ready"
           timeout: 60s
     labels:
+      product: consul
       dc: dc2
       name: server-1
       role: server
@@ -1082,6 +1088,7 @@ nodes:
             token: 00000000-0000-4000-8000-000000000000
           timeout: 60s
     labels:
+      product: consul
       dc: dc2
       name: billing
       role: client
@@ -1183,6 +1190,7 @@ nodes:
           timeout: 90s
         restart: on-failure
     labels:
+      product: consul
       dc: dc2
       name: mesh
       role: gateway

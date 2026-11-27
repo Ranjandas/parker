@@ -2,13 +2,17 @@ package expand
 
 import "github.com/Ranjandas/parker/internal/spec"
 
+// ProductConsul is Consul's product name: its lab file key and the
+// product label of its nodes.
+const ProductConsul = "consul"
+
 func init() { Register(consulProduct{}) }
 
 // consulProduct expands the consul: section (expandConsul and the files
 // next to it).
 type consulProduct struct{}
 
-func (consulProduct) Name() string { return "consul" }
+func (consulProduct) Name() string { return ProductConsul }
 
 func (consulProduct) In(in *spec.File) bool { return in.Consul != nil }
 

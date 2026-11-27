@@ -26,6 +26,7 @@ $ parker logs lab.yaml dc1/servers --level debug
 | `dc1/team-a/billing-1`, `dc1/team-a/billing` | A node or a group inside the admin partition `team-a`. |
 | `part:team-a`, `part:dc1/team-a` | The client agents in a partition; `part:default` for the rest. |
 | `ns:payments`, `ns:dc1/payments` | The nodes that register a service in the namespace `payments`. |
+| `meta:zone=a`, `meta:dc1/zone=a` | The nodes whose [metadata](datacenters.md#node-metadata) has `zone` set to `a`. |
 | `toolbox`, `dc1-server-1` | A node by its full name, including [low-level](low-level.md) nodes. |
 
 ## Where they're used

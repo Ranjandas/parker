@@ -494,11 +494,14 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				version = ov.Version
 			}
 			key := dcName + "-" + name
+			if len(dc.Meta) > 0 {
+				cfg["node_meta"] = dc.Meta
+			}
 			files["consul.json"] = mustJSON(cfg)
 			out.Nodes[key] = &spec.RawNode{
 				Networks: attach,
 				Files:    files,
-				Labels:   &spec.NodeLabels{DC: dcName, Name: name, Role: "server"},
+				Labels:   &spec.NodeLabels{Product: ProductConsul, DC: dcName, Name: name, Role: "server", Meta: dc.Meta},
 				Processes: map[string]*spec.Process{
 					"consul": {
 						Run:       spec.Command{"consul", "agent", "-config-file=" + VarNodeDir + "/consul.json"},
@@ -612,9 +615,11 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 			}
 			var partSD *spec.Service
 			var partClient *spec.AgentSettings
+			var partMeta map[string]string
 			if placed.Part != nil {
-				partSD, partClient = placed.Part.ServiceTemplate, placed.Part.Client
+				partSD, partClient, partMeta = placed.Part.ServiceTemplate, placed.Part.Client, placed.Part.Meta
 			}
+			meta := mergeMeta(dc.Meta, partMeta, node.Meta)
 			count := max(node.Count, 1)
 			for k := range count {
 				name := nodeName
@@ -667,7 +672,7 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if isDP {
 						// No agent to register with or to ask about health:
 						// dataplane-health on server-1 does both.
-						dpEntries = append(dpEntries, dataplaneEntries(name, ip, dcName, part, node.Meta, svcName, svc, SidecarPort+sidecars)...)
+						dpEntries = append(dpEntries, dataplaneEntries(name, ip, dcName, part, meta, svcName, svc, SidecarPort+sidecars)...)
 						if proc != nil && proc.ReadyWhen != nil {
 							proc.ReadyWhen.Consul = nil
 						}
@@ -771,8 +776,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 					if partClient != nil && partClient.LogLevel != "" {
 						cfg["log_level"] = partClient.LogLevel
 					}
-					if len(node.Meta) > 0 {
-						cfg["node_meta"] = node.Meta
+					if len(meta) > 0 {
+						cfg["node_meta"] = meta
 					}
 					if len(regs) > 0 {
 						cfg["services"] = regs
@@ -853,8 +858,8 @@ func expandConsul(c *spec.Consul, wanSubnet string, out *spec.File) error {
 				if isGW {
 					role = "gateway"
 				}
-				rn.Labels = &spec.NodeLabels{DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services)),
-					Partition: placed.Partition, Namespaces: nodeNamespaces(c, dc, placed.Part, services)}
+				rn.Labels = &spec.NodeLabels{Product: ProductConsul, DC: dcName, Name: name, Role: role, Group: nodeName, Services: slices.Sorted(maps.Keys(services)),
+					Partition: placed.Partition, Namespaces: nodeNamespaces(c, dc, placed.Part, services), Meta: meta}
 				if isGW && gw.namespace != "" {
 					rn.Labels.Namespaces = []string{gw.namespace}
 				}
@@ -972,6 +977,21 @@ func expandService(name, dcName string, svc *spec.Service, agent spec.ConsulChec
 		}
 	}
 	return reg, p
+}
+
+// mergeMeta layers node metadata, later layers winning per key; nil when
+// there is none.
+func mergeMeta(layers ...map[string]string) map[string]string {
+	var out map[string]string
+	for _, l := range layers {
+		for k, v := range l {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func mergeService(layers ...*spec.Service) *spec.Service {

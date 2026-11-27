@@ -103,6 +103,7 @@ many services short. See [services](nodes-and-services.md#service-template).
 | `subnet` | `10.<n>.0.0/24`, or a free subnet when that one is in use | The datacenter's LAN. Without it, `parker up` moves the LAN to a free subnet when another running lab or the host uses the default ([more](lifecycle.md#several-labs-at-once)). Set it when addresses matter to the repro: an explicit subnet never moves. |
 | `primary` | the first datacenter by name | Marks the primary datacenter, for federation and ACL replication. |
 | `ui` | `true` | Serves the Consul web UI on the servers. |
+| `meta` | | Metadata for every node of the datacenter (below). |
 | `acl`, `tls` | off | Turn on ACLs and TLS. See [ACLs and TLS](acl-and-tls.md). |
 | `service_template` | | Settings merged into every service in this datacenter. |
 | `nodes` | | Client nodes and services. See [nodes and services](nodes-and-services.md). |
@@ -122,3 +123,24 @@ consul:
       servers: 3
       ui: false
 ```
+
+## Node metadata
+
+`meta:` on a datacenter applies to every node in it, servers and gateways
+too. It becomes each agent's Consul node metadata, and you can select the
+nodes by it with a [`meta:` selector](selectors.md#every-selector). A
+partition's `meta:` and a node's own `meta:` win over the datacenter's,
+key by key.
+
+```yaml
+consul:
+  datacenters:
+    east:
+      servers: 3
+      meta: { region: us-east, zone: a }
+      nodes:
+        web: { meta: { zone: b } }   # region: us-east, zone: b
+        api: {}                      # region: us-east, zone: a
+```
+
+`parker fault LAB stop meta:zone=a` then stops every node in zone `a`.

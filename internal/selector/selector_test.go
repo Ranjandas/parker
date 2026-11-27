@@ -147,3 +147,32 @@ func TestResolvePartitions(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveMeta(t *testing.T) {
+	low := lab()
+	low.Nodes["dc1-web-1"].Labels.Meta = map[string]string{"zone": "a", "region": "us-east"}
+	low.Nodes["dc1-server-1"].Labels.Meta = map[string]string{"region": "us-east"}
+	low.Nodes["dc2-api"].Labels.Meta = map[string]string{"region": "us-east"}
+	for sel, want := range map[string]string{
+		"meta:zone=a":             "dc1-web-1",
+		"meta:region=us-east":     "dc1-server-1 dc1-web-1 dc2-api",
+		"meta:dc2/region=us-east": "dc2-api",
+		"meta:zone=":              "",
+	} {
+		got, err := Resolve(low, sel, nil)
+		if want == "" {
+			if err == nil {
+				t.Errorf("%s: matched %v, want no nodes", sel, got)
+			}
+			continue
+		}
+		if err != nil || strings.Join(got, " ") != want {
+			t.Errorf("%s: %v %v, want %s", sel, got, err, want)
+		}
+	}
+	for _, sel := range []string{"meta:zone", "meta:=a", "meta:dc9/zone=a"} {
+		if _, err := Resolve(low, sel, nil); err == nil {
+			t.Errorf("%s: no error", sel)
+		}
+	}
+}
