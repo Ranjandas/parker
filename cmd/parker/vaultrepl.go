@@ -214,6 +214,10 @@ func (r *replicator) run(ctx context.Context, s expand.VaultReplicationSpec, tim
 					return err
 				}
 				if f := sec.PathsFilter; f != nil {
+					// Vault filters only mounts that exist.
+					if err := vaultrepl.EnsureMounts(ctx, pd, p.RootToken, f.Paths); err != nil {
+						return err
+					}
 					return vaultrepl.PathsFilter(ctx, pd, p.RootToken, sec.Name, f.Mode, f.Paths)
 				}
 				return nil

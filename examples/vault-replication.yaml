@@ -1,5 +1,6 @@
 # Vault Enterprise replication: east is the primary of both performance
-# replication (west serves reads, without the private/ mount) and DR
+# replication (west serves reads, without the private/ mount, which
+# Parker mounts as kv since a filter needs the mount) and DR
 # replication (east-dr keeps a full copy). Parker turns replication on,
 # activates the secondaries and waits until they stream. The scenario
 # fails over to east-dr and points west at it.
@@ -31,7 +32,6 @@ scenario:
     - assert: { vault: { on: west, replication: { performance: secondary, state: stream-wals } }, within: 60s }
     - assert: { vault: { on: east-dr, replication: { dr: secondary, state: stream-wals } }, within: 60s }
     - exec: { on: east/active, run: "vault secrets enable -path=secret kv-v2" }
-    - exec: { on: east/active, run: "vault secrets enable -path=private kv-v2" }
     - exec: { on: east/active, run: "vault kv put secret/hello who=parker" }
     - exec: { on: east/active, run: "vault kv put private/note text=east-only" }
     - name: west reads what east wrote

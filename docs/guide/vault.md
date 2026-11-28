@@ -482,7 +482,7 @@ vault:
 | `dr` | DR replication. Its secondaries keep a full copy of the primary, tokens and leases too, and answer nothing until promoted. |
 | `primary` | The cluster the others replicate from. |
 | `secondaries` | The clusters that replicate it. |
-| `paths_filter` | Performance only: what the primary sends each secondary, keyed by the secondary. `mode: allow` sends only `paths`; `mode: deny` sends everything but `paths`. Paths are mounts or namespaces, such as `secret/`. |
+| `paths_filter` | Performance only: what the primary sends each secondary, keyed by the secondary. `mode: allow` sends only `paths`; `mode: deny` sends everything but `paths`. Paths are mounts, such as `secret/`; Parker mounts a kv (version 2) secrets engine at any that doesn't exist yet, since Vault filters only existing mounts. |
 
 Each cluster comes up and is initialised on its own. Then Parker turns
 replication on at the primary, activates each secondary, and `parker up`

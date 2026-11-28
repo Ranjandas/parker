@@ -110,6 +110,28 @@ func PathsFilter(ctx context.Context, do Do, token, id, mode string, paths []str
 	return do(ctx, "POST", "/v1/sys/replication/performance/primary/paths-filter/"+id, token, map[string]any{"mode": mode, "paths": paths}, nil)
 }
 
+// EnsureMounts mounts a kv (version 2) secrets engine at each of paths
+// that has no mount yet, since a paths filter takes existing mounts only.
+func EnsureMounts(ctx context.Context, do Do, token string, paths []string) error {
+	var mounts map[string]any
+	if err := do(ctx, "GET", "/v1/sys/mounts", token, nil, &mounts); err != nil {
+		return err
+	}
+	if d, ok := mounts["data"].(map[string]any); ok {
+		mounts = d
+	}
+	for _, p := range paths {
+		p = strings.Trim(p, "/")
+		if _, ok := mounts[p+"/"]; ok || p == "" {
+			continue
+		}
+		if err := do(ctx, "POST", "/v1/sys/mounts/"+p, token, map[string]any{"type": "kv", "options": map[string]any{"version": "2"}}, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EnableSecondary activates the cluster as a secondary of mode with an
 // activation token. caFile, on the secondary's machine, verifies the
 // primary's API.

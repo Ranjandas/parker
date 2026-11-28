@@ -78,3 +78,20 @@ func TestGenerate(t *testing.T) {
 		t.Errorf("calls %v", calls)
 	}
 }
+
+func TestEnsureMounts(t *testing.T) {
+	var made []string
+	do := func(_ context.Context, method, path, _ string, body, out any) error {
+		if method == "GET" {
+			return json.Unmarshal([]byte(`{"secret/":{},"data":{"secret/":{},"sys/":{}}}`), out)
+		}
+		made = append(made, method+" "+path)
+		return nil
+	}
+	if err := EnsureMounts(context.Background(), do, "t", []string{"secret/", "private/", "team/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(made) != 2 || made[0] != "POST /v1/sys/mounts/private" || made[1] != "POST /v1/sys/mounts/team/x" {
+		t.Errorf("made %v", made)
+	}
+}

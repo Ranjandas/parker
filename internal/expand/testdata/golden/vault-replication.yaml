@@ -474,9 +474,6 @@ scenario:
         run: vault secrets enable -path=secret kv-v2
     - exec:
         "on": east/active
-        run: vault secrets enable -path=private kv-v2
-    - exec:
-        "on": east/active
         run: vault kv put secret/hello who=parker
     - exec:
         "on": east/active
