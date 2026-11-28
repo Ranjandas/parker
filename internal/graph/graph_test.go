@@ -261,5 +261,6 @@ func TestIntegrations(t *testing.T) {
 	want(t, "registered", edges(build(t, "vault-register.yaml"), Integration), "east-vault-1>dc1-server-1 registered")
 	want(t, "auto-unseal", edges(build(t, "vault-transit.yaml"), Integration), "east-vault-1>unsealer-vault-1 auto-unseal")
 	want(t, "secrets engine", edges(build(t, "vault-consul-secrets.yaml"), Integration), "east-vault-1>dc1-server-1 secrets engine")
+	want(t, "replication", edges(build(t, "vault-replication.yaml"), Integration), "west-vault-1>east-vault-1 performance replication", "east-dr-vault-1>east-vault-1 DR replication")
 	want(t, "none", edges(build(t, "vault.yaml"), Integration))
 }

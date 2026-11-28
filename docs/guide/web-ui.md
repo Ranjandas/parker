@@ -62,7 +62,11 @@ The link signs you in once, and only works while that `parker ui` runs.
   a Vault cluster to the datacenter whose
   [ACL tokens it mints](vault.md#consul-secrets-engine), and
   `auto-unseal` from a Vault cluster to the one it
-  [auto-unseals with](vault.md#transit-auto-unseal). The **Product links**
+  [auto-unseals with](vault.md#transit-auto-unseal), and
+  `performance replication` or `DR replication` from a
+  [replication](vault.md#replication) secondary to its primary, as set
+  up at start (each active server's role says where replication stands
+  after a failover). The **Product links**
   button hides them.
 - **Node pages**: processes, health checks, `describe`, and a streaming
   log viewer with a filter, warnings and errors highlighted, and a log
