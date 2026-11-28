@@ -17,6 +17,7 @@ e2e-ent: build
 	hack/ent-e2e.sh examples/partitions.yaml
 	hack/ent-e2e.sh examples/peering-partitions.yaml
 	hack/ent-e2e.sh examples/vault-enterprise.yaml
+	hack/ent-e2e.sh examples/vault-replication.yaml
 proto:
 	buf generate
 # macOS only: a signed bin/parker with `parker machine` support, plus the

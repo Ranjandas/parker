@@ -390,3 +390,57 @@ func TestVaultRegister(t *testing.T) {
 		}
 	}
 }
+
+// Replication: the replicated clusters join vault-wan and advertise their
+// addresses there; a job on the primary activates the secondaries.
+func TestVaultReplication(t *testing.T) {
+	low, err := Expand(load(t, "../../examples/vault-replication.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := low.Networks[VaultWANNetwork]; n == nil || n.Subnet != "10.63.0.0/24" || !n.Auto {
+		t.Fatalf("vault-wan %+v", n)
+	}
+	wan := map[string]string{"east-vault-1": "10.63.0.10", "east-vault-3": "10.63.0.12", "east-dr-vault-1": "10.63.0.13", "west-vault-2": "10.63.0.15"}
+	for key, ip := range wan {
+		n := low.Nodes[key]
+		if a := n.Networks[VaultWANNetwork]; a == nil || a.IP != ip {
+			t.Errorf("%s vault-wan %+v", key, a)
+		}
+		cfg := vaultConfigOf(t, n.Files)
+		if cfg["api_addr"] != "http://"+ip+":8200" || cfg["cluster_addr"] != "https://"+ip+":8201" {
+			t.Errorf("%s addrs %v %v", key, cfg["api_addr"], cfg["cluster_addr"])
+		}
+	}
+	p := low.Nodes["east-vault-1"].Processes[VaultReplication]
+	if p == nil {
+		t.Fatal("no vault-replication on east-vault-1")
+	}
+	for _, d := range []string{"east-vault-1/" + VaultInit, "west-vault-1/" + VaultInit, "east-dr-vault-1/" + VaultInit} {
+		if p.DependsOn[d] == nil {
+			t.Errorf("vault-replication doesn't wait for %s", d)
+		}
+	}
+	var rs VaultReplicationSpec
+	if err := json.Unmarshal([]byte(low.Nodes["east-vault-1"].Files[VaultReplicationManifest]), &rs); err != nil {
+		t.Fatal(err)
+	}
+	if rs.Primary.Name != "east" || strings.Join(rs.Modes, ",") != "performance,dr" || len(rs.Primary.Addrs) != 3 || rs.Primary.Addrs[0] != "http://10.63.0.10:8200" {
+		t.Errorf("primary %+v modes %v", rs.Primary, rs.Modes)
+	}
+	if len(rs.Secondaries) != 2 || rs.Secondaries[0].Name != "west" || rs.Secondaries[0].Mode != "performance" ||
+		rs.Secondaries[0].PathsFilter == nil || rs.Secondaries[0].PathsFilter.Mode != "deny" ||
+		rs.Secondaries[1].Name != "east-dr" || rs.Secondaries[1].Mode != "dr" ||
+		rs.Secondaries[1].KeysFile != VarRunDir+"/nodes/east-dr-vault-1/"+VaultInitKeys {
+		t.Errorf("secondaries %+v", rs.Secondaries)
+	}
+	for key, replica := range map[string]bool{"east-vault-1": false, "west-vault-1": true, "east-dr-vault-1": true} {
+		var is VaultInitSpec
+		if err := json.Unmarshal([]byte(low.Nodes[key].Files[VaultInitManifest]), &is); err != nil {
+			t.Fatal(err)
+		}
+		if is.Replica != replica {
+			t.Errorf("%s replica %v", key, is.Replica)
+		}
+	}
+}

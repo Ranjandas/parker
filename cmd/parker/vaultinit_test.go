@@ -26,7 +26,10 @@ type fakeVault struct {
 	transit  []string
 	recovery bool
 	consul   []string
+	dr       bool
 }
+
+func (f *fakeVault) DRSecondary(context.Context, string) bool { return f.dr }
 
 func (f *fakeVault) Initialized(_ context.Context, addr string) (bool, error) {
 	if f.notUpYet > 0 {
@@ -126,6 +129,20 @@ func TestVaultInit(t *testing.T) {
 	}
 	if f.sealed[addrs[2]] || f.created != 1 {
 		t.Errorf("resume: sealed %v, tokens created %d", f.sealed, f.created)
+	}
+
+	// A DR secondary on a resumed lab: unsealed, and nothing asked of it,
+	// which it would refuse.
+	for _, a := range addrs {
+		f.sealed[a] = true
+	}
+	f.dr, f.tokens, f.pki = true, nil, map[string]string{}
+	s.Replica = true
+	if err := vaultInit(context.Background(), f, s, 10*time.Second, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if f.sealed[addrs[2]] || len(f.tokens) != 0 || len(f.pki) != 0 {
+		t.Errorf("DR secondary: sealed %v, tokens %v, pki %v", f.sealed, f.tokens, f.pki)
 	}
 }
 

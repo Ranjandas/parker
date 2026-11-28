@@ -18,6 +18,90 @@ type Vault struct {
 	// datacenter names share one name space, so selectors such as
 	// east/vault-2 need no product prefix.
 	Clusters map[string]*VaultCluster `yaml:"clusters"`
+	// Replication sets up Vault Enterprise replication between clusters:
+	// performance, dr, or both.
+	Replication *VaultReplication `yaml:"replication,omitempty"`
+}
+
+// VaultReplication is the lab's replication: a performance set and a
+// disaster recovery (dr) set, each a primary and its secondaries.
+type VaultReplication struct {
+	// Performance replication: the secondaries serve reads and keep their
+	// own tokens and leases, and forward writes to the primary.
+	Performance *VaultReplicationSet `yaml:"performance,omitempty"`
+	// DR replication: the secondaries keep a full copy, tokens and leases
+	// too, and serve nothing until promoted.
+	DR *VaultReplicationSet `yaml:"dr,omitempty"`
+}
+
+// VaultReplicationSet is one primary and its secondaries.
+type VaultReplicationSet struct {
+	// Primary is the cluster the others replicate from.
+	Primary string `yaml:"primary"`
+	// Secondaries are the clusters that replicate it. Activating a
+	// secondary replaces its data with the primary's; from then on it
+	// unseals with the primary's key.
+	Secondaries []string `yaml:"secondaries"`
+	// PathsFilter limits what the primary sends to a performance
+	// secondary, keyed by the secondary.
+	PathsFilter map[string]*VaultPathsFilter `yaml:"paths_filter,omitempty"`
+}
+
+// VaultPathsFilter is a performance secondary's paths filter.
+type VaultPathsFilter struct {
+	// Mode is allow (send only Paths) or deny (send all but Paths).
+	Mode string `yaml:"mode" jsonschema:"enum=allow,enum=deny"`
+	// Paths are mount paths or namespaces, e.g. secret/ or team-a/.
+	Paths []string `yaml:"paths"`
+}
+
+// Replication modes, as Vault names them in its API.
+const (
+	VaultReplPerformance = "performance"
+	VaultReplDR          = "dr"
+)
+
+// Set is the replication set of mode (performance or dr), or nil.
+func (r *VaultReplication) Set(mode string) *VaultReplicationSet {
+	if r == nil {
+		return nil
+	}
+	switch mode {
+	case VaultReplPerformance:
+		return r.Performance
+	case VaultReplDR:
+		return r.DR
+	}
+	return nil
+}
+
+// Replicated are the clusters in replication, sorted.
+func (v *Vault) Replicated() []string {
+	var out []string
+	for _, m := range []string{VaultReplPerformance, VaultReplDR} {
+		s := v.Replication.Set(m)
+		if s == nil {
+			continue
+		}
+		for _, c := range append([]string{s.Primary}, s.Secondaries...) {
+			if c != "" && !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// ReplicaOf is the primary that cluster is a secondary of, and the mode;
+// "" when it's no secondary.
+func (v *Vault) ReplicaOf(cluster string) (primary, mode string) {
+	for _, m := range []string{VaultReplPerformance, VaultReplDR} {
+		if s := v.Replication.Set(m); s != nil && slices.Contains(s.Secondaries, cluster) {
+			return s.Primary, m
+		}
+	}
+	return "", ""
 }
 
 // VaultSettings are the settings a cluster can inherit from defaults.
@@ -241,6 +325,7 @@ func (f *File) validateVault(add func(string, ...any)) {
 	if len(v.Clusters) == 0 {
 		add("vault.clusters: at least one cluster is required")
 	}
+	f.validateVaultReplication(add)
 	if _, meta, _ := strings.Cut(version, "+"); slices.Contains(strings.Split(meta, "."), "ent") && !VaultAtLeast(version, 1, 8) {
 		add("versions.vault: Parker gives Vault Enterprise its license through VAULT_LICENSE_PATH, which needs Vault 1.8 or later (got %s)", version)
 	}
@@ -386,7 +471,26 @@ type VaultStep struct {
 	Unseal string `yaml:"unseal,omitempty" json:"unseal,omitempty"`
 	// StepDown makes the active server among them give up leadership.
 	StepDown string `yaml:"step_down,omitempty" json:"step_down,omitempty"`
+	// Promote makes the clusters, replication secondaries, primaries.
+	Promote string `yaml:"promote,omitempty" json:"promote,omitempty"`
+	// Demote makes the clusters, replication primaries, secondaries that
+	// replicate nothing until pointed at a primary with update_primary.
+	Demote string `yaml:"demote,omitempty" json:"demote,omitempty"`
+	// Disable turns replication off on the clusters.
+	Disable string `yaml:"disable,omitempty" json:"disable,omitempty"`
+	// UpdatePrimary points the clusters, secondaries (or demoted
+	// primaries), at the cluster named by primary:.
+	UpdatePrimary string `yaml:"update_primary,omitempty" json:"update_primary,omitempty"`
+	// Primary is the new primary of update_primary.
+	Primary string `yaml:"primary,omitempty" json:"primary,omitempty"`
+	// Replication is performance or dr: which replication promote,
+	// demote, disable or update_primary acts on, for a cluster in both.
+	// Left out, Parker uses the one the cluster is in.
+	Replication string `yaml:"replication,omitempty" json:"replication,omitempty" jsonschema:"enum=performance,enum=dr"`
 }
+
+// VaultReplActions are the vault: step actions on replication.
+var VaultReplActions = []string{"promote", "demote", "disable", "update_primary"}
 
 // Action is the step's action and selector.
 func (v *VaultStep) Action() (action, sel string) {
@@ -397,8 +501,27 @@ func (v *VaultStep) Action() (action, sel string) {
 		return "unseal", v.Unseal
 	case v.StepDown != "":
 		return "step_down", v.StepDown
+	case v.Promote != "":
+		return "promote", v.Promote
+	case v.Demote != "":
+		return "demote", v.Demote
+	case v.Disable != "":
+		return "disable", v.Disable
+	case v.UpdatePrimary != "":
+		return "update_primary", v.UpdatePrimary
 	}
 	return "", ""
+}
+
+// Actions counts the actions set.
+func (v *VaultStep) Actions() int {
+	n := 0
+	for _, s := range []string{v.Seal, v.Unseal, v.StepDown, v.Promote, v.Demote, v.Disable, v.UpdatePrimary} {
+		if s != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // VaultAssert checks the Vault servers a selector matches: each must
@@ -412,4 +535,116 @@ type VaultAssert struct {
 	Active *bool `yaml:"active,omitempty"`
 	// RaftPeers, e.g. ">=3": voting raft peers, asked of the servers.
 	RaftPeers string `yaml:"raft_peers,omitempty"`
+	// Replication checks the replication of the servers' clusters, asked
+	// of each cluster's active server.
+	Replication *VaultReplicationAssert `yaml:"replication,omitempty"`
+}
+
+// VaultReplicationAssert is what a cluster's replication must be.
+type VaultReplicationAssert struct {
+	// Performance is the cluster's performance replication mode: primary,
+	// secondary or disabled.
+	Performance string `yaml:"performance,omitempty" jsonschema:"enum=primary,enum=secondary,enum=disabled"`
+	// DR is its DR replication mode: primary, secondary or disabled.
+	DR string `yaml:"dr,omitempty" jsonschema:"enum=primary,enum=secondary,enum=disabled"`
+	// State is the state of the modes set above, as Vault reports it:
+	// running on a primary, stream-wals on a secondary in sync.
+	State string `yaml:"state,omitempty"`
+}
+
+// validateVaultReplication checks vault.replication.
+func (f *File) validateVaultReplication(add func(string, ...any)) {
+	v := f.Vault
+	if v.Replication == nil {
+		return
+	}
+	if _, meta, _ := strings.Cut(f.Versions["vault"], "+"); !slices.Contains(strings.Split(meta, "."), "ent") {
+		add("vault.replication: needs Vault Enterprise: add +ent to versions.vault (got %q)", f.Versions["vault"])
+	}
+	// Clusters whose data a secondary's activation would wipe, or that
+	// can't unseal with the primary's key.
+	caOf := map[string]string{}
+	if f.Consul != nil {
+		for _, dc := range slices.Sorted(maps.Keys(f.Consul.Datacenters)) {
+			if d := f.Consul.Datacenters[dc]; d != nil && d.Connect != nil && d.Connect.CA != nil && d.Connect.CA.Vault != "" {
+				caOf[d.Connect.CA.Vault] = dc
+			}
+		}
+	}
+	transitFor := map[string]string{}
+	for _, name := range slices.Sorted(maps.Keys(v.Clusters)) {
+		if t := v.Clusters[name].Transit(); t != "" {
+			transitFor[t] = name
+		}
+	}
+	seen := map[string]string{}
+	primaries := map[string]bool{}
+	for _, m := range []string{VaultReplPerformance, VaultReplDR} {
+		s := v.Replication.Set(m)
+		if s == nil {
+			continue
+		}
+		where := "vault.replication." + m
+		cluster := func(field, name string) *VaultCluster {
+			c, ok := v.Clusters[name]
+			switch {
+			case name == "":
+				add("%s.%s: name a cluster", where, field)
+			case !ok:
+				add("%s.%s: %q is not a Vault cluster of this lab (vault.clusters)", where, field, name)
+			case c != nil && c.Dev:
+				add("%s.%s: %s runs in dev mode; replication needs a cluster that keeps its data", where, field, name)
+			}
+			return c
+		}
+		cluster("primary", s.Primary)
+		primaries[s.Primary] = true
+		if len(s.Secondaries) == 0 {
+			add("%s.secondaries: at least one is required", where)
+		}
+		for _, sec := range s.Secondaries {
+			c := cluster("secondaries", sec)
+			switch {
+			case sec == s.Primary:
+				add("%s.secondaries: %s is the primary", where, sec)
+			case seen[sec] != "":
+				add("%s.secondaries: %s is a %s secondary already; a cluster is the secondary of one primary", where, sec, seen[sec])
+			}
+			seen[sec] = m
+			if c == nil {
+				continue
+			}
+			// Activation replaces the secondary's data with the primary's.
+			if dc := caOf[sec]; dc != "" {
+				add("%s.secondaries: %s is %s's Connect CA, whose keys activating it as a secondary would wipe; use the primary", where, sec, dc)
+			}
+			if t := transitFor[sec]; t != "" {
+				add("%s.secondaries: %s unseals %s with transit, whose keys activating it as a secondary would wipe; use the primary", where, sec, t)
+			}
+			if c.Transit() != "" {
+				add("%s.secondaries: %s auto-unseals with transit; Parker supports secondaries that unseal with keys only", where, sec)
+			}
+			if c.ConsulSecrets() != "" {
+				add("%s.secondaries: %s has secrets.consul, which activating it as a secondary would wipe; set it on the primary", where, sec)
+			}
+		}
+		for _, sec := range slices.Sorted(maps.Keys(s.PathsFilter)) {
+			pf := s.PathsFilter[sec]
+			switch {
+			case m != VaultReplPerformance:
+				add("%s.paths_filter: only performance replication filters paths", where)
+			case !slices.Contains(s.Secondaries, sec):
+				add("%s.paths_filter: %q is not one of its secondaries", where, sec)
+			case pf == nil || pf.Mode != "allow" && pf.Mode != "deny":
+				add("%s.paths_filter.%s.mode: want allow or deny", where, sec)
+			case len(pf.Paths) == 0:
+				add("%s.paths_filter.%s.paths: at least one is required", where, sec)
+			}
+		}
+	}
+	for _, p := range slices.Sorted(maps.Keys(primaries)) {
+		if m := seen[p]; m != "" {
+			add("vault.replication: %s is a %s secondary and a primary too; Parker doesn't chain replication yet", p, m)
+		}
+	}
 }

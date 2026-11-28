@@ -22,6 +22,7 @@ import (
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
+	"github.com/Ranjandas/parker/internal/vaultrepl"
 )
 
 // ScenarioLab is a running lab as the scenario engine sees it.
@@ -403,6 +404,49 @@ func (l *ScenarioLab) Vault(ctx context.Context, action, node string) error {
 	return fmt.Errorf("unknown vault action %q", action)
 }
 
+// VaultReplication runs a replication action on the clusters of nodes,
+// one cluster at a time.
+func (l *ScenarioLab) VaultReplication(ctx context.Context, v *spec.VaultStep, nodes []string, say func(string, ...any)) error {
+	action, _ := v.Action()
+	newPrimary := ""
+	if v.Primary != "" {
+		pn, err := l.Resolve(v.Primary)
+		if err != nil {
+			return err
+		}
+		for _, n := range pn {
+			if lb := l.Low.Nodes[n].Labels; lb != nil && lb.Product == expand.ProductVault {
+				newPrimary = lb.DC
+				break
+			}
+		}
+		if newPrimary == "" {
+			return fmt.Errorf("primary: %s matches no Vault server", v.Primary)
+		}
+	}
+	var clusters []string
+	for _, n := range nodes {
+		if lb := l.Low.Nodes[n].Labels; lb != nil && lb.Product == expand.ProductVault && !slices.Contains(clusters, lb.DC) {
+			clusters = append(clusters, lb.DC)
+		}
+	}
+	if len(clusters) == 0 {
+		return fmt.Errorf("%s matches no Vault server", strings.Join(nodes, ", "))
+	}
+	for _, c := range clusters {
+		mode, err := VaultReplicationAction(ctx, l.Low, action, c, newPrimary, v.Replication)
+		if err != nil {
+			return err
+		}
+		if newPrimary != "" {
+			say("  %s %s (%s) to %s", strings.ReplaceAll(action, "_", "-"), c, mode, newPrimary)
+		} else {
+			say("  %s %s (%s)", action, c, mode)
+		}
+	}
+	return nil
+}
+
 // VaultCheck checks one Vault server against an assert.vault.
 func (l *ScenarioLab) VaultCheck(ctx context.Context, node string, a *spec.VaultAssert) error {
 	s, err := VaultStatus(ctx, l.Low, node)
@@ -426,6 +470,24 @@ func (l *ScenarioLab) VaultCheck(ctx context.Context, node string, a *spec.Vault
 		}
 		if n < want {
 			return fmt.Errorf("%s: %d voting raft peers, want %s", node, n, a.RaftPeers)
+		}
+	}
+	if r := a.Replication; r != nil {
+		st, err := VaultReplicationStatus(ctx, l.Low, node)
+		if err != nil {
+			return err
+		}
+		for _, m := range []struct{ mode, want string }{{vaultrepl.Performance, r.Performance}, {vaultrepl.DR, r.DR}} {
+			if m.want == "" {
+				continue
+			}
+			got := st.Of(m.mode)
+			if got.Mode != m.want {
+				return fmt.Errorf("%s: %s replication is %s, want %s", node, m.mode, got.Mode, m.want)
+			}
+			if r.State != "" && got.State != r.State {
+				return fmt.Errorf("%s: %s replication state is %q, want %q", node, m.mode, got.State, r.State)
+			}
 		}
 	}
 	return nil

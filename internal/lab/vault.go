@@ -23,6 +23,7 @@ import (
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 	"github.com/Ranjandas/parker/internal/supervisor"
+	"github.com/Ranjandas/parker/internal/vaultrepl"
 )
 
 // VaultState is what a Vault server says about itself (sys/health).
@@ -54,6 +55,25 @@ func VaultNodes(low *spec.File, cluster string) []string {
 // vaultDo calls the Vault API of the server on node, from inside its
 // netns, with the cluster's root token.
 func vaultDo(ctx context.Context, low *spec.File, node, method, path string, body, out any) error {
+	tok := ""
+	if n := low.Nodes[node]; n != nil && n.Labels != nil {
+		tok = VaultToken(low, n.Labels.DC)
+	}
+	return vaultCall(ctx, low, node, method, path, tok, body, out)
+}
+
+// vaultDoer is a vaultrepl.Do on node's server, from inside its netns.
+func vaultDoer(low *spec.File, node string, timeout time.Duration) vaultrepl.Do {
+	return func(ctx context.Context, method, path, token string, body, out any) error {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return vaultCall(ctx, low, node, method, path, token, body, out)
+	}
+}
+
+// vaultCall calls the Vault API of the server on node, from inside its
+// netns, with token when set.
+func vaultCall(ctx context.Context, low *spec.File, node, method, path, token string, body, out any) error {
 	n := low.Nodes[node]
 	if n == nil || n.Labels == nil || n.Labels.Product != expand.ProductVault {
 		return fmt.Errorf("%s is not a Vault server", node)
@@ -71,7 +91,11 @@ func vaultDo(ctx context.Context, low *spec.File, node, method, path string, bod
 		}
 		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
-	cl := &http.Client{Timeout: 5 * time.Second, Transport: tr}
+	timeout := 5 * time.Second
+	if d, ok := ctx.Deadline(); ok && time.Until(d) > timeout {
+		timeout = time.Until(d)
+	}
+	cl := &http.Client{Timeout: timeout, Transport: tr}
 	var r io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -81,8 +105,8 @@ func vaultDo(ctx context.Context, low *spec.File, node, method, path string, bod
 	if err != nil {
 		return err
 	}
-	if tok := VaultToken(low, n.Labels.DC); tok != "" {
-		req.Header.Set("X-Vault-Token", tok)
+	if token != "" {
+		req.Header.Set("X-Vault-Token", token)
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -100,7 +124,7 @@ func vaultDo(ctx context.Context, low *spec.File, node, method, path string, bod
 		}
 		return fmt.Errorf("%s: %s %s: %s", node, method, path, msg)
 	}
-	if out != nil {
+	if out != nil && len(b) > 0 {
 		return json.Unmarshal(b, out)
 	}
 	return nil
@@ -283,8 +307,150 @@ func vaultSummary(low *spec.File, node string) [2]string {
 	if !s.Initialized || s.Sealed || VaultToken(low, low.Nodes[node].Labels.DC) == "" {
 		return out
 	}
+	var detail []string
 	if n, err := VaultRaftPeers(ctx, low, node); err == nil && n > 0 {
-		out[1] = fmt.Sprintf("raft %d voters", n)
+		detail = append(detail, fmt.Sprintf("raft %d voters", n))
 	}
+	if s.Active || s.PerfStandby {
+		if st, err := vaultrepl.GetStatus(ctx, vaultDoer(low, node, 3*time.Second)); err == nil {
+			if r := st.Summary(); r != "" {
+				detail = append(detail, r)
+			}
+		}
+	}
+	out[1] = strings.Join(detail, ", ")
 	return out
+}
+
+// VaultReplicationStatus is the replication of node's cluster, asked of
+// its active server.
+func VaultReplicationStatus(ctx context.Context, low *spec.File, node string) (vaultrepl.Status, error) {
+	n := low.Nodes[node]
+	if n == nil || n.Labels == nil || n.Labels.Product != expand.ProductVault {
+		return vaultrepl.Status{}, fmt.Errorf("%s is not a Vault server", node)
+	}
+	a, err := VaultActive(low, n.Labels.DC)
+	if err != nil {
+		return vaultrepl.Status{}, err
+	}
+	return vaultrepl.GetStatus(ctx, vaultDoer(low, a, 5*time.Second))
+}
+
+// vaultKeysPath is the keys file of a cluster: vault-init's, in its first
+// server's directory.
+func vaultKeysPath(low *spec.File, cluster string) string {
+	for _, n := range VaultNodes(low, cluster) {
+		if _, ok := low.Nodes[n].Files[expand.VaultInitManifest]; ok {
+			return filepath.Join(supervisor.NodeDir(RunDir(low.Name), n), expand.VaultInitKeys)
+		}
+	}
+	return ""
+}
+
+// replMode is the replication mode an action on a cluster acts on: want
+// when set, else the one mode the cluster is in with a role in roles.
+func replMode(cluster, action, want string, st vaultrepl.Status, roles ...string) (string, error) {
+	if want != "" {
+		return want, nil
+	}
+	var in []string
+	for _, m := range []string{vaultrepl.Performance, vaultrepl.DR} {
+		if slices.Contains(roles, st.Of(m).Mode) {
+			in = append(in, m)
+		}
+	}
+	switch len(in) {
+	case 1:
+		return in[0], nil
+	case 0:
+		return "", fmt.Errorf("%s: %s needs a %s (performance %s, dr %s)", cluster, strings.ReplaceAll(action, "_", "-"), strings.Join(roles, " or "), st.Performance.Mode, st.DR.Mode)
+	}
+	return "", fmt.Errorf("%s is in both performance and dr replication; set replication: on the step", cluster)
+}
+
+// VaultReplicationAction runs promote, demote, disable or update_primary
+// on a cluster, and says which mode it acted on. newPrimary is
+// update_primary's primary cluster.
+func VaultReplicationAction(ctx context.Context, low *spec.File, action, cluster, newPrimary, want string) (string, error) {
+	a, err := VaultActive(low, cluster)
+	if err != nil {
+		return "", err
+	}
+	do := vaultDoer(low, a, 60*time.Second)
+	st, err := vaultrepl.GetStatus(ctx, do)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", cluster, err)
+	}
+	var mode string
+	switch action {
+	case "promote", "update_primary":
+		mode, err = replMode(cluster, action, want, st, "secondary")
+	case "demote":
+		mode, err = replMode(cluster, action, want, st, "primary")
+	case "disable":
+		mode, err = replMode(cluster, action, want, st, "primary", "secondary")
+	default:
+		return "", fmt.Errorf("unknown vault action %q", action)
+	}
+	if err != nil {
+		return "", err
+	}
+	token := VaultToken(low, cluster)
+	role := st.Of(mode).Mode
+	drToken := ""
+	if mode == vaultrepl.DR && role != "primary" {
+		key := VaultUnsealKey(low, cluster)
+		if key == "" {
+			return "", fmt.Errorf("%s: no unseal key for a DR operation token", cluster)
+		}
+		if drToken, err = vaultrepl.DROperationToken(ctx, do, VaultToken(low, cluster), key); err != nil {
+			return "", fmt.Errorf("%s: DR operation token: %w", cluster, err)
+		}
+	}
+	switch action {
+	case "promote":
+		err = vaultrepl.Promote(ctx, do, token, drToken, mode)
+	case "demote":
+		err = vaultrepl.Demote(ctx, do, token, mode)
+	case "disable":
+		err = vaultrepl.Disable(ctx, do, token, drToken, mode, role)
+	case "update_primary":
+		err = vaultUpdatePrimary(ctx, low, cluster, newPrimary, mode, do, token, drToken)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", cluster, err)
+	}
+	return mode, nil
+}
+
+// vaultUpdatePrimary points cluster at newPrimary with an activation
+// token from it; the cluster then unseals with newPrimary's key.
+func vaultUpdatePrimary(ctx context.Context, low *spec.File, cluster, newPrimary, mode string, do vaultrepl.Do, token, drToken string) error {
+	pa, err := VaultActive(low, newPrimary)
+	if err != nil {
+		return err
+	}
+	pdo := vaultDoer(low, pa, 60*time.Second)
+	ptok := VaultToken(low, newPrimary)
+	if mode == vaultrepl.DR && pdo(ctx, http.MethodGet, "/v1/auth/token/lookup-self", token, nil, nil) != nil {
+		// As at activation: the secondary's lab token, on the primary.
+		if err := pdo(ctx, http.MethodPost, "/v1/auth/token/create-orphan", ptok,
+			map[string]any{"id": token, "policies": []string{"root"}, "display_name": "parker-" + cluster}, nil); err != nil {
+			return err
+		}
+	}
+	act, err := vaultrepl.SecondaryToken(ctx, pdo, ptok, mode, cluster)
+	if err != nil {
+		return fmt.Errorf("%s: %w", newPrimary, err)
+	}
+	_, caFile := VaultAPI(low, pa)
+	if err := vaultrepl.UpdatePrimary(ctx, do, token, drToken, mode, act, caFile); err != nil {
+		return err
+	}
+	if src, dst := vaultKeysPath(low, newPrimary), vaultKeysPath(low, cluster); src != "" && dst != "" {
+		if b, err := os.ReadFile(src); err == nil {
+			return os.WriteFile(dst, b, 0o600)
+		}
+	}
+	return nil
 }

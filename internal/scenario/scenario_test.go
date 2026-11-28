@@ -128,6 +128,14 @@ func (f *fakeLab) VaultCheck(_ context.Context, node string, a *spec.VaultAssert
 	return nil
 }
 
+func (f *fakeLab) VaultReplication(_ context.Context, v *spec.VaultStep, nodes []string, _ func(string, ...any)) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, _ := v.Action()
+	f.log = append(f.log, "vault "+a+" "+strings.Join(nodes, ",")+" "+v.Primary)
+	return nil
+}
+
 func (f *fakeLab) UpgradeOrder(nodes []string) ([]string, error) {
 	out := slices.Clone(nodes)
 	slices.Reverse(out)
@@ -294,13 +302,20 @@ func TestValidate(t *testing.T) {
 		`[{exec: {on: dc1}}]`:             "exec: needs on: and run:",
 		`[{assert: {within: 3s}}]`:        "exactly one of consul:, vault:, exec: or call:",
 		`[{assert: {consul: {dc: dc1}}}]`: "nothing to check",
-		`[{assert: {consul: {leader: true}, within: x}}]`:   "assert.within",
-		`[{snapshot: everything}]`:                          "want logs",
-		`[{vault: {}}]`:                                     "vault:",
-		`[{vault: {seal: east, unseal: east}}]`:             "vault:",
-		`[{assert: {vault: {sealed: true}}}]`:               "assert.vault",
-		`[{assert: {vault: {on: east}}}]`:                   "nothing to check",
-		`[{assert: {vault: {on: east, raft_peers: lots}}}]`: "raft_peers",
+		`[{assert: {consul: {leader: true}, within: x}}]`:       "assert.within",
+		`[{snapshot: everything}]`:                              "want logs",
+		`[{vault: {}}]`:                                         "vault:",
+		`[{vault: {seal: east, unseal: east}}]`:                 "vault:",
+		`[{assert: {vault: {sealed: true}}}]`:                   "assert.vault",
+		`[{assert: {vault: {on: east}}}]`:                       "nothing to check",
+		`[{assert: {vault: {on: east, raft_peers: lots}}}]`:     "raft_peers",
+		`[{vault: {promote: east, seal: east}}]`:                "exactly one of",
+		`[{vault: {update_primary: east}}]`:                     "primary: goes with update_primary",
+		`[{vault: {promote: east, primary: west}}]`:             "primary: goes with update_primary",
+		`[{vault: {seal: east, replication: dr}}]`:              "replication: goes with",
+		`[{vault: {promote: east, replication: perf}}]`:         "want performance or dr",
+		`[{assert: {vault: {on: east, replication: {}}}}]`:      "needs performance: or dr:",
+		`[{assert: {vault: {on: east, replication: {dr: x}}}}]`: "want primary, secondary or disabled",
 	} {
 		err := Validate(parse(t, "steps: "+steps))
 		if err == nil || !strings.Contains(err.Error(), want) {
@@ -322,6 +337,9 @@ steps:
   - vault: { seal: dc1 }
   - vault: { step_down: dc1/leader }
   - assert: { vault: { on: dc1/web, sealed: false } }
+  - vault: { promote: dc1/web }
+  - vault: { update_primary: dc1/leader, primary: dc1/web, replication: dr }
+  - assert: { vault: { on: dc1/leader, replication: { dr: secondary, state: stream-wals } } }
 `)
 	if err := Validate(sc); err != nil {
 		t.Fatal(err)
@@ -331,11 +349,12 @@ steps:
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := []string{"vault seal dc1-server-1", "vault seal dc1-web-1", "vault step_down dc1-server-1", "vault check dc1-web-1", "vault check dc1-web-2"}
+	want := []string{"vault seal dc1-server-1", "vault seal dc1-web-1", "vault step_down dc1-server-1", "vault check dc1-web-1", "vault check dc1-web-2",
+		"vault promote dc1-web-1,dc1-web-2 ", "vault update_primary dc1-server-1 dc1/web", "vault check dc1-server-1"}
 	if !slices.Equal(f.log, want) {
 		t.Errorf("log:\n%s\nwant:\n%s", strings.Join(f.log, "\n"), strings.Join(want, "\n"))
 	}
-	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/leader dc1/web" {
+	if got := strings.Join(Selectors(sc), " "); got != "dc1 dc1/leader dc1/web dc1/web dc1/leader dc1/web dc1/leader" {
 		t.Errorf("selectors %q", got)
 	}
 }

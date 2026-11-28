@@ -1801,6 +1801,10 @@
           },
           "type": "object",
           "description": "Clusters keyed by name (e.g. east). Cluster names and Consul\ndatacenter names share one name space, so selectors such as\neast/vault-2 need no product prefix."
+        },
+        "replication": {
+          "$ref": "#/$defs/VaultReplication",
+          "description": "Replication sets up Vault Enterprise replication between clusters:\nperformance, dr, or both."
         }
       },
       "additionalProperties": false,
@@ -1827,6 +1831,10 @@
         "raft_peers": {
           "type": "string",
           "description": "RaftPeers, e.g. \"\u003e=3\": voting raft peers, asked of the servers."
+        },
+        "replication": {
+          "$ref": "#/$defs/VaultReplicationAssert",
+          "description": "Replication checks the replication of the servers' clusters, asked\nof each cluster's active server."
         }
       },
       "additionalProperties": false,
@@ -1922,6 +1930,105 @@
       "additionalProperties": false,
       "type": "object",
       "description": "VaultCluster is one Vault cluster."
+    },
+    "VaultPathsFilter": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ],
+          "description": "Mode is allow (send only Paths) or deny (send all but Paths)."
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Paths are mount paths or namespaces, e.g. secret/ or team-a/."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "mode",
+        "paths"
+      ],
+      "description": "VaultPathsFilter is a performance secondary's paths filter."
+    },
+    "VaultReplication": {
+      "properties": {
+        "performance": {
+          "$ref": "#/$defs/VaultReplicationSet",
+          "description": "Performance replication: the secondaries serve reads and keep their\nown tokens and leases, and forward writes to the primary."
+        },
+        "dr": {
+          "$ref": "#/$defs/VaultReplicationSet",
+          "description": "DR replication: the secondaries keep a full copy, tokens and leases\ntoo, and serve nothing until promoted."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultReplication is the lab's replication: a performance set and a disaster recovery (dr) set, each a primary and its secondaries."
+    },
+    "VaultReplicationAssert": {
+      "properties": {
+        "performance": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary",
+            "disabled"
+          ],
+          "description": "Performance is the cluster's performance replication mode: primary,\nsecondary or disabled."
+        },
+        "dr": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary",
+            "disabled"
+          ],
+          "description": "DR is its DR replication mode: primary, secondary or disabled."
+        },
+        "state": {
+          "type": "string",
+          "description": "State is the state of the modes set above, as Vault reports it:\nrunning on a primary, stream-wals on a secondary in sync."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "VaultReplicationAssert is what a cluster's replication must be."
+    },
+    "VaultReplicationSet": {
+      "properties": {
+        "primary": {
+          "type": "string",
+          "description": "Primary is the cluster the others replicate from."
+        },
+        "secondaries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Secondaries are the clusters that replicate it. Activating a\nsecondary replaces its data with the primary's; from then on it\nunseals with the primary's key."
+        },
+        "paths_filter": {
+          "additionalProperties": {
+            "$ref": "#/$defs/VaultPathsFilter"
+          },
+          "type": "object",
+          "description": "PathsFilter limits what the primary sends to a performance\nsecondary, keyed by the secondary."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "primary",
+        "secondaries"
+      ],
+      "description": "VaultReplicationSet is one primary and its secondaries."
     },
     "VaultSeal": {
       "properties": {
@@ -2020,6 +2127,34 @@
         "step_down": {
           "type": "string",
           "description": "StepDown makes the active server among them give up leadership."
+        },
+        "promote": {
+          "type": "string",
+          "description": "Promote makes the clusters, replication secondaries, primaries."
+        },
+        "demote": {
+          "type": "string",
+          "description": "Demote makes the clusters, replication primaries, secondaries that\nreplicate nothing until pointed at a primary with update_primary."
+        },
+        "disable": {
+          "type": "string",
+          "description": "Disable turns replication off on the clusters."
+        },
+        "update_primary": {
+          "type": "string",
+          "description": "UpdatePrimary points the clusters, secondaries (or demoted\nprimaries), at the cluster named by primary:."
+        },
+        "primary": {
+          "type": "string",
+          "description": "Primary is the new primary of update_primary."
+        },
+        "replication": {
+          "type": "string",
+          "enum": [
+            "performance",
+            "dr"
+          ],
+          "description": "Replication is performance or dr: which replication promote,\ndemote, disable or update_primary acts on, for a cluster in both.\nLeft out, Parker uses the one the cluster is in."
         }
       },
       "additionalProperties": false,
