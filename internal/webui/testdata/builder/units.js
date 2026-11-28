@@ -157,3 +157,45 @@ console.log("ok failover");
   assert.strictEqual(B.entryKey({ file: "x.hcl" }), "file:x.hcl");
 }
 console.log("ok entries");
+
+// Fake service: a service's fake: block and the template's are read,
+// written back as they are, and edited key by key.
+{
+  const m = B.starter("mesh");
+  const [web, api] = m.dcs[0].nodes;
+  B.fakeSet(api.svc, "fake", "limits.profile", "tomcat");
+  B.fakeSet(api.svc, "fake", "limits.max_header_bytes", B.fakeValue("16KB"));
+  B.fakeSet(api.svc, "fake", "limits.codes.header", B.fakeValue("431"));
+  B.fakeSet(web.svc, "fake", "forward_headers", ["Cookie"]);
+  B.fakeSet(m, "fakeDef", "version", "v1");
+  const doc = B.toDoc(m), nodes = doc.consul.datacenters.dc1.nodes;
+  assert.deepStrictEqual(nodes.api.service.fake, { limits: { profile: "tomcat", max_header_bytes: "16KB", codes: { header: 431 } } });
+  assert.deepStrictEqual(nodes.web.service.fake, { forward_headers: ["Cookie"] });
+  assert.deepStrictEqual(doc.consul.defaults.service_template.fake, { version: "v1" });
+  assert.deepStrictEqual(B.profileOf(m, api), { own: "tomcat", inh: "" });
+  // Clearing keys takes the maps they leave empty with them.
+  B.fakeSet(api.svc, "fake", "limits.codes.header", "");
+  assert.deepStrictEqual(api.svc.fake, { limits: { profile: "tomcat", max_header_bytes: "16KB" } });
+  B.fakeSet(api.svc, "fake", "limits.max_header_bytes", undefined);
+  B.fakeSet(api.svc, "fake", "limits.profile", "");
+  assert.strictEqual(api.svc.fake, undefined);
+  B.fakeSet(web.svc, "fake", "forward_headers", []);
+  assert.strictEqual(B.toDoc(m).consul.datacenters.dc1.nodes.web.service.fake, undefined);
+  // Read back, and an edit is one set on the file.
+  B.fakeSet(api.svc, "fake", "limits.profile", "nginx");
+  const t = JSON.parse(JSON.stringify(B.toDoc(m)));
+  const back = B.fromTree(t);
+  assert.deepStrictEqual(back.dcs[0].nodes[1].svc.fake, { limits: { profile: "nginx" } });
+  assert.deepStrictEqual(back.fakeDef, { version: "v1" });
+  assert.deepStrictEqual(B.diffOps(back, back, t), []);
+  const ed = B.fromTree(t, back);
+  B.fakeSet(ed.dcs[0].nodes[1].svc, "fake", "limits.max_concurrent", 5);
+  assert.deepStrictEqual(B.diffOps(back, ed, t), [{ op: "set", path: ["consul", "datacenters", "dc1", "nodes", "api", "service", "fake", "limits", "max_concurrent"], value: 5 }]);
+  // The Change limits step clears a profile, or sets one.
+  assert.deepStrictEqual(B.stepFor(back, back.dcs[0].nodes[1].id, "limits"), { fake: { on: "dc1/api", limits: { profile: "none" } } });
+  assert.deepStrictEqual(B.stepFor(back, back.dcs[0].nodes[0].id, "limits"), { fake: { on: "dc1/web", limits: { profile: "tomcat" } } });
+  assert.strictEqual(B.stepText({ fake: { on: "dc1/api", limits: { profile: "none" } } }), "fake dc1/api limits none");
+  assert.strictEqual(B.fakeValue(" 8 "), 8);
+  assert.strictEqual(B.fakeValue("8KB"), "8KB");
+}
+console.log("ok fake");

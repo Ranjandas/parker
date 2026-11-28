@@ -63,6 +63,7 @@ function bInit() {
   try { const f = JSON.parse(localStorage.getItem(BKF) || "null"); if (f && typeof f.text === "string") BL.file = f; } catch (e) { /* none saved */ }
   if (!BL.m) BL.m = Build.starter("mesh");
   fetch("/ui/schema.json", { credentials: "same-origin" }).then((r) => r.json()).then((s) => { BL.schema = s; if (S.route.view === "build") bInspector(); }).catch(() => {});
+  fetch("/ui/profiles", { credentials: "same-origin" }).then((r) => r.json()).then((p) => { BL.profiles = p; if (S.route.view === "build") bInspector(); }).catch(() => {});
   fetch("/ui/versions", { credentials: "same-origin" }).then((r) => r.json()).then((v) => { BL.versions = v; if (S.route.view === "build") bInspector(); }).catch(() => {});
 }
 function bSave() {
@@ -309,7 +310,7 @@ function bCanvas() {
     }
     for (const n of d.nodes) {
       const k = bKind(m, n);
-      const sub = n.svc ? `:${n.svc.port} · ${Build.connectOf(m, n) === "none" ? "no mesh" : Build.connectOf(m, n)}${n.agent === "dataplane" ? " · dataplane" : ""}${Build.nsOf(n) ? ` · ns ${Build.nsOf(n)}` : ""}` : "client agent";
+      const sub = n.svc ? `:${n.svc.port} · ${Build.connectOf(m, n) === "none" ? "no mesh" : Build.connectOf(m, n)}${n.agent === "dataplane" ? " · dataplane" : ""}${Build.nsOf(n) ? ` · ns ${Build.nsOf(n)}` : ""}${bProfileTag(n)}` : "client agent";
       h += bCard(n.id, P.it[n.id], BI[k], k === "svc" || k === "dp" ? "svc" : "cl", n.name + (n.count > 1 ? ` ×${n.count}` : ""), sub, { port: !!n.svc, bad: problems.has(n.id) });
     }
   }
@@ -437,6 +438,12 @@ function bCanvas() {
   BL.fresh = "";
 }
 
+// bProfileTag names the app server a service copies, for its card.
+function bProfileTag(n) {
+  const p = Build.profileOf(BL.m, n), x = p.own || p.inh;
+  return x && x !== "none" ? ` · ${x}` : "";
+}
+
 // ---------- inspector ----------
 // An info icon whose note opens in a floating tip (see tipShow in app.js)
 // on hover, focus or click, so the form never reflows under the cursor.
@@ -481,6 +488,7 @@ function bInspector() {
       fld("Mesh", seg("mesh", yes, m.mesh), "Services get sidecars by default (service_template connect: sidecar).") +
       fld("TLS", seg("tls", yes, m.tls), sdoc("Inheritable", "tls")) +
       fld("ACLs", seg("acl", yes, m.acl), sdoc("Inheritable", "acl"), "", m.acl ? "The builder writes the intentions each call needs." : "") +
+      (m.dcs.some((d) => d.nodes.some((n) => n.svc)) ? fld("App server", `<select data-f="fkdef" data-k="limits.profile" id="bf-fkdef">${[["", "none: no limits"], ...Build.FAKE_PROFILES.map((x) => [x, x])].map(([x, l]) => `<option value="${x}" ${(Build.fakeGet(m.fakeDef, "limits.profile") || "") === x ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`, sdoc("FakeLimits", "profile"), "bf-fkdef", "Every service copies this app server's limits (service_template); a service's own App server wins.") : "") +
       (m.dcs.length > 1 ? fld("Federation", `<select data-f="fed" id="bf-fed">${fedOpts.map(([v, l]) => `<option value="${v}" ${m.fed === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Federation", "mode"), "bf-fed") : "");
   } else if (f.t === "dc") {
     const d = f.dc;
@@ -519,7 +527,7 @@ function bInspector() {
         fld("Namespace", txt("ns", n.svc.ns || "", n.svc.inhNs ? `${n.svc.inhNs} (from service_template)` : "default"), sdoc("Service", "namespace"), "bf-ns", "Consul Enterprise. Calls, intentions and exports across namespaces follow.") +
         fld("Connect", `<select data-f="connect" id="bf-connect">${conn.map(([v, l]) => `<option value="${v}" ${n.svc.connect === v ? "selected" : ""}>${l}</option>`).join("")}</select>`, sdoc("Service", "connect"), "bf-connect") +
         `<div class="fld" style="align-items:start">${flbl("Upstreams", "", sdoc("Service", "upstreams"), "dc:, peer: or partition: follow from where the two services sit.")}<div class="ups">${ups || '<span class="hint">None yet.</span>'}<button class="btn sm" data-bact="linkfrom">+ Call a service</button></div></div>` +
-        bFailFld(n.id, f.dc.id, n.part);
+        bFailFld(n.id, f.dc.id, n.part) + bFake(n);
     }
     body += `<div class="row-btns"><button class="btn sm danger" data-bact="remove">Remove ${esc(n.name)}</button></div>`;
   } else if (f.t === "gw") {
@@ -579,6 +587,92 @@ function bInspector() {
   if (og === "import") body = body.replace(/<button class="btn sm danger" data-bact="remove">[^<]*<\/button>/, "").replace('id="bf-name"', 'id="bf-name" readonly');
   if (og) body = `<div class="hint onote">${og === "import" ? "This comes from an import. Rename or remove it in the module; what you change here goes in this file and overrides it." : `Made from ${esc(og)}. What you set here goes on this node and overrides the template.`}</div>` + body;
   el.innerHTML = `<div class="hd"><h3>${title}</h3><div class="grow"></div><span class="faint mono" style="font-size:11px">${esc(where)}</span><button class="btn icon ghost sm" data-bact="deselect" title="Close (Esc)" aria-label="Close">✕</button></div><div class="bd">${body}</div>`;
+}
+
+// ---------- fake service ----------
+// A service's fake: block in three parts, each one line until opened:
+// what its calls carry, the app server it copies (limits), and how it
+// answers. Values a profile gives show as placeholders; what's typed
+// goes in the file and is marked.
+const FK_SIZE = [["max_header_bytes", "Headers total"], ["max_header_line_bytes", "One header"], ["max_header_count", "Header count"], ["max_url_bytes", "URL"], ["max_body_bytes", "Body"], ["max_form_params", "Form params"]];
+const FK_CAP = [["max_concurrent", "At once"], ["queue", "Queued"]];
+const FK_CONN = [["max_requests_per_conn", "Per connection"], ["idle_timeout", "Idle timeout"], ["header_timeout", "Header timeout"]];
+const FK_CODES = ["header", "url", "body", "form", "full"];
+// The profile a service's limits start from, and its values (P[""] is
+// no profile: just the codes).
+function fkBase(n) {
+  const P = BL.profiles || {};
+  const pr = Build.profileOf(BL.m, n);
+  const name = pr.own === "none" ? "" : pr.own || pr.inh;
+  return { name: P[name] ? name : "", vals: (P[name] || P[""] || {}).limits || {}, title: (P[name] || {}).title || name };
+}
+// One limits text field: placeholder from the profile, marked when set.
+function fkIn(fk, key, label, ph) {
+  const v = Build.fakeGet(fk, key);
+  return `<label class="sf inl ${v !== undefined ? "ov" : ""}"><span>${esc(label)}</span><input data-f="fk" data-k="${key}" value="${esc(v === undefined ? "" : v)}" placeholder="${esc(ph === undefined || ph === "" ? "off" : ph)}" spellcheck="false" autocomplete="off"></label>`;
+}
+// A choice whose profile value is shown on; picking that value again
+// removes the key.
+function fkSeg(fk, key, label, opts, base) {
+  const v = Build.fakeGet(fk, key), cur = v === undefined ? base : v;
+  return `<div class="sf inl ${v !== undefined ? "ov" : ""}"><span>${esc(label)}</span><div class="seg">${opts.map(([x, l]) => `<button type="button" data-f="fkseg" data-k="${key}" data-v="${x}" data-base="${esc(String(base))}" class="${String(cur) === x ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>`;
+}
+const fkCount = (o) => (o && typeof o === "object" ? Object.entries(o).reduce((a, [k, v]) => a + (k === "profile" ? 0 : v && typeof v === "object" && !Array.isArray(v) ? fkCount(v) : 1), 0) : 0);
+const fkMore = (k, open, label) => `<button type="button" class="lnk" data-f="fkopen" data-k="${k}" aria-expanded="${open}">${esc(label)} ${open ? "▾" : "▸"}</button>`;
+
+function bFake(n) {
+  const m = BL.m, fk = n.svc.fake || {}, P = BL.profiles || {}, op = BL.fkOpen || {}, open = { limits: op[`${n.id}:limits`], answers: op[`${n.id}:answers`] };
+  let h = "";
+  // What each call carries: only on a service that calls something.
+  const fwd = Build.fakeGet(fk, "forward_headers"), pad = Build.fakeGet(fk, "upstream_request.pad_header") || {};
+  if (n.svc.ups.length || fwd || Build.fakeGet(fk, "upstream_request")) {
+    const to = n.svc.ups.map((u) => Build.find(m, u.to)).filter(Boolean).map((t) => (t.node || t.ext).name);
+    h += `<div class="fld" style="align-items:start">${flbl("Calls carry", "", sdoc("Fake", "forward_headers"), sdoc("FakeUpstreamRequest", "pad_header"))}<div class="fkcalls">
+      <label class="sf stk"><span>Pass on headers</span><input data-f="fk" data-k="forward_headers" data-t="list" value="${esc((Array.isArray(fwd) ? fwd : []).join(", "))}" placeholder="none, e.g. Cookie, Authorization" spellcheck="false" autocomplete="off"></label>
+      <label class="sf stk"><span>Pad a header</span><span class="two"><input data-f="fk" data-k="upstream_request.pad_header.name" data-t="str" value="${esc(pad.name || "")}" placeholder="X-Parker-Pad" aria-label="Header name" spellcheck="false" autocomplete="off"><input data-f="fk" data-k="upstream_request.pad_header.bytes" value="${esc(pad.bytes === undefined ? "" : pad.bytes)}" placeholder="e.g. 9KB" aria-label="Header size" spellcheck="false" autocomplete="off"></span></label>
+      <label class="sf stk"><span>Body size</span><input data-f="fk" data-k="upstream_request.body_bytes" value="${esc(Build.fakeGet(fk, "upstream_request.body_bytes") ?? "")}" placeholder="none: calls are GETs" spellcheck="false" autocomplete="off"></label>
+      ${to.length ? `<div class="hint">${fwd && fwd.length ? `${esc(fwd.join(", "))} from ${esc(n.name)}'s caller go${fwd.length === 1 ? "es" : ""} on to ${esc(to.join(", "))}. ` : ""}Send one: parker call --pad-header Cookie=9KB</div>` : ""}</div></div>`;
+  }
+  // The app server it copies.
+  const pr = Build.profileOf(m, n), base = fkBase(n), lim = fk.limits || {}, changed = fkCount(lim), lo = !!open.limits;
+  const names = Build.FAKE_PROFILES.filter((x) => !P[""] || P[x]);
+  const opts = [["", pr.inh ? `lab default (${pr.inh})` : "none: no limits"], ...(pr.inh ? [["none", "none: no limits here"]] : []), ...names.map((x) => [x, x])];
+  if (pr.own && !opts.some(([x]) => x === pr.own)) opts.push([pr.own, pr.own]);
+  let sum;
+  if (pr.own === "none") sum = changed ? `No profile here; ${changed} limit${changed > 1 ? "s" : ""} set.` : "No limits here: it takes any request.";
+  else if (base.name) sum = `${pr.own ? "" : "From Lab settings: "}<b>${esc(base.title)}</b>'s stock limits: ${esc((P[base.name] || {}).summary || "")}.${changed ? ` <b>${changed} changed.</b>` : ""}`;
+  else sum = changed ? `Custom: ${changed} limit${changed > 1 ? "s" : ""} set.` : "No limits: it takes any request, however large or busy.";
+  h += `<div class="fld" style="align-items:start">${flbl("App server", "bf-profile", sdoc("FakeLimits", "profile"), "A profile copies the server's limits and codes, so the fake refuses what it would.")}<div><select data-f="fk" data-k="limits.profile" data-t="str" id="bf-profile">${opts.map(([x, l]) => `<option value="${esc(x)}" ${(pr.own || "") === x ? "selected" : ""}>${esc(l)}</option>`).join("")}</select><div class="fksum">${sum}</div>${fkMore("limits", lo, "Adjust limits")}</div></div>`;
+  if (lo) {
+    const v = base.vals, c = v.codes || {};
+    h += `<div class="fkgrp"><h4>Request size</h4>${FK_SIZE.map(([k, l]) => fkIn(fk, "limits." + k, l, v[k])).join("")}</div>
+      <div class="fkgrp"><h4>Capacity</h4>${FK_CAP.map(([k, l]) => fkIn(fk, "limits." + k, l, v[k] ?? (k === "queue" ? "0" : ""))).join("")}${fkSeg(fk, "limits.when_full", "When full", [["refuse", "refuse"], ["answer", "answer"]], v.when_full || "refuse")}${FK_CONN.map(([k, l]) => fkIn(fk, "limits." + k, l, v[k])).join("")}${(fk.protocol || Build.fakeGet(m.fakeDef, "protocol")) === "grpc" ? fkIn(fk, "limits.h2_max_streams", "HTTP/2 streams", v.h2_max_streams ?? "Go's") : ""}</div>
+      <div class="fkgrp"><h4>Strict parsing</h4>${fkSeg(fk, "limits.underscore_headers", "_ in header names", [["allow", "allow"], ["drop", "drop"], ["reject", "reject"]], v.underscore_headers || "allow")}${fkSeg(fk, "limits.strict_cookies", "Strict cookies", [["true", "on"], ["false", "off"]], !!v.strict_cookies)}${fkSeg(fk, "limits.strict_path_chars", "Strict path chars", [["true", "on"], ["false", "off"]], !!v.strict_path_chars)}</div>
+      <div class="fkgrp"><h4>Refuses with</h4><div class="fkcodes">${FK_CODES.map((k) => { const x = Build.fakeGet(fk, "limits.codes." + k); return `<label class="${x !== undefined ? "ov" : ""}"><span>${k}</span><input data-f="fk" data-k="limits.codes.${k}" value="${esc(x ?? "")}" placeholder="${esc(c[k] ?? "")}" inputmode="numeric" aria-label="Code for ${k}"></label>`; }).join("")}</div></div>
+      ${changed ? `<div class="row-btns"><button type="button" class="btn sm" data-f="fkreset">${base.name ? `Reset to ${esc(base.name)}` : "Clear limits"}</button></div>` : ""}`;
+  }
+  // How it answers.
+  const ao = !!open.answers;
+  const bits = [];
+  if (fk.protocol && fk.protocol !== "http") bits.push(fk.protocol);
+  if (fk.version) bits.push(`version ${fk.version}`);
+  const lat = Build.fakeGet(fk, "latency.p50"), er = Build.fakeGet(fk, "errors.rate"), hc = Build.fakeGet(fk, "health.code"), rl = Build.fakeGet(fk, "rate_limit.rps");
+  if (lat) bits.push(`p50 ${lat}`);
+  if (er) bits.push(`${Math.round(Number(er) * 100)}% errors${Build.fakeGet(fk, "errors.code") ? ` (${Build.fakeGet(fk, "errors.code")})` : ""}`);
+  if (rl) bits.push(`${rl} rps`);
+  if (hc) bits.push(`/health ${hc}`);
+  if (fk.message) bits.push(`says "${String(fk.message).slice(0, 24)}"`);
+  h += `<div class="fld" style="align-items:start">${flbl("Answers", "", "How the fake answers: its protocol, version, latency and errors.", "A fake: step or parker fake changes these while the lab runs.")}<div><div class="fksum">${bits.length ? esc(bits.join(" · ")) : "200 right away, over HTTP."}</div>${fkMore("answers", ao, "Adjust answers")}</div></div>`;
+  if (ao) {
+    h += `<div class="fkgrp"><h4>Answer</h4>${fkSeg(fk, "protocol", "Protocol", [["http", "http"], ["grpc", "grpc"], ["tcp", "tcp"]], Build.fakeGet(m.fakeDef, "protocol") || "http")}
+      <label class="sf inl ${fk.version !== undefined ? "ov" : ""}"><span>Version</span><input data-f="fk" data-k="version" data-t="str" value="${esc(fk.version ?? "")}" placeholder="none, e.g. v2" spellcheck="false" autocomplete="off"></label>
+      <label class="sf inl ${fk.message !== undefined ? "ov" : ""}"><span>Message</span><input data-f="fk" data-k="message" data-t="str" value="${esc(typeof fk.message === "string" ? fk.message : fk.message === undefined ? "" : JSON.stringify(fk.message))}" placeholder="none" spellcheck="false" autocomplete="off"></label></div>
+      <div class="fkgrp"><h4>Latency</h4>${fkIn(fk, "latency.p50", "p50", "0s")}${fkIn(fk, "latency.p90", "p90", "p50")}${fkIn(fk, "latency.p99", "p99", "p90")}</div>
+      <div class="fkgrp"><h4>Errors</h4>${fkIn(fk, "errors.rate", "Rate, 0 to 1", "0")}${fkIn(fk, "errors.code", "Code", "500")}${fkIn(fk, "rate_limit.rps", "Rate limit, rps", "off")}${fkIn(fk, "rate_limit.code", "Over the limit", "503")}</div>
+      <div class="fkgrp"><h4>Health</h4>${fkIn(fk, "health.code", "/health code", "200")}${fkIn(fk, "ready.delay", "Ready after", "0s")}</div>
+      <div class="hint">Other fake: keys (upstreams, workers, seed, log_level...) go in the YAML.</div>`;
+  }
+  return h;
 }
 
 // ---------- failover ----------
@@ -663,13 +757,13 @@ function bEntryDialog(sk, i, e) {
 }
 
 // ---------- scenario ----------
-const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", seal: "Seal", unseal: "Unseal", stepdown: "Step down", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", unsealed: "Check unsealed", exec: "Check a command" };
+const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", limits: "Change limits", seal: "Seal", unseal: "Unseal", stepdown: "Step down", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", unsealed: "Check unsealed", exec: "Check a command" };
 // bStepKinds lists the steps that fit a thing.
 const bStepKinds = (id) => Object.keys(STEP_LABEL).filter((k) => Build.stepFor(BL.m, id, k));
 function bStepBtns(id) {
   const ks = bStepKinds(id);
   if (!ks.length) return "";
-  const faults = ks.filter((k) => Build.FAULTS.includes(k) || ["fault", "unfault", "seal", "unseal", "stepdown"].includes(k)), checks = ks.filter((k) => !faults.includes(k));
+  const faults = ks.filter((k) => Build.FAULTS.includes(k) || ["fault", "unfault", "limits", "seal", "unseal", "stepdown"].includes(k)), checks = ks.filter((k) => !faults.includes(k));
   const row = (l) => l.map((k) => `<button class="btn sm" data-step="${k}" data-sid="${esc(id)}">${STEP_LABEL[k]}</button>`).join("");
   return `<div class="fld" style="align-items:start">${flbl("Scenario", "", `Adds a step on ${Build.sel(BL.m, id)} to the lab's scenario. Right-click it on the canvas for the same steps.`)}<div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}</div></div>`;
 }
@@ -768,6 +862,7 @@ function bField(el) {
     });
     return;
   }
+  if (f === "fkopen") { const k = `${sel}:${el.dataset.k}`; BL.fkOpen = Object.assign({}, BL.fkOpen, { [k]: !(BL.fkOpen || {})[k] }); bInspector(); return; }
   bEdit((m) => {
     const t = sel === "lab" ? null : sel.startsWith("srv:") ? { t: "dc", dc: Build.dcById(m, sel.slice(4)) } : Build.find(m, sel);
     if (!t) {
@@ -776,6 +871,7 @@ function bField(el) {
       else if (f === "envoy") m.envoy = v.trim() || m.envoy;
       else if (f === "vaultv") m.vault = v.trim() || m.vault;
       else if (f === "mesh" || f === "tls" || f === "acl") m[f] = v === "true";
+      else if (f === "fkdef") Build.fakeSet(m, "fakeDef", el.dataset.k, v);
       else if (f === "fed") { if (v) return Build.joinDCs(m, m.dcs[0].id, m.dcs[1].id, v); m.fed = ""; }
       return;
     }
@@ -828,6 +924,16 @@ function bField(el) {
       if (f === "svc") n.svc = v === "true" ? n.svc || { port: Build.nextPort(m, 8080), connect: "", ups: [] } : null;
       if (f === "port") n.svc.port = num(v, 1, 65535);
       if (f === "connect") n.svc.connect = v;
+      if (f === "fk") {
+        const k = el.dataset.k, tt = el.dataset.t;
+        const x = tt === "list" ? v.split(",").map((y) => y.trim()).filter(Boolean) : tt === "str" ? v.trim() : Build.fakeValue(v);
+        Build.fakeSet(n.svc, "fake", k, x);
+      }
+      if (f === "fkseg") {
+        const b = el.dataset.v === "true" ? true : el.dataset.v === "false" ? false : el.dataset.v;
+        Build.fakeSet(n.svc, "fake", el.dataset.k, String(b) === el.dataset.base ? undefined : b);
+      }
+      if (f === "fkreset") { const p = Build.fakeGet(n.svc.fake, "limits.profile"); Build.fakeSet(n.svc, "fake", "limits", undefined); if (p) Build.fakeSet(n.svc, "fake", "limits.profile", p); }
       if (f === "ns") { const x = v.trim(); if (x && !Build.NAME_RE.test(x)) throw new Error("Use lowercase letters, digits and single hyphens."); n.svc.ns = x; }
       if (f === "upport") n.svc.ups[i].port = num(v, 1, 65535);
       if (f === "rmup") n.svc.ups.splice(i, 1);

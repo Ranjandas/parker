@@ -635,3 +635,26 @@ svg.edges .bpill{pointer-events:auto;cursor:pointer}
 dialog.bd-ce{width:min(620px,94vw)}
 .ups{min-width:0}
 .up.ce{box-sizing:border-box;min-width:0;max-width:100%}
+/* The service inspector's fake-service fields: a summary line each,
+   groups that open on demand, set values marked against the profile's. */
+.fksum{font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:5px}
+.fksum b{color:var(--ink-2);font-weight:550}
+.lnk{border:0;background:none;color:var(--accent);font:inherit;font-size:12px;padding:0;cursor:pointer;margin-top:6px}
+.lnk:hover{text-decoration:underline}
+.fkgrp{border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:5px}
+.fkgrp h4{margin:0 0 2px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.fkgrp .sf.inl{grid-template-columns:110px minmax(0,1fr);margin-top:0}
+.fkgrp .sf.inl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fkgrp input,.fkcalls input{width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line);background:var(--panel-2);color:inherit;border-radius:7px;padding:3px 7px;font:12px var(--f-mono)}
+.fkgrp .seg{box-shadow:none;justify-self:start}
+.fkgrp .seg button{padding:2px 7px;font-size:11.5px}
+.fkgrp .ov input{border-color:var(--accent-line);background:var(--accent-soft)}
+.fkgrp .ov>span::after{content:" •";color:var(--accent)}
+.fkcalls{display:flex;flex-direction:column;gap:7px;min-width:0}
+.sf.stk{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.sf.stk .two{display:flex;gap:4px}
+.sf.stk .two input:last-child{flex:none;width:84px}
+.fkcodes{display:flex;flex-wrap:wrap;gap:6px 10px}
+.fkcodes label{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted)}
+.fkcodes input{width:50px}
+.fkcodes .ov input{border-color:var(--accent-line);background:var(--accent-soft)}

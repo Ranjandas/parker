@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Ranjandas/parker/internal/compat"
+	"github.com/Ranjandas/parker/internal/fake"
 	"github.com/Ranjandas/parker/internal/spec"
 )
 
@@ -117,6 +118,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
 		_ = json.NewEncoder(w).Encode(map[string]any{"releases": compat.Releases, "envoy": compat.Supported()})
+	case r.URL.Path == "/ui/profiles":
+		// The builder's App server picker: each fake-service limits
+		// profile with its values, which the inspector shows as
+		// placeholders.
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_ = json.NewEncoder(w).Encode(fake.Profiles())
 	case strings.HasPrefix(r.URL.Path, buildPrefix):
 		h.build(w, r)
 	case strings.HasPrefix(r.URL.Path, Prefix+"/"):
