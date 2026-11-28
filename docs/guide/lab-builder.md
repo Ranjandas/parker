@@ -36,12 +36,40 @@ Link them, by dragging from a dot or with **Vault link**:
 |---|---|
 | Datacenter to a Vault cluster | The cluster is the datacenter's [Connect CA](vault.md#vault-as-the-connect-ca). |
 | Vault cluster to a datacenter | A choice: [register in](vault.md#registering-in-consul) it, keep the data in it ([Consul storage](vault.md#consul-storage)), or mint its ACL tokens ([Consul secrets engine](vault.md#consul-secrets-engine), which turns ACLs on). |
-| Vault cluster to another one | [Transit auto-unseal](vault.md#transit-auto-unseal) with the other one. |
+| Vault cluster to another one | A choice: [transit auto-unseal](vault.md#transit-auto-unseal) with the other one, or [replicate](vault.md#replication) it as a performance or DR secondary. |
 
 Each link shows as a dashed, labelled arc. A cluster's inspector sets
 its servers, dev mode, TLS, storage and links, and its **Scenario**
 buttons add `vault:` steps (seal, unseal, step down) and an
 `assert: {vault: ...}` check.
+
+A replication link writes `vault.replication`, with the cluster you
+dragged from as a secondary of the one you dropped on. Replication is
+Vault Enterprise, so the link adds `+ent` to `versions.vault` and the
+lab needs a [Vault license](enterprise.md#vault-enterprise). The
+builder refuses a link the lab can't run: a dev-mode cluster, a chain
+(a secondary of a secondary), a second primary for the same kind of
+replication, or a secondary whose data activation would wipe (a
+Connect CA, a transit unsealer or a Consul secrets engine). The
+cluster's card says its part, such as `perf + DR primary` or
+`DR secondary of east`, and its **Replicates** field changes or
+removes the link. A paths filter you write in the YAML is kept.
+
+A replicated cluster's **Scenario** buttons add replication steps:
+**Promote** on a secondary, **Demote** on a primary, and **Check
+replicating** on a secondary, which waits for it to stream:
+
+```yaml
+scenario:
+  steps:
+    - assert:
+        vault:
+          on: east-dr
+          replication: { dr: secondary, state: stream-wals }
+        within: 60s
+    - vault: { demote: east, replication: dr }
+    - vault: { promote: east-dr }
+```
 
 ### Fake service settings
 

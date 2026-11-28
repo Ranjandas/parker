@@ -137,11 +137,26 @@ for (const how of ["mesh-gateways", "peering"]) {
   const d1 = m.dcs[0], d2 = B.dc("dc2", 1); m.dcs.push(d2);
   const east = B.vault("east", 3), unsealer = B.vault("unsealer", 1), old = B.vault("old", 2);
   m.vaults.push(east, unsealer, old);
-  B.link(m, east.id, unsealer.id);
+  B.joinVaults(m, east.id, unsealer.id, "transit");
   B.link(m, d1.id, east.id);
   B.joinVault(m, east.id, d1.id, "reg");
   B.joinVault(m, east.id, d1.id, "secrets");
   B.joinVault(m, old.id, d2.id, "store");
   for (const [id, kind] of [[east.id, "wait"], [east.id, "unsealed"], [east.id, "stepdown"], [unsealer.id, "seal"], [unsealer.id, "unseal"]]) B.addStep(m, B.stepFor(m, id, kind));
   write("vault-links", m);
+}
+
+// Vault replication, as examples/vault-replication.yaml: east is the
+// performance primary of west (whose paths filter came from a file) and
+// the DR primary of east-dr. Linked on the canvas, with replication steps.
+{
+  const m = B.lab("vault-replication");
+  const east = B.vault("east", 3), west = B.vault("west", 2), dr = B.vault("east-dr", 1);
+  m.vaults.push(east, west, dr);
+  if (B.link(m, west.id, east.id) !== "rpick") throw new Error("vault to vault should ask how");
+  B.joinVaults(m, west.id, east.id, "performance");
+  B.joinVaults(m, dr.id, east.id, "dr");
+  west.replFilter = { mode: "deny", paths: ["private/"] };
+  for (const [id, kind] of [[east.id, "wait"], [west.id, "replicating"], [dr.id, "replicating"], [east.id, "demote"], [dr.id, "promote"]]) B.addStep(m, B.stepFor(m, id, kind));
+  write("vault-replication", m);
 }
