@@ -723,6 +723,17 @@ func integrations(f *spec.File, g *Graph, firstServer func(string) string) []Edg
 			var cc struct {
 				Datacenter string `json:"datacenter"`
 			}
+			var rs expand.VaultReplicationSpec
+			if m, ok := rn.Files[expand.VaultReplicationManifest]; ok && json.Unmarshal([]byte(m), &rs) == nil {
+				// A secondary replicates its primary, as set up at start.
+				for _, s := range rs.Secondaries {
+					label := "performance replication"
+					if s.Mode == spec.VaultReplDR {
+						label = "DR replication"
+					}
+					add(firstServer(s.Name), firstServer(rs.Primary.Name), label)
+				}
+			}
 			var is expand.VaultInitSpec
 			if m, ok := rn.Files[expand.VaultInitManifest]; ok && json.Unmarshal([]byte(m), &is) == nil && is.ConsulEngine != nil {
 				host, _, _ := strings.Cut(is.ConsulEngine.Address, ":")
