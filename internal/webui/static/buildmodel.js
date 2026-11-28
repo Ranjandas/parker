@@ -36,6 +36,7 @@
   //        held: ports of upstreams the canvas doesn't show
   //        ns: its own namespace ("" for the default, or inherited)
   //        inhNs: the namespace a file's service_template gives it
+  //        fake: the service's own fake: block, as the file writes it
   //     connect: "" (from service_template) | "none" | "sidecar" | "tproxy"
   //     to: the called node's id
   // gw: {id, name, kind, part, to: [node ids], ns}
@@ -56,6 +57,8 @@
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
+  // lab.fakeDef: the fake: block of consul.defaults.service_template,
+  //   which every service starts from (field by field)
   function lab(name) {
     return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, vault: VERSIONS.vault, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [], fails: [], vaults: [] };
   }
@@ -614,6 +617,11 @@
       case "unsealed": return f && f.t === "vault" ? { assert: { vault: { on: `${s}/active`, sealed: false }, within: "30s" } } : null;
       case "fault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, health: { code: 503 } } } : null;
       case "unfault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, reset: true } } : null;
+      case "limits": {
+        if (!(f && f.t === "node" && f.node.svc)) return null;
+        const cur = profileOf(m, f.node);
+        return { fake: { on: s, limits: { profile: cur.own || cur.inh ? (cur.own || cur.inh) === "none" ? "tomcat" : "none" : "tomcat" } } };
+      }
     }
     return null;
   }
@@ -635,7 +643,7 @@
   function stepText(st) {
     if (!isMap(st)) return String(st);
     for (const k of FAULTS.concat(["heal", "wait", "sleep", "snapshot"])) if (k in st) return `${k} ${Array.isArray(st[k]) ? flow(st[k]) : st[k]}`;
-    if (isMap(st.fake)) return `fake ${st.fake.on || ""}${st.fake.reset ? " reset" : ""}${st.fake.health ? ` health ${st.fake.health.code}` : ""}`;
+    if (isMap(st.fake)) return `fake ${st.fake.on || ""}${st.fake.reset ? " reset" : ""}${st.fake.health ? ` health ${st.fake.health.code}` : ""}${isMap(st.fake.limits) ? ` limits ${st.fake.limits.profile || Object.keys(st.fake.limits).join(", ")}` : ""}`;
     if (isMap(st.upgrade)) return `upgrade ${st.upgrade.on || ""} to ${st.upgrade.to || ""}`;
     if (isMap(st.exec)) return `exec on ${st.exec.on || ""}`;
     if (isMap(st.vault)) return `vault ${Object.entries(st.vault).map(([k, v]) => `${k} ${v}`).join(", ")}`;
@@ -671,6 +679,41 @@
 
   // ---------- YAML ----------
   // toDoc builds the topology as plain objects, keys in the examples' order.
+  // ---------- fake service ----------
+  // The app servers limits.profile names (internal/fake/profiles.go).
+  const FAKE_PROFILES = ["tomcat", "nginx", "apache", "node", "envoy", "go", "alb", "kestrel", "gunicorn"];
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  // fakeGet reads a dotted key ("limits.codes.header") of a fake: block.
+  function fakeGet(fk, key) {
+    let v = fk;
+    for (const k of key.split(".")) { if (!isMap(v) || !(k in v)) return undefined; v = v[k]; }
+    return v;
+  }
+  // fakeSet sets a dotted key of the fake: block at holder[field] (made
+  // when missing); undefined or "" removes the key, and maps left empty
+  // go with it.
+  function fakeSet(holder, field, key, value) {
+    const path = key.split(".");
+    if (!isMap(holder[field])) holder[field] = {};
+    const chain = [holder[field]];
+    for (const k of path.slice(0, -1)) {
+      const cur = chain[chain.length - 1];
+      if (!isMap(cur[k])) { if (value === undefined || value === "") return; cur[k] = {}; }
+      chain.push(cur[k]);
+    }
+    const last = path[path.length - 1];
+    if (value === undefined || value === "" || (Array.isArray(value) && !value.length)) delete chain[chain.length - 1][last];
+    else chain[chain.length - 1][last] = value;
+    for (let i = chain.length - 1; i > 0; i--) if (!Object.keys(chain[i]).length) delete chain[i - 1][path[i - 1]];
+    if (!Object.keys(holder[field]).length) delete holder[field];
+  }
+  // fakeValue turns what was typed into a value: a plain number is a
+  // number, anything else ("8KB", "20s") stays text.
+  const fakeValue = (s) => { const t = String(s).trim(); return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t; };
+  // profileOf is a service's limits profile: own (its fake: block) and
+  // inh (from service_template).
+  const profileOf = (m, n) => ({ own: (n && n.svc && fakeGet(n.svc.fake, "limits.profile")) || "", inh: fakeGet(m.fakeDef, "limits.profile") || "" });
+
   function toDoc(m) {
     fillInh(m);
     const doc = { parker: "v1alpha1", name: m.name };
@@ -690,7 +733,10 @@
     if (m.tls) defs.tls = true;
     if (m.acl) defs.acl = true;
     const exts = m.exts || [];
-    if (nodes.some((n) => n.svc) || exts.length) defs.service_template = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
+    if (nodes.some((n) => n.svc) || exts.length) {
+      defs.service_template = m.mesh ? { run: "fake-service", connect: "sidecar" } : { run: "fake-service" };
+      if (isMap(m.fakeDef) && Object.keys(m.fakeDef).length) defs.service_template.fake = clone(m.fakeDef);
+    }
     if (Object.keys(defs).length) consul.defaults = defs;
     if (m.fed && m.dcs.length > 1) consul.federation = { mode: m.fed };
     if (exts.length) {
@@ -820,6 +866,7 @@
             ups[c.t.name] = Object.keys(u).length === 1 ? u.port : u;
           }
           if (Object.keys(ups).length) sv.upstreams = ups;
+          if (isMap(n.svc.fake) && Object.keys(n.svc.fake).length) sv.fake = clone(n.svc.fake);
           v.service = sv;
         }
         body.nodes[n.name] = v;
@@ -1203,6 +1250,7 @@
     m.tls = !!defs.tls; m.acl = !!defs.acl;
     m.mesh = !!sdOf(defs).connect && sdOf(defs).connect !== "none";
     if (typeof sdOf(defs).namespace === "string" && normNs(sdOf(defs).namespace)) m.defNs = sdOf(defs).namespace;
+    if (isMap(sdOf(defs).fake) && Object.keys(sdOf(defs).fake).length) m.fakeDef = clone(sdOf(defs).fake);
     if (isMap(c.federation) && c.federation.mode) m.fed = String(c.federation.mode);
     const pending = []; // upstreams and routes, resolved once every node exists
     const resolvers = []; // failover candidates: {d, pid, ce}
@@ -1253,6 +1301,7 @@
             const s = nv.service;
             n.svc = { port: Number(s.port) || 0, connect: typeof s.connect === "string" ? s.connect : "", ups: [] };
             if (typeof s.namespace === "string" && s.namespace) n.svc.ns = s.namespace;
+            if (isMap(s.fake) && Object.keys(s.fake).length) n.svc.fake = clone(s.fake);
 
             const inh = typeof sd.connect === "string" ? sd.connect : "";
             if (inh && inh !== (m.mesh ? sdOf(defs).connect : "none")) n.svc.inh = inh;
@@ -1552,7 +1601,7 @@
     ["vault-ca", "Vault as Connect CA", "dc1's mesh certificates from Vault"],
   ];
 
-  const api = { entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, vault, vaultById, joinVault, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { FAKE_PROFILES, fakeGet, fakeSet, fakeValue, profileOf, entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, vault, vaultById, joinVault, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

@@ -43,6 +43,45 @@ its servers, dev mode, TLS, storage and links, and its **Scenario**
 buttons add `vault:` steps (seal, unseal, step down) and an
 `assert: {vault: ...}` check.
 
+### Fake service settings
+
+A service's inspector sets its [fake service](fake-service.md) too, one
+line each until you open it:
+
+- **Calls carry**, on a service that calls another: headers it passes
+  on from its caller (`forward_headers`), and a padded header or a body
+  on each call (`upstream_request`), to
+  [send large requests](fake-service.md#sending-large-requests) down a
+  chain.
+- **App server**: a [limits profile](fake-service.md#profiles), such as
+  `tomcat` or `nginx`, so the fake refuses what that server would. The
+  line under it sums up the profile's limits, and the service's card
+  names it. **Adjust limits** opens every
+  [limit](fake-service.md#request-size-limits): request size, capacity,
+  [strict parsing](fake-service.md#strict-request-parsing) and the codes
+  it refuses with. The profile's values show greyed out; a value you
+  type overrides it and is marked, and **Reset** clears your overrides.
+- **Answers**: protocol, version, message, latency, errors, rate limit
+  and health, under **Adjust answers**.
+
+Only what you set goes in the file, under the service's `fake:`:
+
+```yaml
+api:
+  service:
+    port: 9090
+    fake:
+      limits:
+        profile: tomcat
+        max_header_bytes: 16KB
+```
+
+**Lab settings** has an **App server** for every service
+(`service_template`), which a service's own picker overrides. A
+service's **Change limits** button adds a `fake:` step that changes its
+limits while the scenario runs. Other `fake:` keys, such as `upstreams`
+or `seed`, go in the YAML.
+
 The YAML next to the canvas reads like a hand-written file: shared
 settings go in `consul.defaults`, and the builder writes the config
 entries the links need (local mesh gateways, exports, gateway routes,

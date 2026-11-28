@@ -1,10 +1,13 @@
 package fake
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Ranjandas/parker/internal/spec"
 )
 
 // profile is a server's stock request limits, with the names of its own
@@ -104,4 +107,62 @@ func profileRow(name string) string {
 		}
 	}
 	return "| `" + name + "` | [" + p.title + "](" + p.source + ") | " + l.summary() + " | " + strings.Join(sets, ", ") + " |"
+}
+
+// ProfileInfo is a profile as the lab builder shows it: the server, a
+// one-line summary, and its values as a fake's limits: keys, written as
+// a lab file writes them ("8KB", "20s").
+type ProfileInfo struct {
+	Title   string         `json:"title"`
+	Summary string         `json:"summary"`
+	Limits  map[string]any `json:"limits"`
+}
+
+// Profiles lists every profile for the lab builder, plus "" for no
+// profile: the codes a limit answers with when none sets them.
+func Profiles() map[string]ProfileInfo {
+	out := map[string]ProfileInfo{"": {Limits: limitKeysOf(DefaultLimits())}}
+	for n, p := range profiles {
+		out[n] = ProfileInfo{Title: p.title, Summary: p.limits.summary(), Limits: limitKeysOf(p.limits)}
+	}
+	return out
+}
+
+// limitKeysOf writes l as limits: keys, leaving out the limits it
+// doesn't set.
+func limitKeysOf(l Limits) map[string]any {
+	m := map[string]any{}
+	size := func(k string, v int64) {
+		if v > 0 {
+			m[k] = spec.ByteSize(v).String()
+		}
+	}
+	num := func(k string, v int) {
+		if v > 0 {
+			m[k] = v
+		}
+	}
+	dur := func(k string, v time.Duration) {
+		if v > 0 {
+			m[k] = shortDur(v)
+		}
+	}
+	size("max_header_bytes", l.HeaderBytes)
+	size("max_header_line_bytes", l.HeaderLineBytes)
+	num("max_header_count", l.HeaderCount)
+	size("max_url_bytes", l.URLBytes)
+	size("max_body_bytes", l.BodyBytes)
+	num("max_form_params", l.FormParams)
+	num("max_concurrent", l.Concurrent)
+	num("queue", l.Queue)
+	num("max_requests_per_conn", l.PerConn)
+	dur("idle_timeout", l.IdleTimeout)
+	dur("header_timeout", l.HeaderTimeout)
+	num("h2_max_streams", l.H2Streams)
+	m["when_full"] = cmp.Or(l.WhenFull, "refuse")
+	m["underscore_headers"] = cmp.Or(l.Underscores, "allow")
+	m["strict_cookies"] = l.StrictCookies
+	m["strict_path_chars"] = l.StrictPath
+	m["codes"] = map[string]int{"header": l.HeaderCode, "url": l.URLCode, "body": l.BodyCode, "form": l.FormCode, "full": l.FullCode}
+	return m
 }

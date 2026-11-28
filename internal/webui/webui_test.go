@@ -6,9 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Ranjandas/parker/internal/fake"
 )
 
 // fakeAPI records what reached the API.
@@ -314,4 +319,40 @@ func doURL(h http.Handler, method, target string, hdr map[string]string) *httpte
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+// The builder's App server picker reads the limits profiles, and its own
+// list of them (buildmodel.js FAKE_PROFILES) names the same ones.
+func TestProfilesServed(t *testing.T) {
+	h, _ := newTest(t)
+	w := do(h, "GET", "/ui/profiles", "", nil)
+	var p map[string]struct {
+		Title, Summary string
+		Limits         map[string]any
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &p) != nil {
+		t.Fatalf("%d %.300s", w.Code, w.Body)
+	}
+	if tc := p["tomcat"]; tc.Limits["max_header_bytes"] != "8KB" || tc.Limits["idle_timeout"] != "20s" || tc.Summary == "" {
+		t.Errorf("tomcat: %+v", tc)
+	}
+	if c, _ := p[""].Limits["codes"].(map[string]any); c["header"] != float64(431) {
+		t.Errorf("no profile's codes: %v", p[""].Limits)
+	}
+	src, err := os.ReadFile("static/buildmodel.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`const FAKE_PROFILES = \[([^\]]*)\]`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("no FAKE_PROFILES in buildmodel.js")
+	}
+	var js []string
+	for _, q := range regexp.MustCompile(`"([^"]+)"`).FindAllSubmatch(m[1], -1) {
+		js = append(js, string(q[1]))
+	}
+	slices.Sort(js)
+	if want := fake.ProfileNames(); !slices.Equal(js, want) {
+		t.Errorf("buildmodel.js FAKE_PROFILES %v, want %v", js, want)
+	}
 }
