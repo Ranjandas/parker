@@ -53,10 +53,10 @@ type Options struct {
 	NoFirewall    bool
 	// Life bounds supervision (restart policies) after Up returns.
 	Life context.Context
-	// License is the Consul Enterprise license, for labs that need one
-	// (see license.Needed). It's written to the run dir, 0600, and nowhere
-	// else.
-	License []byte
+	// Licenses are the Enterprise licenses by product, for labs that need
+	// them (see license.Needed). Each is written to the run dir, 0600, and
+	// nowhere else.
+	Licenses license.Licenses
 	// Resume brings the lab back on its kept run dir (Consul data, logs,
 	// peering tokens) instead of a fresh one, and fails rather than move
 	// it to another subnet.
@@ -72,8 +72,8 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	say := func(format string, a ...any) { fmt.Fprintf(o.Log, format+"\n", a...) }
 	name := low.Name
 	t0 := time.Now()
-	if why := license.Needed(low); len(why) > 0 && len(o.License) == 0 {
-		return nil, fmt.Errorf("%s needs a Consul Enterprise license, and none came with the request: set CONSUL_LICENSE_PATH or CONSUL_LICENSE where you run parker up", strings.Join(why, ", "))
+	if err := license.Missing(low, o.Licenses); err != nil {
+		return nil, err
 	}
 	if err := netsetup.CheckSubnets(name, low); err != nil {
 		return nil, err
@@ -115,12 +115,9 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	licPath := ""
-	if len(o.License) > 0 {
-		licPath = license.Path(dir)
-		if err := license.Write(dir, o.License); err != nil {
-			return nil, err
-		}
+	licPaths, err := license.Write(dir, o.Licenses)
+	if err != nil {
+		return nil, err
 	}
 	if w := spaceWarning(dir, low); w != "" {
 		say("%s", w)
@@ -141,9 +138,9 @@ func Up(ctx context.Context, low *spec.File, o Options) (*supervisor.Handle, err
 		_ = license.Remove(dir)
 		return nil, err
 	}
-	h, err := supervisor.Run(ctx, low, supervisor.Options{Lab: name, RunDir: dir, Log: o.Log, Life: o.Life, LicensePath: licPath})
+	h, err := supervisor.Run(ctx, low, supervisor.Options{Lab: name, RunDir: dir, Log: o.Log, Life: o.Life, LicensePaths: licPaths})
 	if err != nil {
-		err = errors.New(license.Redact(err.Error(), o.License))
+		err = errors.New(license.Redact(err.Error(), o.Licenses))
 		err = spaceHint(dir, err)
 		for _, hint := range netsetup.FirewallHints() {
 			err = fmt.Errorf("%w\nhint: %s", err, hint)

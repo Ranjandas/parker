@@ -30,6 +30,7 @@ func TestVaultValidate(t *testing.T) {
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { register: dc9 }\n":                                                                                                             `register: "dc9" is not a Consul datacenter`,
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { dev: true, register: dc9 }\n":                                                                                                  "register: not supported with dev: true",
 		"versions: { vault: 1.3.10, consul: 1.22.7 }\nconsul:\n  datacenters:\n    dc1: { servers: 1 }\nvault:\n  clusters:\n    e: { storage: { consul: dc1 }, register: dc1 }\n":                 "registers the servers in dc1 already",
+		"versions: { vault: 1.7.10+ent }\nvault:\n  clusters:\n    e: { storage: file }\n":                                                                                                         "needs Vault 1.8 or later (got 1.7.10+ent)",
 		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    e: { storage: s3 }\n":                                                                                                               `storage: "s3" is not raft, file or {consul: DC}`,
 	} {
 		p := filepath.Join(t.TempDir(), "lab.yaml")

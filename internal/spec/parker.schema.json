@@ -1073,6 +1073,25 @@
       "properties": {
         "file": {
           "type": "string",
+          "description": "File is Consul's license file, the older form of consul: {file: PATH}:\nabsolute, ~/..., or relative to this file."
+        },
+        "consul": {
+          "$ref": "#/$defs/LicenseFile",
+          "description": "Consul is the Consul Enterprise license."
+        },
+        "vault": {
+          "$ref": "#/$defs/LicenseFile",
+          "description": "Vault is the Vault Enterprise license."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "License points at the Enterprise license files, one per product."
+    },
+    "LicenseFile": {
+      "properties": {
+        "file": {
+          "type": "string",
           "description": "File is the license file: absolute, ~/..., or relative to this file."
         }
       },
@@ -1081,7 +1100,7 @@
       "required": [
         "file"
       ],
-      "description": "License points at a Consul Enterprise license file."
+      "description": "LicenseFile is one product's license file."
     },
     "LogLevelStep": {
       "properties": {
@@ -2031,7 +2050,7 @@
     },
     "license": {
       "$ref": "#/$defs/License",
-      "description": "License is the Consul Enterprise license for \"+ent\" versions. Without\nit Parker reads CONSUL_LICENSE_PATH, then CONSUL_LICENSE. The license\ngoes to the agents only; it never appears in expand output or logs."
+      "description": "License holds the Enterprise license files for \"+ent\" versions, one\nper product: {consul: {file: PATH}, vault: {file: PATH}}. The older\n{file: PATH} is Consul's. Without one Parker reads \u003cPRODUCT\u003e_LICENSE_PATH,\nthen \u003cPRODUCT\u003e_LICENSE (CONSUL_LICENSE_PATH, VAULT_LICENSE_PATH, ...).\nA license goes to its product's processes only; it never appears in\nexpand output or logs."
     },
     "vars": {
       "type": "object",

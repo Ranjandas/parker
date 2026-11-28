@@ -257,7 +257,27 @@ func TestLicensePath(t *testing.T) {
 		t.Errorf("~ license.file: %v %v", f, err)
 	}
 	os.WriteFile(p, []byte("parker: v1alpha1\nlicense: {}\n"), 0o644)
-	if _, err := Load(p, nil); err == nil || !strings.Contains(err.Error(), "license.file: required") {
+	if _, err := Load(p, nil); err == nil || !strings.Contains(err.Error(), "license: give") {
 		t.Errorf("empty license: %v", err)
+	}
+	os.WriteFile(p, []byte("parker: v1alpha1\nlicense: { consul: { file: c.hclic }, vault: { file: ~/v.hclic } }\n"), 0o644)
+	f, err = Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.License.For("consul"); got != filepath.Join(dir, "c.hclic") {
+		t.Errorf("license.consul.file: %q", got)
+	}
+	if got := f.License.For("vault"); got != filepath.Join(home, "v.hclic") {
+		t.Errorf("license.vault.file: %q", got)
+	}
+	for text, want := range map[string]string{
+		"license: { file: a, consul: { file: b } }": "not both",
+		"license: { vault: {} }":                    "license.vault.file: required",
+	} {
+		os.WriteFile(p, []byte("parker: v1alpha1\n"+text+"\n"), 0o644)
+		if _, err := Load(p, nil); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", text, err, want)
+		}
 	}
 }

@@ -468,4 +468,5 @@ vault:
 
 ## Limits
 
-- Replication and Enterprise builds are planned.
+- Replication is planned. Enterprise builds run with their license, see
+  [Vault Enterprise](enterprise.md#vault-enterprise).

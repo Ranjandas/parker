@@ -28,7 +28,7 @@ scenario:                             # optional: steps for parker run
 | `parker` | Schema version: `v1alpha1`. | |
 | `name` | Lab name: lowercase letters, digits and `-`, at most 24 characters. Default: the file name. | [Concepts](concepts.md#labs) |
 | `versions` | Binaries to run: `consul`, `envoy`, `consul-dataplane`. | [Concepts](concepts.md#versions-and-binaries) |
-| `license` | Consul Enterprise license file. | [Enterprise](enterprise.md) |
+| `license` | Enterprise license files, one per product: `{consul: {file: PATH}, vault: {file: PATH}}`. | [Enterprise](enterprise.md) |
 | `vars` | Values to substitute with `${vars.NAME}`. | [below](#variables) |
 | `imports` | Modules to merge in. | [Reuse](reuse.md#modules) |
 | `consul` | Datacenters, nodes, services, federation, peering. | [Datacenters](datacenters.md) |

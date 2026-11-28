@@ -182,14 +182,25 @@ func decode(path, label string, text []byte) (*File, error) {
 	if f.Name == "" {
 		f.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	if l := f.License; l != nil && l.File != "" {
-		if rest, ok := strings.CutPrefix(l.File, "~/"); ok {
-			if home, err := os.UserHomeDir(); err == nil {
-				l.File = filepath.Join(home, rest)
+	if l := f.License; l != nil {
+		resolve := func(p *string) {
+			if *p == "" {
+				return
+			}
+			if rest, ok := strings.CutPrefix(*p, "~/"); ok {
+				if home, err := os.UserHomeDir(); err == nil {
+					*p = filepath.Join(home, rest)
+				}
+			}
+			if !filepath.IsAbs(*p) {
+				*p = filepath.Join(filepath.Dir(path), *p)
 			}
 		}
-		if !filepath.IsAbs(l.File) {
-			l.File = filepath.Join(filepath.Dir(path), l.File)
+		resolve(&l.File)
+		for _, lf := range []*LicenseFile{l.Consul, l.Vault} {
+			if lf != nil {
+				resolve(&lf.File)
+			}
 		}
 	}
 	if err := resolveConfigEntries(&f, text, filepath.Dir(path)); err != nil {
@@ -231,8 +242,18 @@ func (f *File) Validate() error {
 	if f.Parker != SchemaVersion {
 		add("parker: must be %q (got %q)", SchemaVersion, f.Parker)
 	}
-	if f.License != nil && f.License.File == "" {
-		add("license.file: required (or drop license: and set CONSUL_LICENSE_PATH)")
+	if l := f.License; l != nil {
+		switch {
+		case l.File != "" && l.Consul != nil:
+			add("license: file is Consul's license; set it or consul: {file: ...}, not both")
+		case l.File == "" && l.Consul == nil && l.Vault == nil:
+			add("license: give {consul: {file: PATH}} or {vault: {file: PATH}} (or drop license: and set CONSUL_LICENSE_PATH or VAULT_LICENSE_PATH)")
+		}
+		for p, lf := range map[string]*LicenseFile{"consul": l.Consul, "vault": l.Vault} {
+			if lf != nil && lf.File == "" {
+				add("license.%s.file: required (or drop it and set %s_LICENSE_PATH)", p, strings.ToUpper(p))
+			}
+		}
 	}
 	if !nameRe.MatchString(f.Name) || len(f.Name) > 24 {
 		add("name: %q must be lowercase letters, digits and '-', at most 24 chars", f.Name)

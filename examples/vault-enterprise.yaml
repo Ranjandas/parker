@@ -1,0 +1,50 @@
+# Vault Enterprise beside Consul Enterprise, each with its own license:
+# Parker reads license.vault.file (below, commented out), else the file at
+# VAULT_LICENSE_PATH, else VAULT_LICENSE, and the same for Consul with
+# CONSUL_. Vault's license reaches the Vault servers only and Consul's the
+# Consul agents only. The Vault cluster is dc1's Connect CA and registers
+# in dc1.
+#
+# Not in the CI suite (no license there): run hack/ent-e2e.sh where you
+# have the licenses.
+parker: v1alpha1
+name: vault-enterprise
+versions: { consul: 1.22.7+ent, envoy: 1.35.12, vault: 1.21.1+ent }
+# license:
+#   consul: { file: ~/consul.hclic }
+#   vault: { file: ~/vault.hclic }
+vault:
+  clusters:
+    east: { servers: 3, register: dc1 }
+consul:
+  datacenters:
+    dc1:
+      servers: 1
+      connect: { ca: { vault: east } }
+      service_template: { run: fake-service, connect: sidecar }
+      nodes:
+        web:
+          service:
+            port: 8080
+            upstreams: { api: 9091 }
+        api:
+          service: { port: 9090 }
+
+scenario:
+  steps:
+    - wait: east ready
+    - assert:
+        exec: { on: east/vault-1, run: "vault version", output: "+ent" }
+    - name: Vault runs on the autoloaded license
+      assert:
+        exec: { on: east/active, run: "vault read -format=json sys/license/status", output: "autoloaded" }
+        within: 30s
+    - assert: { vault: { on: east/active, raft_peers: ">=3" }, within: 60s }
+    - assert: { consul: { service_healthy: vault }, within: 60s }
+    - assert:
+        exec: { on: dc1/server-1, run: "consul connect ca get-config", output: '"Provider": "vault"' }
+        within: 30s
+    - name: web reaches api through the mesh, on Vault-signed certificates
+      assert:
+        exec: { on: dc1/web, run: "curl -sf -m 2 http://127.0.0.1:9091/", output: api }
+        within: 60s

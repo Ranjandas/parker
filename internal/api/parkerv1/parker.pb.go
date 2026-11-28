@@ -124,7 +124,11 @@ type UpRequest struct {
 	ConsulLicense []byte `protobuf:"bytes,4,opt,name=consul_license,json=consulLicense,proto3" json:"consul_license,omitempty"`
 	// Bring the lab back on its kept run dir (data, logs) instead of a
 	// fresh one, as `parker up LAB` does; fail rather than move its subnets.
-	Resume        bool `protobuf:"varint,5,opt,name=resume,proto3" json:"resume,omitempty"`
+	Resume bool `protobuf:"varint,5,opt,name=resume,proto3" json:"resume,omitempty"`
+	// Enterprise licenses the client resolved, by product ("consul",
+	// "vault"; consul_license too, for older daemons). Written like
+	// consul_license, each for its product's processes only.
+	Licenses      map[string][]byte `protobuf:"bytes,6,rep,name=licenses,proto3" json:"licenses,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -192,6 +196,13 @@ func (x *UpRequest) GetResume() bool {
 		return x.Resume
 	}
 	return false
+}
+
+func (x *UpRequest) GetLicenses() map[string][]byte {
+	if x != nil {
+		return x.Licenses
+	}
+	return nil
 }
 
 type LogLine struct {
@@ -2696,14 +2707,18 @@ const file_parker_v1_parker_proto_rawDesc = "" +
 	"\x0eVersionRequest\"=\n" +
 	"\x0fVersionResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\x05R\x03pid\"\xb8\x01\n" +
+	"\x03pid\x18\x02 \x01(\x05R\x03pid\"\xb5\x02\n" +
 	"\tUpRequest\x12#\n" +
 	"\rtopology_yaml\x18\x01 \x01(\fR\ftopologyYaml\x12&\n" +
 	"\x0fkeep_on_failure\x18\x02 \x01(\bR\rkeepOnFailure\x12\x1f\n" +
 	"\vno_firewall\x18\x03 \x01(\bR\n" +
 	"noFirewall\x12%\n" +
 	"\x0econsul_license\x18\x04 \x01(\fR\rconsulLicense\x12\x16\n" +
-	"\x06resume\x18\x05 \x01(\bR\x06resume\"\x1d\n" +
+	"\x06resume\x18\x05 \x01(\bR\x06resume\x12>\n" +
+	"\blicenses\x18\x06 \x03(\v2\".parker.v1.UpRequest.LicensesEntryR\blicenses\x1a;\n" +
+	"\rLicensesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x1d\n" +
 	"\aLogLine\x12\x12\n" +
 	"\x04line\x18\x01 \x01(\tR\x04line\"5\n" +
 	"\vDownRequest\x12\x10\n" +
@@ -2927,7 +2942,7 @@ func file_parker_v1_parker_proto_rawDescGZIP() []byte {
 	return file_parker_v1_parker_proto_rawDescData
 }
 
-var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_parker_v1_parker_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
 var file_parker_v1_parker_proto_goTypes = []any{
 	(*VersionRequest)(nil),   // 0: parker.v1.VersionRequest
 	(*VersionResponse)(nil),  // 1: parker.v1.VersionResponse
@@ -2969,62 +2984,64 @@ var file_parker_v1_parker_proto_goTypes = []any{
 	(*FakeRequest)(nil),      // 37: parker.v1.FakeRequest
 	(*FakeService)(nil),      // 38: parker.v1.FakeService
 	(*FakeResponse)(nil),     // 39: parker.v1.FakeResponse
-	nil,                      // 40: parker.v1.NodeStatus.HealthEntry
-	nil,                      // 41: parker.v1.GraphNode.NamespacesEntry
-	nil,                      // 42: parker.v1.FakeRequest.HeadersEntry
+	nil,                      // 40: parker.v1.UpRequest.LicensesEntry
+	nil,                      // 41: parker.v1.NodeStatus.HealthEntry
+	nil,                      // 42: parker.v1.GraphNode.NamespacesEntry
+	nil,                      // 43: parker.v1.FakeRequest.HeadersEntry
 }
 var file_parker_v1_parker_proto_depIdxs = []int32{
-	7,  // 0: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
-	10, // 1: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
-	11, // 2: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
-	40, // 3: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
-	16, // 4: parker.v1.ValidateResponse.errors:type_name -> parker.v1.ValidateProblem
-	21, // 5: parker.v1.GraphResponse.nodes:type_name -> parker.v1.GraphNode
-	23, // 6: parker.v1.GraphResponse.edges:type_name -> parker.v1.GraphEdge
-	22, // 7: parker.v1.GraphNode.links:type_name -> parker.v1.GraphLink
-	41, // 8: parker.v1.GraphNode.namespaces:type_name -> parker.v1.GraphNode.NamespacesEntry
-	29, // 9: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
-	30, // 10: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
-	30, // 11: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
-	33, // 12: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
-	35, // 13: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
-	42, // 14: parker.v1.FakeRequest.headers:type_name -> parker.v1.FakeRequest.HeadersEntry
-	38, // 15: parker.v1.FakeResponse.services:type_name -> parker.v1.FakeService
-	0,  // 16: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
-	2,  // 17: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
-	4,  // 18: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
-	5,  // 19: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
-	8,  // 20: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
-	12, // 21: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
-	19, // 22: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
-	17, // 23: parker.v1.ParkerService.Topology:input_type -> parker.v1.TopologyRequest
-	14, // 24: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
-	24, // 25: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
-	28, // 26: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
-	32, // 27: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
-	26, // 28: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
-	36, // 29: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
-	37, // 30: parker.v1.ParkerService.Fake:input_type -> parker.v1.FakeRequest
-	1,  // 31: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
-	3,  // 32: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
-	3,  // 33: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
-	6,  // 34: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
-	9,  // 35: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
-	13, // 36: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
-	20, // 37: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
-	18, // 38: parker.v1.ParkerService.Topology:output_type -> parker.v1.TopologyResponse
-	15, // 39: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
-	25, // 40: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
-	31, // 41: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
-	34, // 42: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
-	27, // 43: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
-	3,  // 44: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
-	39, // 45: parker.v1.ParkerService.Fake:output_type -> parker.v1.FakeResponse
-	31, // [31:46] is the sub-list for method output_type
-	16, // [16:31] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	40, // 0: parker.v1.UpRequest.licenses:type_name -> parker.v1.UpRequest.LicensesEntry
+	7,  // 1: parker.v1.ListLabsResponse.labs:type_name -> parker.v1.LabSummary
+	10, // 2: parker.v1.StatusResponse.nodes:type_name -> parker.v1.NodeStatus
+	11, // 3: parker.v1.NodeStatus.processes:type_name -> parker.v1.ProcessStatus
+	41, // 4: parker.v1.NodeStatus.health:type_name -> parker.v1.NodeStatus.HealthEntry
+	16, // 5: parker.v1.ValidateResponse.errors:type_name -> parker.v1.ValidateProblem
+	21, // 6: parker.v1.GraphResponse.nodes:type_name -> parker.v1.GraphNode
+	23, // 7: parker.v1.GraphResponse.edges:type_name -> parker.v1.GraphEdge
+	22, // 8: parker.v1.GraphNode.links:type_name -> parker.v1.GraphLink
+	42, // 9: parker.v1.GraphNode.namespaces:type_name -> parker.v1.GraphNode.NamespacesEntry
+	29, // 10: parker.v1.ExecRequest.start:type_name -> parker.v1.ExecStart
+	30, // 11: parker.v1.ExecRequest.resize:type_name -> parker.v1.TermSize
+	30, // 12: parker.v1.ExecStart.size:type_name -> parker.v1.TermSize
+	33, // 13: parker.v1.DialRequest.open:type_name -> parker.v1.DialOpen
+	35, // 14: parker.v1.DialResponse.opened:type_name -> parker.v1.DialOpened
+	43, // 15: parker.v1.FakeRequest.headers:type_name -> parker.v1.FakeRequest.HeadersEntry
+	38, // 16: parker.v1.FakeResponse.services:type_name -> parker.v1.FakeService
+	0,  // 17: parker.v1.ParkerService.Version:input_type -> parker.v1.VersionRequest
+	2,  // 18: parker.v1.ParkerService.Up:input_type -> parker.v1.UpRequest
+	4,  // 19: parker.v1.ParkerService.Down:input_type -> parker.v1.DownRequest
+	5,  // 20: parker.v1.ParkerService.ListLabs:input_type -> parker.v1.ListLabsRequest
+	8,  // 21: parker.v1.ParkerService.Status:input_type -> parker.v1.StatusRequest
+	12, // 22: parker.v1.ParkerService.Describe:input_type -> parker.v1.DescribeRequest
+	19, // 23: parker.v1.ParkerService.Graph:input_type -> parker.v1.GraphRequest
+	17, // 24: parker.v1.ParkerService.Topology:input_type -> parker.v1.TopologyRequest
+	14, // 25: parker.v1.ParkerService.Validate:input_type -> parker.v1.ValidateRequest
+	24, // 26: parker.v1.ParkerService.Logs:input_type -> parker.v1.LogsRequest
+	28, // 27: parker.v1.ParkerService.Exec:input_type -> parker.v1.ExecRequest
+	32, // 28: parker.v1.ParkerService.Dial:input_type -> parker.v1.DialRequest
+	26, // 29: parker.v1.ParkerService.Shutdown:input_type -> parker.v1.ShutdownRequest
+	36, // 30: parker.v1.ParkerService.Run:input_type -> parker.v1.RunRequest
+	37, // 31: parker.v1.ParkerService.Fake:input_type -> parker.v1.FakeRequest
+	1,  // 32: parker.v1.ParkerService.Version:output_type -> parker.v1.VersionResponse
+	3,  // 33: parker.v1.ParkerService.Up:output_type -> parker.v1.LogLine
+	3,  // 34: parker.v1.ParkerService.Down:output_type -> parker.v1.LogLine
+	6,  // 35: parker.v1.ParkerService.ListLabs:output_type -> parker.v1.ListLabsResponse
+	9,  // 36: parker.v1.ParkerService.Status:output_type -> parker.v1.StatusResponse
+	13, // 37: parker.v1.ParkerService.Describe:output_type -> parker.v1.DescribeResponse
+	20, // 38: parker.v1.ParkerService.Graph:output_type -> parker.v1.GraphResponse
+	18, // 39: parker.v1.ParkerService.Topology:output_type -> parker.v1.TopologyResponse
+	15, // 40: parker.v1.ParkerService.Validate:output_type -> parker.v1.ValidateResponse
+	25, // 41: parker.v1.ParkerService.Logs:output_type -> parker.v1.LogChunk
+	31, // 42: parker.v1.ParkerService.Exec:output_type -> parker.v1.ExecResponse
+	34, // 43: parker.v1.ParkerService.Dial:output_type -> parker.v1.DialResponse
+	27, // 44: parker.v1.ParkerService.Shutdown:output_type -> parker.v1.ShutdownResponse
+	3,  // 45: parker.v1.ParkerService.Run:output_type -> parker.v1.LogLine
+	39, // 46: parker.v1.ParkerService.Fake:output_type -> parker.v1.FakeResponse
+	32, // [32:47] is the sub-list for method output_type
+	17, // [17:32] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_parker_v1_parker_proto_init() }
@@ -3058,7 +3075,7 @@ func file_parker_v1_parker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parker_v1_parker_proto_rawDesc), len(file_parker_v1_parker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   43,
+			NumMessages:   44,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

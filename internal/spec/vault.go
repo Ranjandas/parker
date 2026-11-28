@@ -241,6 +241,9 @@ func (f *File) validateVault(add func(string, ...any)) {
 	if len(v.Clusters) == 0 {
 		add("vault.clusters: at least one cluster is required")
 	}
+	if _, meta, _ := strings.Cut(version, "+"); slices.Contains(strings.Split(meta, "."), "ent") && !VaultAtLeast(version, 1, 8) {
+		add("versions.vault: Parker gives Vault Enterprise its license through VAULT_LICENSE_PATH, which needs Vault 1.8 or later (got %s)", version)
+	}
 	if f.Consul != nil {
 		for _, dc := range slices.Sorted(maps.Keys(f.Consul.Datacenters)) {
 			d := f.Consul.Datacenters[dc]

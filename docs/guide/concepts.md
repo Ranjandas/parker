@@ -138,7 +138,7 @@ checksums, and caches them:
 versions: { consul: 1.22.7, envoy: 1.35.12, consul-dataplane: 1.9.12 }
 ```
 
-Add `+ent` for Consul Enterprise (`1.22.7+ent`, see
+Add `+ent` for an Enterprise build (`1.22.7+ent`, see
 [Enterprise](enterprise.md)), or point at a local build with
 `path:/abs/path/to/consul`. `parker fetch lab.yaml` downloads everything
 ahead of time, for example before going offline.
