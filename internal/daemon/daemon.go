@@ -27,6 +27,7 @@ import (
 	"github.com/Ranjandas/parker/internal/expand"
 	"github.com/Ranjandas/parker/internal/graph"
 	"github.com/Ranjandas/parker/internal/lab"
+	"github.com/Ranjandas/parker/internal/license"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/rootless"
 	"github.com/Ranjandas/parker/internal/scenario"
@@ -139,7 +140,7 @@ func (s *Server) Up(ctx context.Context, req *connect.Request[parkerv1.UpRequest
 	}
 	w := streamWriter(stream)
 	defer w.Flush()
-	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, License: req.Msg.ConsulLicense, Resume: req.Msg.Resume}, w); err != nil {
+	if err := s.UpLab(ctx, low, lab.Options{KeepOnFailure: req.Msg.KeepOnFailure, NoFirewall: req.Msg.NoFirewall, Licenses: upLicenses(req.Msg), Resume: req.Msg.Resume}, w); err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return nil
@@ -596,4 +597,17 @@ func pickScenario(low *spec.File, name string) (*spec.Scenario, error) {
 		return nil, fmt.Errorf("no scenario %q (have: %s)", name, strings.Join(have, ", "))
 	}
 	return sc, nil
+}
+
+// upLicenses is the request's licenses by product. A client from before
+// licenses existed sends Consul's in consul_license only.
+func upLicenses(req *parkerv1.UpRequest) license.Licenses {
+	ls := license.Licenses{}
+	for p, lic := range req.GetLicenses() {
+		ls[p] = lic
+	}
+	if len(ls["consul"]) == 0 && len(req.GetConsulLicense()) > 0 {
+		ls["consul"] = req.GetConsulLicense()
+	}
+	return ls
 }

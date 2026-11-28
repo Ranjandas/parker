@@ -30,9 +30,12 @@ type File struct {
 	// Versions of the binaries to fetch, e.g. {consul: 1.22.7}. Add "+ent"
 	// for Enterprise builds.
 	Versions map[string]string `yaml:"versions,omitempty"`
-	// License is the Consul Enterprise license for "+ent" versions. Without
-	// it Parker reads CONSUL_LICENSE_PATH, then CONSUL_LICENSE. The license
-	// goes to the agents only; it never appears in expand output or logs.
+	// License holds the Enterprise license files for "+ent" versions, one
+	// per product: {consul: {file: PATH}, vault: {file: PATH}}. The older
+	// {file: PATH} is Consul's. Without one Parker reads <PRODUCT>_LICENSE_PATH,
+	// then <PRODUCT>_LICENSE (CONSUL_LICENSE_PATH, VAULT_LICENSE_PATH, ...).
+	// A license goes to its product's processes only; it never appears in
+	// expand output or logs.
 	License *License `yaml:"license,omitempty"`
 	// Vars are substituted wherever ${vars.NAME} appears; override with
 	// --var NAME=VALUE. ${env.NAME} reads the environment.
@@ -58,10 +61,43 @@ type File struct {
 	Scenarios map[string]*Scenario `yaml:"scenarios,omitempty"`
 }
 
-// License points at a Consul Enterprise license file.
+// License points at the Enterprise license files, one per product.
 type License struct {
+	// File is Consul's license file, the older form of consul: {file: PATH}:
+	// absolute, ~/..., or relative to this file.
+	File string `yaml:"file,omitempty"`
+	// Consul is the Consul Enterprise license.
+	Consul *LicenseFile `yaml:"consul,omitempty"`
+	// Vault is the Vault Enterprise license.
+	Vault *LicenseFile `yaml:"vault,omitempty"`
+}
+
+// LicenseFile is one product's license file.
+type LicenseFile struct {
 	// File is the license file: absolute, ~/..., or relative to this file.
 	File string `yaml:"file"`
+}
+
+// LicenseProducts are the products that take a license, in order.
+var LicenseProducts = []string{"consul", "vault"}
+
+// For is the license file set for product ("consul" or "vault"), or "".
+func (l *License) For(product string) string {
+	if l == nil {
+		return ""
+	}
+	switch product {
+	case "consul":
+		if l.Consul != nil {
+			return l.Consul.File
+		}
+		return l.File
+	case "vault":
+		if l.Vault != nil {
+			return l.Vault.File
+		}
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------- scenario

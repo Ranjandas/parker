@@ -8,13 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -267,10 +265,10 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		}
 	}
 	// The license, checked before anything is fetched or started.
-	var targets []string
+	var targets [][2]string
 	for _, pv := range upBinaries(low) {
-		if !slices.Contains(slices.Collect(maps.Values(low.Versions)), pv[1]) {
-			targets = append(targets, pv[1]) // scenario upgrade targets
+		if low.Versions[pv[0]] != pv[1] {
+			targets = append(targets, pv) // scenario upgrade targets
 		}
 	}
 	lic, err := license.For(low, os.Getenv, targets...)
@@ -287,7 +285,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		}
 	}
 	if o.noDaemon {
-		_, err := lab.Up(ctx, low, lab.Options{Log: out, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, License: lic, Resume: o.resume})
+		_, err := lab.Up(ctx, low, lab.Options{Log: out, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, Licenses: lic, Resume: o.resume})
 		return err
 	}
 	c, err := ensureDaemon(ctx)
@@ -299,7 +297,7 @@ func bringUp(ctx context.Context, low *spec.File, o upOptions) error {
 		return err
 	}
 	stream, err := c.Up(ctx, connect.NewRequest(&parkerv1.UpRequest{
-		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, ConsulLicense: lic, Resume: o.resume,
+		TopologyYaml: b, KeepOnFailure: o.keepOnFail, NoFirewall: o.noFirewall, ConsulLicense: lic["consul"], Licenses: lic, Resume: o.resume,
 	}))
 	if err != nil {
 		return rpcErr(err)

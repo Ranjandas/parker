@@ -92,6 +92,10 @@ message UpRequest {
   // Bring the lab back on its kept run dir (data, logs) instead of a
   // fresh one, as `parker up LAB` does; fail rather than move its subnets.
   bool resume = 5;
+  // Enterprise licenses the client resolved, by product ("consul",
+  // "vault"; consul_license too, for older daemons). Written like
+  // consul_license, each for its product's processes only.
+  map<string, bytes> licenses = 6;
 }
 
 message LogLine {

@@ -265,7 +265,7 @@ func serveTCP(ctx context.Context, addr string, sans []string, s *Server, log fu
 			if err != nil {
 				return err
 			}
-			return s.UpLab(ctx, low, lab.Options{License: lic}, w)
+			return s.UpLab(ctx, low, lab.Options{Licenses: lic}, w)
 		}})
 	mux := http.NewServeMux()
 	mux.Handle("/", ui)

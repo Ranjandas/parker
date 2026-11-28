@@ -1,9 +1,9 @@
 ---
-title: Consul Enterprise
-description: Run Consul Enterprise builds with a license, and use admin partitions and namespaces.
+title: Enterprise
+description: Run Consul and Vault Enterprise builds with their licenses, and use admin partitions and namespaces.
 ---
 
-Add `+ent` to the Consul version to run the Enterprise build:
+Add `+ent` to a version to run the Enterprise build, here Consul's:
 
 ```yaml
 parker: v1alpha1
@@ -17,26 +17,61 @@ consul:
 
 ## The license
 
-Enterprise needs a license. Parker looks for it in this order:
+Each Enterprise product needs its license: Consul's for `consul: ...+ent`
+(and the agents, gateways and dataplanes around it), Vault's for
+`vault: ...+ent`. Parker looks for each in this order:
 
-1. `license: { file: PATH }` in the lab file: absolute, `~/...`, or
-   relative to the lab file;
-2. the file at `CONSUL_LICENSE_PATH`;
-3. `CONSUL_LICENSE`, the license itself.
+1. `license:` in the lab file, one entry per product: absolute, `~/...`,
+   or relative to the lab file;
+2. the file at `CONSUL_LICENSE_PATH` or `VAULT_LICENSE_PATH`;
+3. `CONSUL_LICENSE` or `VAULT_LICENSE`, the license itself.
+
+```yaml
+license:
+  consul: { file: ~/consul.hclic }
+  vault: { file: ~/vault.hclic }
+```
+
+`license: { file: PATH }`, without a product, is Consul's license, as in
+older lab files. Most often the environment is simpler:
 
 ```console
-$ export CONSUL_LICENSE_PATH=~/consul.hclic
+$ export CONSUL_LICENSE_PATH=~/consul.hclic VAULT_LICENSE_PATH=~/vault.hclic
 $ parker up enterprise.yaml
 ```
 
 `parker up` stops before downloading or starting anything when a lab
-needs a license and has none, and says which pin needs it.
+needs a license and has none, and says which pin needs it:
 
-The license only reaches the agents. It's read where you run `parker`,
-sent to the daemon with `up` (over TLS when the daemon is
-[remote](remote.md)), and written to a private (mode 0600) file in the
-lab's run directory, which `parker down` removes. It never appears in
-`parker expand`, `describe`, the saved topology, or logs.
+```console
+$ parker up vault-enterprise.yaml
+error: versions.vault is 1.21.1+ent needs a Vault Enterprise license: set VAULT_LICENSE_PATH (a license file) or VAULT_LICENSE, or add license: {vault: {file: PATH}}
+```
+
+Each license reaches its own product only: Consul's goes to the Consul
+agents, Envoys and dataplanes, Vault's to the Vault servers. A license is
+read where you run `parker`, sent to the daemon with `up` (over TLS when
+the daemon is [remote](remote.md)), and written to a private (mode 0600)
+file in the lab's run directory, which `parker down` removes. It never
+appears in `parker expand`, `describe`, the saved topology, or logs.
+
+## Vault Enterprise
+
+Pin `vault: ...+ent` and give Vault's license:
+
+```yaml
+parker: v1alpha1
+versions: { vault: 1.21.1+ent }
+vault:
+  clusters:
+    east: { servers: 3 }
+```
+
+Vault reads its license when it starts, so Enterprise needs Vault 1.8 or
+later. Everything on the [Vault](vault.md) page works the same. With a
+license that includes performance standbys, the standbys serve reads
+and `parker status` shows them as `perf-standby`. Vault Enterprise and Consul Enterprise mix freely with
+each other's community builds; each needs only its own license.
 
 ## Admin partitions
 
@@ -120,6 +155,9 @@ Terminating, ingress and API gateways take `namespace:` too (see
 
 ## Examples
 
+- [vault-enterprise.yaml](https://github.com/Ranjandas/parker/blob/main/examples/vault-enterprise.yaml):
+  Vault Enterprise as Consul Enterprise's Connect CA, each with its own
+  license.
 - [partitions.yaml](https://github.com/Ranjandas/parker/blob/main/examples/partitions.yaml):
   frontend calls team-a's billing and fails over to team-b's when
   team-a's is stopped.

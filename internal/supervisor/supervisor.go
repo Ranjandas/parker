@@ -31,6 +31,7 @@ import (
 	"github.com/hashicorp/consul/api"
 
 	"github.com/Ranjandas/parker/internal/fetch"
+	"github.com/Ranjandas/parker/internal/license"
 	"github.com/Ranjandas/parker/internal/netsetup"
 	"github.com/Ranjandas/parker/internal/spec"
 )
@@ -39,9 +40,10 @@ type Options struct {
 	Lab    string
 	RunDir string // the lab's run directory
 	Log    io.Writer
-	// LicensePath, when set, is the Consul Enterprise license file; every
-	// process gets it as CONSUL_LICENSE_PATH.
-	LicensePath string
+	// LicensePaths are the Enterprise license files by product ("consul",
+	// "vault"). Vault processes get Vault's as VAULT_LICENSE_PATH, every
+	// other process Consul's as CONSUL_LICENSE_PATH.
+	LicensePaths map[string]string
 	// Life bounds supervision after Run returns: restart policies apply
 	// until it is done or Handle.Stop is called. Nil means Background.
 	Life context.Context
@@ -298,8 +300,12 @@ func runOne(ctx context.Context, h *Handle, f *spec.File, o Options, p *proc, pr
 		return err
 	}
 	env := []string{"PATH=" + pathWith(bins), "HOME=" + dir, "TMPDIR=" + tmp, "PARKER_LAB=" + o.Lab, "PARKER_NODE=" + p.node, "PARKER_RUN=" + o.runID}
-	if o.LicensePath != "" {
-		env = append(env, "CONSUL_LICENSE_PATH="+o.LicensePath)
+	bin := ""
+	if len(p.spec.Run) > 0 {
+		bin = p.spec.Run[0]
+	}
+	if lp := o.LicensePaths[license.Product(bin)]; lp != "" {
+		env = append(env, license.EnvPath(license.Product(bin))+"="+lp)
 	}
 	for k, v := range p.spec.Env {
 		env = append(env, k+"="+vars.Replace(v))

@@ -17,6 +17,7 @@ description: The environment variables Parker reads, and the ones it sets for th
 | `PARKER_MACHINE_BINARY` | A Linux `parker` binary for the [machine's VM](macos.md#which-parker-runs-in-the-vm) to run instead of a release. |
 | `PARKER_RELEASES_URL` | Where to download binaries from, instead of `https://releases.hashicorp.com`: a mirror with the same layout. |
 | `CONSUL_LICENSE_PATH`, `CONSUL_LICENSE` | The Consul Enterprise license, a file or the license itself. See [Enterprise](enterprise.md#the-license). |
+| `VAULT_LICENSE_PATH`, `VAULT_LICENSE` | The Vault Enterprise license, the same way. See [Enterprise](enterprise.md#the-license). |
 | `NO_COLOR`, `PARKER_TUI_STATIC` | Keep the [TUI](tui.md)'s logo still. |
 | `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` | Where [rootless](rootless.md) mode puts its socket and run directories. |
 

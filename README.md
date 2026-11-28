@@ -500,21 +500,27 @@ restart the daemon, or use `parker ui`.
 To work on the UI without a lab, `go run ./hack/uidemo` serves it against a
 fake daemon.
 
-## Consul Enterprise
+## Enterprise
 
-Pin an Enterprise build with `+ent` (`versions: { consul: 1.22.7+ent }`)
-and give Parker a license. It looks, in order, at `license: { file: PATH }`
-in the lab file (absolute, `~/...`, or relative to the file), then the file
-at `CONSUL_LICENSE_PATH`, then `CONSUL_LICENSE` itself. `parker up` stops
-before fetching or starting anything when a lab needs a license and has
-none, and says which pin needs it.
+Pin an Enterprise build with `+ent` (`versions: { consul: 1.22.7+ent }`,
+or `vault: 1.21.1+ent`) and give Parker that product's license. For each
+product it looks, in order, at `license: { consul: { file: PATH } }` (or
+`vault:`; the older `license: { file: PATH }` is Consul's) in the lab file
+(absolute, `~/...`, or relative to the file), then the file at
+`CONSUL_LICENSE_PATH` / `VAULT_LICENSE_PATH`, then `CONSUL_LICENSE` /
+`VAULT_LICENSE` itself. `parker up` stops before fetching or starting
+anything when a lab needs a license and has none, and says which pin
+needs it.
 
-The license only reaches the agents. The client reads it and sends it with
-`up` (over TLS to a remote daemon); the daemon writes it to one `0600` file
-in the lab's run dir, hands agents its path as `CONSUL_LICENSE_PATH`, and
-removes it on `down` or when `up` fails. It never goes into `parker expand`
+Each license only reaches its product's processes. The client reads it and
+sends it with `up` (over TLS to a remote daemon); the daemon writes it to
+one `0600` file per product in the lab's run dir (`consul.hclic`,
+`vault.hclic`), hands Vault servers Vault's path as `VAULT_LICENSE_PATH`
+and every other process Consul's as `CONSUL_LICENSE_PATH`, and removes
+them on `down` or when `up` fails. They never go into `parker expand`
 output, the saved topology, `describe` or logs. See
-[examples/enterprise.yaml](examples/enterprise.yaml).
+[examples/enterprise.yaml](examples/enterprise.yaml) and
+[examples/vault-enterprise.yaml](examples/vault-enterprise.yaml).
 
 ### Admin partitions and namespaces
 
@@ -693,7 +699,7 @@ $ go test ./...
 $ make cover                                   # unit test coverage
 $ hack/rootless-e2e.sh examples/clients.yaml   # no sudo needed
 $ make e2e-rootless                            # rootless mode as a normal user
-$ CONSUL_LICENSE_PATH=~/consul.hclic make e2e-ent   # Enterprise; skips without a license
+$ CONSUL_LICENSE_PATH=~/consul.hclic VAULT_LICENSE_PATH=~/vault.hclic make e2e-ent   # Enterprise; skips labs without their license
 $ go generate ./internal/spec                  # regenerate the JSON Schema after changing internal/spec
 $ goreleaser release --snapshot --clean       # release build into dist/ (tags v* release from CI)
 $ make proto                                   # regenerate internal/api (needs buf, protoc-gen-go, protoc-gen-connect-go)
