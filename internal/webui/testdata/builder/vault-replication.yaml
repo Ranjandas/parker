@@ -1,0 +1,34 @@
+# Built in the Parker lab builder.
+# Bring it up with: parker up vault-replication.yaml
+parker: v1alpha1
+name: vault-replication
+versions: { vault: 1.21.1+ent }
+vault:
+  clusters:
+    east: { servers: 3 }
+    west: { servers: 2 }
+    east-dr: {}
+  replication:
+    performance:
+      primary: east
+      secondaries: [west]
+      paths_filter:
+        west: { mode: deny, paths: [private/] }
+    dr:
+      primary: east
+      secondaries: [east-dr]
+scenario:
+  steps:
+    - wait: east ready
+    - assert:
+        vault:
+          on: west
+          replication: { performance: secondary, state: stream-wals }
+        within: 60s
+    - assert:
+        vault:
+          on: east-dr
+          replication: { dr: secondary, state: stream-wals }
+        within: 60s
+    - vault: { demote: east, replication: dr }
+    - vault: { promote: east-dr }

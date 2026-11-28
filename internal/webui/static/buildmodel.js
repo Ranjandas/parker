@@ -54,6 +54,9 @@
   //   id that keeps its data); reg: dc id it registers in; transit: the
   //   vault id it auto-unseals with; secrets: dc id of its Consul secrets
   //   engine. dc.ca: the vault id that is the dc's Connect CA.
+  //   repl: the primary's vault id when it's a replication secondary,
+  //   replMode "performance" | "dr"; replFilter: its paths_filter, as
+  //   the file has it (performance only; edited in the YAML).
   // peering: {id, name, acceptor, dialer, accPart, dialPart, mesh}
   //   acceptor, dialer: dc ids; accPart, dialPart: part ids ("" = default)
   //   name "" = dialer-acceptor
@@ -62,7 +65,7 @@
   function lab(name) {
     return { name: name || "lab", consul: VERSIONS.consul, envoy: VERSIONS.envoy, dataplane: VERSIONS.dataplane, vault: VERSIONS.vault, mesh: true, tls: false, acl: false, fed: "", dcs: [], peerings: [], exts: [], fails: [], vaults: [] };
   }
-  function vault(name, servers) { return { id: uid("v"), name, servers: servers || 1, dev: false, tls: false, storage: "raft", store: "", reg: "", transit: "", secrets: "" }; }
+  function vault(name, servers) { return { id: uid("v"), name, servers: servers || 1, dev: false, tls: false, storage: "raft", store: "", reg: "", transit: "", secrets: "", repl: "", replMode: "", replFilter: null }; }
   const vaultById = (m, id) => (m.vaults || []).find((v) => v.id === id);
   function dc(name, servers) { return { id: uid("d"), name, servers: servers || 1, ui: false, parts: [], nodes: [], gws: [] }; }
   function node(name, port, opts) {
@@ -387,20 +390,65 @@
     throw new Error("Link a service to a service it calls, a gateway to a service, an external service to where it registers, or two datacenters (or partitions in two datacenters).");
   }
 
-  // linkVault links a Vault cluster: to another one, it auto-unseals with
-  // it; a datacenter to a cluster makes it the dc's Connect CA; a cluster
-  // to a datacenter asks how it uses it ("vpick").
+  // linkVault links a Vault cluster: to another one, it asks how
+  // ("rpick": auto-unseal or replication); a datacenter to a cluster
+  // makes it the dc's Connect CA; a cluster to a datacenter asks how it
+  // uses it ("vpick").
   function linkVault(m, a, b) {
     const dcOf = (x) => (x.t === "dc" || x.t === "part" ? x.dc : null);
-    if (a.t === "vault" && b.t === "vault") {
-      const v = a.vault, t = b.vault;
+    if (a.t === "vault" && b.t === "vault") return "rpick";
+    if (dcOf(a) && b.t === "vault") return joinVault(m, b.vault.id, dcOf(a).id, "ca");
+    if (a.t === "vault" && dcOf(b)) return "vpick";
+    throw new Error("Link a Vault cluster to another one (auto-unseal or replication), to a datacenter (Consul storage, registration or the Consul secrets engine), or a datacenter to a Vault cluster (its Connect CA).");
+  }
+  const REPL_NAME = { performance: "performance", dr: "DR" };
+  // replRole is a cluster's part in replication: "" or e.g. "DR
+  // secondary of east", "perf + DR primary".
+  function replRole(m, v) {
+    const p = v.repl && vaultById(m, v.repl);
+    if (p) return `${v.replMode === "dr" ? "DR" : "perf"} secondary of ${p.name}`;
+    const modes = ["performance", "dr"].filter((md) => (m.vaults || []).some((x) => x.repl === v.id && x.replMode === md));
+    return modes.length ? `${modes.map((md) => (md === "dr" ? "DR" : "perf")).join(" + ")} primary` : "";
+  }
+  // vaultEnt makes the lab's Vault Enterprise, which replication needs.
+  const entVault = (m) => /\+(.*\.)?ent(\.|$)/.test(m.vault || "");
+  // joinVaults links cluster a to cluster b: how is transit (a
+  // auto-unseals with b), performance or dr (a replicates b, its
+  // primary), or "" (a stops replicating).
+  function joinVaults(m, aId, bId, how) {
+    const v = vaultById(m, aId), t = vaultById(m, bId);
+    if (!v || (how && !t)) throw new Error("Pick two Vault clusters.");
+    if (!how) { v.repl = ""; v.replMode = ""; v.replFilter = null; return `${v.name} doesn't replicate any more.`; }
+    if (v === t) throw new Error("Link a Vault cluster to another one.");
+    const secOf = (x) => x.repl && vaultById(m, x.repl);
+    if (how === "transit") {
       if (t.transit === v.id) throw new Error(`${t.name} auto-unseals with ${v.name}, so ${v.name} can't auto-unseal with ${t.name}.`);
+      if (secOf(v)) throw new Error(`${v.name} is a replication secondary; Parker unseals secondaries with the primary's keys, not transit.`);
+      if (secOf(t)) throw new Error(`${t.name} is a replication secondary, whose transit keys activating it would wipe; auto-unseal with ${secOf(t).name}.`);
       v.transit = t.id;
       return `${v.name} auto-unseals with a key in ${t.name}'s Transit secrets engine.`;
     }
-    if (dcOf(a) && b.t === "vault") return joinVault(m, b.vault.id, dcOf(a).id, "ca");
-    if (a.t === "vault" && dcOf(b)) return "vpick";
-    throw new Error("Link a Vault cluster to another one (auto-unseal), to a datacenter (Consul storage, registration or the Consul secrets engine), or a datacenter to a Vault cluster (its Connect CA).");
+    if (how !== "performance" && how !== "dr") throw new Error("unknown link " + how);
+    const R = REPL_NAME[how];
+    if (v.dev || t.dev) throw new Error(`${(v.dev ? v : t).name} runs in dev mode; replication needs a cluster that keeps its data.`);
+    if (secOf(t)) throw new Error(`${t.name} is a secondary of ${secOf(t).name}; Parker doesn't chain replication, so link ${v.name} to ${secOf(t).name}.`);
+    if ((m.vaults || []).some((x) => x.repl === v.id)) throw new Error(`${v.name} is a primary; Parker doesn't chain replication.`);
+    const other = (m.vaults || []).find((x) => x !== v && x.replMode === how && x.repl && x.repl !== t.id);
+    if (other) throw new Error(`The lab's ${R} primary is ${vaultById(m, other.repl).name}; ${R} replication has one primary.`);
+    // Activation replaces the secondary's data with the primary's.
+    const ca = m.dcs.find((d) => d.ca === v.id);
+    if (ca) throw new Error(`${v.name} is ${ca.name}'s Connect CA, whose keys activating it as a secondary would wipe; use ${t.name}.`);
+    const user = (m.vaults || []).find((x) => x.transit === v.id);
+    if (user) throw new Error(`${user.name} auto-unseals with ${v.name}, whose keys activating it as a secondary would wipe.`);
+    if (v.transit) throw new Error(`${v.name} auto-unseals with transit; Parker unseals secondaries with the primary's keys. Turn auto-unseal off first.`);
+    if (v.secrets) throw new Error(`${v.name} runs the Consul secrets engine, which activating it as a secondary would wipe; set it on ${t.name}.`);
+    if (how === "dr" || v.replMode !== "performance") v.replFilter = null;
+    v.repl = t.id; v.replMode = how;
+    let note = "";
+    if (!entVault(m)) { m.vault = (m.vault || VERSIONS.vault).replace(/\+.*$/, "") + "+ent"; note = " Replication is Vault Enterprise, so that set versions.vault to +ent: it needs a license (VAULT_LICENSE_PATH)."; }
+    return how === "dr"
+      ? `${v.name} keeps a DR copy of ${t.name}, tokens and leases too, and serves nothing until promoted.${note}`
+      : `${v.name} is a performance secondary of ${t.name}: it serves reads and keeps its own tokens.${note}`;
   }
   // joinVault wires a Vault cluster to a datacenter: how is ca (the dc's
   // Connect CA), store (Consul storage), reg (registers in the dc) or
@@ -410,6 +458,7 @@
     if (!v || !d) throw new Error("Pick a Vault cluster and a datacenter.");
     if (how === "ca") {
       if (v.storage === "consul" && v.store === d.id) throw new Error(`${v.name} keeps its data in ${d.name}, so it can't be ${d.name}'s Connect CA too: each would wait for the other.`);
+      if (v.repl) throw new Error(`${v.name} is a replication secondary, whose keys activation wiped; make its primary ${d.name}'s Connect CA.`);
       d.ca = v.id; return `${d.name}'s Connect CA is now ${v.name}, through Vault's PKI secrets engine.`; }
     if (how === "store") {
       if (d.ca === v.id) throw new Error(`${v.name} is ${d.name}'s Connect CA, so it can't keep its data in ${d.name} too: each would wait for the other.`);
@@ -423,6 +472,7 @@
       return `${v.name} registers in ${d.name} as the vault service, tagged active or standby.`;
     }
     if (how === "secrets") {
+      if (v.repl) throw new Error(`${v.name} is a replication secondary; set the Consul secrets engine on its primary.`);
       v.secrets = d.id;
       const note = m.acl ? "" : " The engine mints ACL tokens, so that turned ACLs on.";
       m.acl = true;
@@ -516,7 +566,10 @@
       m.fails = m.fails.filter((x) => x.id !== id);
     } else if (f.t === "vault") {
       m.vaults = m.vaults.filter((v) => v.id !== id);
-      for (const v of m.vaults) if (v.transit === id) v.transit = "";
+      for (const v of m.vaults) {
+        if (v.transit === id) v.transit = "";
+        if (v.repl === id) { v.repl = ""; v.replMode = ""; v.replFilter = null; }
+      }
       for (const d of m.dcs) if (d.ca === id) d.ca = "";
     }
     // Vault's links to a removed datacenter go with it.
@@ -615,6 +668,13 @@
       case "unseal": return f && f.t === "vault" && !f.vault.dev ? { vault: { unseal: s } } : null;
       case "stepdown": return f && f.t === "vault" && f.vault.servers > 1 ? { vault: { step_down: `${s}/active` } } : null;
       case "unsealed": return f && f.t === "vault" ? { assert: { vault: { on: `${s}/active`, sealed: false }, within: "30s" } } : null;
+      case "promote": return f && f.t === "vault" && f.vault.repl ? { vault: { promote: s } } : null;
+      case "demote": {
+        if (!(f && f.t === "vault")) return null;
+        const modes = ["dr", "performance"].filter((md) => m.vaults.some((x) => x.repl === f.vault.id && x.replMode === md));
+        return modes.length ? { vault: { demote: s, replication: modes[0] } } : null;
+      }
+      case "replicating": return f && f.t === "vault" && f.vault.repl ? { assert: { vault: { on: s, replication: { [f.vault.replMode]: "secondary", state: "stream-wals" } }, within: "60s" } } : null;
       case "fault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, health: { code: 503 } } } : null;
       case "unfault": return f && f.t === "node" && f.node.svc ? { fake: { on: s, reset: true } } : null;
       case "limits": {
@@ -646,18 +706,19 @@
     if (isMap(st.fake)) return `fake ${st.fake.on || ""}${st.fake.reset ? " reset" : ""}${st.fake.health ? ` health ${st.fake.health.code}` : ""}${isMap(st.fake.limits) ? ` limits ${st.fake.limits.profile || Object.keys(st.fake.limits).join(", ")}` : ""}`;
     if (isMap(st.upgrade)) return `upgrade ${st.upgrade.on || ""} to ${st.upgrade.to || ""}`;
     if (isMap(st.exec)) return `exec on ${st.exec.on || ""}`;
-    if (isMap(st.vault)) return `vault ${Object.entries(st.vault).map(([k, v]) => `${k} ${v}`).join(", ")}`;
+    const kv = (o) => Object.entries(o).map(([k, v]) => (isMap(v) ? `${k} ${kv(v)}` : `${k} ${v}`)).join(", ");
+    if (isMap(st.vault)) return `vault ${kv(st.vault)}`;
     if (isMap(st.assert)) {
       const a = st.assert, w = a.within ? ` within ${a.within}` : "";
       if (isMap(a.call)) return `call ${a.call.on || ""}${a.call.reaches ? ` reaches ${a.call.reaches}` : ""}${a.call.code ? ` code ${a.call.code}` : ""}${w}`;
       if (isMap(a.exec)) return `exec on ${a.exec.on || ""}${a.exec.output ? ` shows ${a.exec.output}` : ""}${w}`;
       if (isMap(a.consul)) return `consul ${Object.entries(a.consul).map(([k, v]) => `${k} ${v}`).join(", ")}${w}`;
-      if (isMap(a.vault)) return `vault ${Object.entries(a.vault).map(([k, v]) => `${k} ${v}`).join(", ")}${w}`;
+      if (isMap(a.vault)) return `vault ${kv(a.vault)}${w}`;
     }
     return Object.keys(st).filter((k) => k !== "name" && k !== "at").join(", ");
   }
   // Step keys whose values are selectors.
-  const SEL_KEYS = new Set([...FAULTS, "heal", "wait", "on", "seal", "unseal", "step_down"]);
+  const SEL_KEYS = new Set([...FAULTS, "heal", "wait", "on", "seal", "unseal", "step_down", "promote", "demote", "disable", "update_primary"]);
   // retarget makes the scenario's selectors follow a rename: from and to
   // are selectors (dc1, dc1/web); bare is a service's old and new name.
   function retarget(m, from, to, bare) {
@@ -725,7 +786,7 @@
     const versions = hasConsul ? { consul: m.consul + (ent(m) && !/\+ent$/.test(m.consul) ? "+ent" : "") } : {};
     if (anyEnvoy) versions.envoy = m.envoy;
     if (nodes.some((n) => n.agent === "dataplane")) versions["consul-dataplane"] = m.dataplane;
-    if (vaults.length) versions.vault = m.vault || VERSIONS.vault;
+    if (vaults.length) versions.vault = (m.vault || VERSIONS.vault) + (vaults.some((v) => v.repl) && !entVault(m) ? "+ent" : "");
     doc.versions = versions;
 
     const consul = {};
@@ -799,6 +860,16 @@
         clusters[v.name] = c;
       }
       doc.vault = { clusters };
+      const repl = {};
+      for (const md of ["performance", "dr"]) {
+        const secs = vaults.filter((v) => v.repl && v.replMode === md && vaultById(m, v.repl));
+        if (!secs.length) continue;
+        const set = { primary: vaultById(m, secs[0].repl).name, secondaries: secs.map((v) => v.name) };
+        const pf = md === "performance" ? secs.filter((v) => isMap(v.replFilter)) : [];
+        if (pf.length) { set.paths_filter = {}; for (const v of pf) set.paths_filter[v.name] = clone(v.replFilter); }
+        repl[md] = set;
+      }
+      if (Object.keys(repl).length) doc.vault.replication = repl;
     }
     if (m.scenario && Array.isArray(m.scenario.steps) && m.scenario.steps.length) doc.scenario = JSON.parse(JSON.stringify(m.scenario));
     return doc;
@@ -1010,7 +1081,7 @@
   function blockAt(path) {
     const p = path.join(".");
     return path.length <= 1 && p !== "versions" ||
-      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) || p === "scenario" || p === "vault.clusters" ||
+      /^consul(\.defaults|\.(datacenters|peering|external)(\.[^.]+)?)?$/.test(p) || p === "scenario" || p === "vault.clusters" || /^vault\.replication(\.(performance|dr)(\.paths_filter)?)?$/.test(p) ||
       /\.(nodes|partitions)(\.[^.]+)?$/.test(p) && !/\.nodes\.[^.]+\.service/.test(p);
   }
 
@@ -1129,6 +1200,20 @@
       const t = v.transit && vaultById(m, v.transit);
       if (t && t.dev) out.push({ message: `${v.name} auto-unseals with ${t.name}, which runs in dev mode and loses its keys; turn dev off on ${t.name}.`, id: v.id });
       if (t && t.transit) out.push({ message: `${v.name} auto-unseals with ${t.name}, which auto-unseals itself; ${t.name} must unseal with keys.`, id: v.id });
+      const p = v.repl && vaultById(m, v.repl);
+      if (p) {
+        const R = REPL_NAME[v.replMode];
+        if (v.dev || p.dev) out.push({ message: `${v.name} replicates ${p.name}, but ${(v.dev ? v : p).name} runs in dev mode; replication needs a cluster that keeps its data.`, id: v.id });
+        if (p.repl) out.push({ message: `${v.name} replicates ${p.name}, a secondary itself; Parker doesn't chain replication.`, id: v.id });
+        if (v.transit) out.push({ message: `${v.name} is a ${R} secondary that auto-unseals with transit; Parker unseals secondaries with the primary's keys.`, id: v.id });
+        if (v.secrets) out.push({ message: `${v.name} is a ${R} secondary with the Consul secrets engine, which activating it would wipe; set it on ${p.name}.`, id: v.id });
+        const ca = m.dcs.find((d) => d.ca === v.id);
+        if (ca) out.push({ message: `${v.name} is a ${R} secondary and ${ca.name}'s Connect CA, whose keys activating it would wipe; use ${p.name}.`, id: v.id });
+        const user = m.vaults.find((x) => x.transit === v.id);
+        if (user) out.push({ message: `${user.name} auto-unseals with ${v.name}, a ${R} secondary whose keys activating it would wipe.`, id: v.id });
+        const first = m.vaults.find((x) => x.repl && x.replMode === v.replMode);
+        if (first !== v && first.repl !== v.repl) out.push({ message: `${R} replication has one primary: ${v.name} replicates ${p.name}, ${first.name} replicates ${vaultById(m, first.repl).name}.`, id: v.id });
+      }
       if (v.dev && (v.servers > 1 || v.transit || v.reg || v.secrets || v.storage !== "raft")) out.push({ message: `${v.name} runs in dev mode: one server, in memory, with no auto-unseal, registration or secrets engines.`, id: v.id });
     }
     for (const c of calls(m)) if (c.r.kind === "none") {
@@ -1235,6 +1320,19 @@
         m.vaults.push(x);
       }
       for (const [x, tn] of transits) x.transit = (m.vaults.find((y) => y.name === tn) || {}).id || "";
+      const vNamed = (n) => m.vaults.find((y) => y.name === n);
+      const rp = isMap(vt.replication) ? vt.replication : {};
+      for (const md of ["performance", "dr"]) {
+        const set = rp[md];
+        if (!isMap(set) || !vNamed(set.primary)) continue;
+        const pf = isMap(set.paths_filter) ? set.paths_filter : {};
+        for (const sn of Array.isArray(set.secondaries) ? set.secondaries : []) {
+          const x = vNamed(sn);
+          if (!x || x.repl) continue;
+          x.repl = vNamed(set.primary).id; x.replMode = md;
+          if (md === "performance" && isMap(pf[sn])) x.replFilter = clone(pf[sn]);
+        }
+      }
       for (const [d, vn] of cas) d.ca = (m.vaults.find((y) => y.name === vn) || {}).id || "";
     };
     if (isMap(t.scenario)) m.scenario = JSON.parse(JSON.stringify(t.scenario));
@@ -1601,7 +1699,7 @@
     ["vault-ca", "Vault as Connect CA", "dc1's mesh certificates from Vault"],
   ];
 
-  const api = { FAKE_PROFILES, fakeGet, fakeSet, fakeValue, profileOf, entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, vault, vaultById, joinVault, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
+  const api = { FAKE_PROFILES, fakeGet, fakeSet, fakeValue, profileOf, entryKey, entries, entryNotes, setEntry, removeEntry, ENTRY_KEYS, pruneFails, svcAt, foSides, foTarget, failover, nameStep, sel, FAULTS, stepFor, addStep, stepText, retarget, ext, extNs, extFor, targetsOf, register, VERSIONS, minorOf, envoyNote, setConsul, normNs, nsOf, gwNs, usesNs, KINDS, GW_NAME, NAME_RE, lab, dc, node, gw, vault, vaultById, joinVault, joinVaults, replRole, find, dcById, partName, sideName, peeringName, peeringOf, peerOf, peeringGateways, route, calls, connectOf, uniqueName, nextDCName, nextPort, nextUpPort, link, joinDCs, remove, rename, toDoc, toYAML, lineOf, pathOf, idOf, checks, starter, STARTERS, ent, segs, fromTree, origin, diffOps, lineDiff, same };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.Build = api;
 })(typeof window === "object" ? window : globalThis);

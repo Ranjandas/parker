@@ -71,10 +71,11 @@ func TestBuilderFixturesValidate(t *testing.T) {
 // peering expands to the same lab as the examples.
 func TestBuilderRebuildsExamples(t *testing.T) {
 	for fixture, example := range map[string]string{
-		"meshfed.yaml":       "mesh-federation.yaml",
-		"steps-meshfed.yaml": "mesh-federation.yaml",
-		"peering.yaml":       "peering.yaml",
-		"steps-peering.yaml": "peering.yaml",
+		"meshfed.yaml":           "mesh-federation.yaml",
+		"steps-meshfed.yaml":     "mesh-federation.yaml",
+		"peering.yaml":           "peering.yaml",
+		"steps-peering.yaml":     "peering.yaml",
+		"vault-replication.yaml": "vault-replication.yaml",
 	} {
 		got, want := expanded(t, filepath.Join(fixtures, fixture)), expanded(t, filepath.Join("..", "..", "examples", example))
 		if got != want {
@@ -100,11 +101,12 @@ func expanded(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Keys and certificates are new on every expand; labels name lines.
+	// Keys, certificates and Vault root tokens are new on every expand;
+	// labels name lines.
 	return volatile.ReplaceAllString(string(b), "")
 }
 
-var volatile = regexp.MustCompile(`-----BEGIN [A-Z ]+-----[^-]*-----END [A-Z ]+-----|\(line \d+\)`)
+var volatile = regexp.MustCompile(`-----BEGIN [A-Z ]+-----[^-]*-----END [A-Z ]+-----|\(line \d+\)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // TestBuilderOpensExamples: every example opens on the canvas, an
 // untouched canvas changes nothing, and edits made on the canvas patch

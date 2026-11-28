@@ -104,7 +104,7 @@ function bEdit(fn) {
   let msg;
   try { msg = fn(BL.m); } catch (e) { BL.m = JSON.parse(before); toast(e.message); return false; }
   if (JSON.stringify(BL.m) !== before) { BL.undo.push(before); if (BL.undo.length > 100) BL.undo.shift(); BL.redo = []; bSave(); }
-  if (msg && msg !== "pick" && msg !== "vpick") toast(msg);
+  if (msg && msg !== "pick" && msg !== "vpick" && msg !== "rpick") toast(msg);
   bRender();
   return msg;
 }
@@ -115,7 +115,7 @@ function bEditFile(fn) {
   const before = JSON.stringify(BL.m);
   let msg, ops;
   try { msg = fn(BL.m); ops = Build.diffOps(JSON.parse(before), BL.m, src); } catch (e) { BL.m = JSON.parse(before); toast(e.message); bRender(); return false; }
-  if (msg && msg !== "pick" && msg !== "vpick") toast(msg);
+  if (msg && msg !== "pick" && msg !== "vpick" && msg !== "rpick") toast(msg);
   bRender();
   if (!ops.length) return msg;
   const text = BL.file.text;
@@ -329,7 +329,7 @@ function bCanvas() {
     const store = v.storage === "consul" ? `Consul storage (${(Build.dcById(m, v.store) || {}).name || "?"})` : v.storage;
     h += `<div class="breg ${BL.sel === v.id ? "sel" : ""} ${BL.from === v.id ? "linksrc" : ""} ${problems.has(v.id) ? "bad" : ""}" data-bid="${v.id}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px">
       <div class="lbl" data-bid="${v.id}" tabindex="0" role="button">${bOrigin(v.id) === "import" ? '<i class="otag" title="From an import">🔒</i>' : ""}${esc(v.name)}<span>Vault · ${v.servers} server${v.servers > 1 ? "s" : ""}</span><span class="port dcport" data-port="${v.id}" title="Drag to a datacenter or another Vault cluster to link them"></span></div></div>`;
-    h += bCard(v.id, P.it[v.id], BI.vault, "srv", v.servers > 1 ? `vault-1 … vault-${v.servers}` : "vault-1", v.dev ? "dev mode, in memory" : `${store}${v.tls ? " · TLS" : ""}${v.transit ? " · auto-unseal" : ""}`, { bad: problems.has(v.id) });
+    h += bCard(v.id, P.it[v.id], BI.vault, "srv", v.servers > 1 ? `vault-1 … vault-${v.servers}` : "vault-1", v.dev ? "dev mode, in memory" : `${store}${v.tls ? " · TLS" : ""}${v.transit ? " · auto-unseal" : ""}${Build.replRole(m, v) ? " · " + Build.replRole(m, v) : ""}`, { bad: problems.has(v.id) });
   }
   const ax = X0 + (m.dcs.length + (P.ext ? 1 : 0) + vaults.length) * (DCW + GAP);
   const maxH = Math.max(330, ...m.dcs.map((d) => P.dc[d.id].h), P.ext ? P.ext.h : 0);
@@ -369,6 +369,8 @@ function bCanvas() {
     if (v.secrets) dto(v.secrets, "secrets engine");
     const t = v.transit && Build.vaultById(m, v.transit);
     if (t) plinks.push([vtop(v), vtop(t), "auto-unseal", v.id]);
+    const p = v.repl && Build.vaultById(m, v.repl);
+    if (p) plinks.push([vtop(v), vtop(p), v.replMode === "dr" ? "DR replication" : "performance replication", v.id]);
   }
   plinks.forEach(([[x1, y1], [x2], text, id], i) => {
     const lift = 46 + (i % 4) * 34, o = x2 > x1 ? 16 : -16;
@@ -417,7 +419,14 @@ function bCanvas() {
   }
   s += `<path id="blinkline" d="" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4"/></svg>`;
   let pick = "";
-  if (BL.pick && BL.pick.vault) {
+  if (BL.pick && BL.pick.repl) {
+    const a = Build.vaultById(m, BL.pick.a), b = Build.vaultById(m, BL.pick.b);
+    pick = `<div class="card bpick" style="left:${BL.pick.x}px;top:${BL.pick.y}px"><div class="hd"><h3>How ${esc(a.name)} uses ${esc(b.name)}</h3></div>
+      <button data-rjoin="transit">${BI.vault}<span><b>Auto-unseal</b><small>With a key in ${esc(b.name)}'s Transit secrets engine</small></span></button>
+      <button data-rjoin="performance">${BI.vault}<span><b>Performance replication</b><small>${esc(a.name)} serves reads of ${esc(b.name)}'s data; Enterprise</small></span></button>
+      <button data-rjoin="dr">${BI.vault}<span><b>DR replication</b><small>${esc(a.name)} keeps a full copy, promoted on failover; Enterprise</small></span></button>
+      <button data-rjoin="" class="cancel"><span>Cancel</span></button></div>`;
+  } else if (BL.pick && BL.pick.vault) {
     const v = Build.vaultById(m, BL.pick.a), d = Build.dcById(m, BL.pick.b);
     pick = `<div class="card bpick" style="left:${BL.pick.x}px;top:${BL.pick.y}px"><div class="hd"><h3>How ${esc(v.name)} uses ${esc(d.name)}</h3></div>
       <button data-vjoin="reg">${BI.svc}<span><b>Register in ${esc(d.name)}</b><small>The vault service, tagged active or standby</small></span></button>
@@ -565,6 +574,7 @@ function bInspector() {
         fld("Storage", `<select data-f="vstore" id="bf-vstore">${storeOpts.map(([x, l]) => `<option value="${x}" ${curStore === x ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`, sdoc("VaultSettings", "storage"), "bf-vstore") +
         (m.dcs.length && v.storage !== "consul" ? fld("Register in", `<select data-f="vreg" id="bf-vreg">${dcOpts(v.reg, "nowhere")}</select>`, sdoc("VaultSettings", "register"), "bf-vreg") : "") +
         (others.length ? fld("Auto-unseal", `<select data-f="vtransit" id="bf-vtransit"><option value="">no: Parker unseals with keys</option>${others.map((x) => `<option value="${x.id}" ${v.transit === x.id ? "selected" : ""}>transit in ${esc(x.name)}</option>`).join("")}</select>`, sdoc("VaultSeal", "transit"), "bf-vtransit") : "") +
+        (others.length ? fld("Replicates", `<select data-f="vrepl" id="bf-vrepl"><option value="">no</option>${others.filter((x) => !x.repl).map((x) => ["performance", "dr"].map((md) => `<option value="${md}:${x.id}" ${v.repl === x.id && v.replMode === md ? "selected" : ""}>${md === "dr" ? "DR" : "performance"} secondary of ${esc(x.name)}</option>`).join("")).join("")}</select>`, sdoc("VaultReplication", v.replMode === "dr" ? "dr" : "performance"), "bf-vrepl", v.replFilter ? `Paths filter: ${esc(v.replFilter.mode || "")} ${esc((v.replFilter.paths || []).join(", "))}; edit it in the YAML.` : "") : "") +
         (m.dcs.length ? fld("Consul secrets", `<select data-f="vsecrets" id="bf-vsecrets">${dcOpts(v.secrets, "off")}</select>`, sdoc("VaultSecrets", "consul"), "bf-vsecrets", v.secrets ? "Mint tokens with vault read consul/creds/management." : "") : "")) +
       `<div class="hint">Parker initialises the cluster, unseals every server and keeps the root token: parker exec on a server sets VAULT_ADDR and VAULT_TOKEN.</div>` +
       `<div class="row-btns"><button class="btn sm" data-bact="linkfrom">${BI.vault}Link…</button><button class="btn sm danger" data-bact="remove">Remove ${esc(v.name)}</button></div>`;
@@ -757,13 +767,13 @@ function bEntryDialog(sk, i, e) {
 }
 
 // ---------- scenario ----------
-const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", limits: "Change limits", seal: "Seal", unseal: "Unseal", stepdown: "Step down", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", unsealed: "Check unsealed", exec: "Check a command" };
+const STEP_LABEL = { stop: "Stop", start: "Start", restart: "Restart", kill: "Kill", pause: "Pause", resume: "Resume", partition: "Cut off", fault: "Fail health", unfault: "Recover", limits: "Change limits", seal: "Seal", unseal: "Unseal", stepdown: "Step down", promote: "Promote", demote: "Demote", wait: "Wait ready", call: "Check a call", healthy: "Check healthy", unsealed: "Check unsealed", replicating: "Check replicating", exec: "Check a command" };
 // bStepKinds lists the steps that fit a thing.
 const bStepKinds = (id) => Object.keys(STEP_LABEL).filter((k) => Build.stepFor(BL.m, id, k));
 function bStepBtns(id) {
   const ks = bStepKinds(id);
   if (!ks.length) return "";
-  const faults = ks.filter((k) => Build.FAULTS.includes(k) || ["fault", "unfault", "limits", "seal", "unseal", "stepdown"].includes(k)), checks = ks.filter((k) => !faults.includes(k));
+  const faults = ks.filter((k) => Build.FAULTS.includes(k) || ["fault", "unfault", "limits", "seal", "unseal", "stepdown", "promote", "demote"].includes(k)), checks = ks.filter((k) => !faults.includes(k));
   const row = (l) => l.map((k) => `<button class="btn sm" data-step="${k}" data-sid="${esc(id)}">${STEP_LABEL[k]}</button>`).join("");
   return `<div class="fld" style="align-items:start">${flbl("Scenario", "", `Adds a step on ${Build.sel(BL.m, id)} to the lab's scenario. Right-click it on the canvas for the same steps.`)}<div class="stepbtns">${row(faults)}${checks.length ? `<span class="sep"></span>${row(checks)}` : ""}</div></div>`;
 }
@@ -901,7 +911,7 @@ function bField(el) {
     if (t.t === "vault") {
       const x = t.vault;
       if (f === "vservers") x.servers = Math.max(1, Math.min(7, x.servers + +v));
-      if (f === "vdev") { x.dev = v === "true"; if (x.dev) { x.servers = 1; x.storage = "raft"; x.store = ""; x.reg = ""; x.transit = ""; x.secrets = ""; x.tls = false; } }
+      if (f === "vdev") { x.dev = v === "true"; if (x.dev) { x.servers = 1; x.storage = "raft"; x.store = ""; x.reg = ""; x.transit = ""; x.secrets = ""; x.tls = false; x.repl = ""; x.replMode = ""; x.replFilter = null; } }
       if (f === "vtls") x.tls = v === "true";
       if (f === "vstore") {
         if (v.startsWith("consul:")) return Build.joinVault(m, x.id, v.slice(7), "store");
@@ -909,7 +919,8 @@ function bField(el) {
         if (v === "file") x.servers = 1;
       }
       if (f === "vreg") x.reg = v;
-      if (f === "vtransit") { if (v) return Build.link(m, x.id, v); x.transit = ""; }
+      if (f === "vtransit") { if (v) return Build.joinVaults(m, x.id, v, "transit"); x.transit = ""; }
+      if (f === "vrepl") { const [md, id] = v ? v.split(":") : ["", ""]; return Build.joinVaults(m, x.id, id, md); }
       if (f === "vsecrets") { if (v) return Build.joinVault(m, x.id, v, "secrets"); x.secrets = ""; }
       return;
     }
@@ -1048,9 +1059,9 @@ function bLink(from, to, at) {
     return Build.link(m, a, b);
   });
   BL.from = "";
-  if (r === "pick" || r === "vpick") {
+  if (r === "pick" || r === "vpick" || r === "rpick") {
     const a = from.replace(/^srv:/, ""), b = to.replace(/^srv:/, "");
-    BL.pick = { a, b, x: at[0], y: at[1], vault: r === "vpick" };
+    BL.pick = { a, b, x: at[0], y: at[1], vault: r === "vpick", repl: r === "rpick" };
     bCanvas();
   } else bRender();
 }
@@ -1384,6 +1395,8 @@ function bBind() {
     const sb = t.closest("[data-step]");
     if (sb) { if (sb.dataset.step) bAddStep(sb.dataset.step, sb.dataset.sid); else { BL.menu = null; bCanvas(); } return; }
     if (BL.menu && !t.closest(".bmenu")) { BL.menu = null; bCanvas(); }
+    const rj = t.closest("[data-rjoin]");
+    if (rj) { const p = BL.pick; BL.pick = null; if (rj.dataset.rjoin) bEdit((m) => Build.joinVaults(m, p.a, p.b, rj.dataset.rjoin)); else bCanvas(); return; }
     const vj = t.closest("[data-vjoin]");
     if (vj) { const p = BL.pick; BL.pick = null; if (vj.dataset.vjoin) bEdit((m) => Build.joinVault(m, p.a, p.b, vj.dataset.vjoin)); else bCanvas(); return; }
     const jn = t.closest("[data-join]");

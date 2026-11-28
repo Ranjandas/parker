@@ -199,3 +199,40 @@ console.log("ok entries");
   assert.strictEqual(B.fakeValue("8KB"), "8KB");
 }
 console.log("ok fake");
+
+// Vault replication: a link between clusters asks how; replication
+// refuses what activation would wipe or Parker can't run, turns on
+// Enterprise, reads back from a file and goes with a removed primary.
+{
+  const m = B.lab("r"); m.dcs = [];
+  const a = B.vault("a", 3), b = B.vault("b", 1), c = B.vault("c", 1), d = B.vault("d", 1);
+  m.vaults.push(a, b, c, d);
+  assert.strictEqual(B.link(m, b.id, a.id), "rpick");
+  assert.match(B.joinVaults(m, b.id, a.id, "performance"), /performance secondary of a.*\+ent/);
+  assert.strictEqual(m.vault, B.VERSIONS.vault + "+ent");
+  assert.throws(() => B.joinVaults(m, c.id, b.id, "dr"), /doesn't chain/);
+  assert.throws(() => B.joinVaults(m, c.id, d.id, "performance"), /one primary/);
+  assert.throws(() => B.joinVaults(m, b.id, c.id, "transit"), /secondary/);
+  assert.throws(() => B.joinVaults(m, c.id, b.id, "transit"), /secondary/);
+  d.dev = true;
+  assert.throws(() => B.joinVaults(m, d.id, a.id, "dr"), /dev mode/);
+  d.dev = false; c.secrets = "x";
+  assert.throws(() => B.joinVaults(m, c.id, a.id, "dr"), /secrets engine/);
+  c.secrets = "";
+  B.joinVaults(m, c.id, a.id, "dr");
+  assert.strictEqual(B.replRole(m, a), "perf + DR primary");
+  assert.strictEqual(B.replRole(m, c), "DR secondary of a");
+  b.replFilter = { mode: "allow", paths: ["kv/"] };
+  const doc = B.toDoc(m);
+  assert.deepStrictEqual(doc.vault.replication, { performance: { primary: "a", secondaries: ["b"], paths_filter: { b: { mode: "allow", paths: ["kv/"] } } }, dr: { primary: "a", secondaries: ["c"] } });
+  const back = B.fromTree(doc);
+  const bv = (n) => back.vaults.find((v) => v.name === n);
+  assert.deepStrictEqual([bv("b").repl === bv("a").id, bv("b").replMode, bv("c").replMode, bv("b").replFilter.mode], [true, "performance", "dr", "allow"]);
+  assert.deepStrictEqual(B.stepFor(m, a.id, "demote"), { vault: { demote: "a", replication: "dr" } });
+  assert.strictEqual(B.stepFor(m, a.id, "promote"), null);
+  assert.strictEqual(B.stepText(B.stepFor(m, c.id, "replicating")), "vault on c, replication dr secondary, state stream-wals within 60s");
+  assert.deepStrictEqual(B.checks(m), []);
+  B.remove(m, a.id);
+  assert.deepStrictEqual(m.vaults.map((v) => v.repl), ["", "", ""]);
+  console.log("ok replication");
+}
