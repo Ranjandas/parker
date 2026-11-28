@@ -142,6 +142,7 @@ each must match every key set:
 | `sealed` | The servers are sealed (`true`) or unsealed (`false`). |
 | `active` | The servers are the active one (`true`) or standbys (`false`). |
 | `raft_peers: ">=3"` | That many voting raft peers, asked of each server. |
+| `replication` | The cluster's [replication](vault.md#failover): `performance` and `dr` modes, and their `state`. |
 
 ```yaml
 - assert: { vault: { on: east, sealed: false, raft_peers: ">=3" }, within: 30s }
@@ -184,6 +185,9 @@ Vault servers:
 - vault: { unseal: east }
 - vault: { step_down: east/active }
 ```
+
+and [fails over replication](vault.md#failover) with `promote`,
+`demote`, `disable` and `update_primary`.
 
 A `fake:` step takes `on`, `service`, `health`, `latency`, `errors`,
 `rate_limit`, `limits` and `reset`, as in the [`fake:` block](fake-service.md#the-fake-block).

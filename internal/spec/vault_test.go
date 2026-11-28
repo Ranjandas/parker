@@ -72,3 +72,51 @@ func TestVaultStorageShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultReplicationValidate(t *testing.T) {
+	base := "versions: { vault: 1.21.1+ent }\nvault:\n  clusters:\n    a: {}\n    b: {}\n    c: {}\n    d: { dev: true }\n  replication:\n"
+	for text, want := range map[string]string{
+		"    performance: { primary: a, secondaries: [b] }\n":                                                    "",
+		"    performance: { primary: a, secondaries: [b] }\n    dr: { primary: a, secondaries: [c] }\n":          "",
+		"    performance: { primary: x, secondaries: [b] }\n":                                                    `primary: "x" is not a Vault cluster`,
+		"    performance: { primary: a, secondaries: [] }\n":                                                     "at least one is required",
+		"    performance: { primary: a, secondaries: [a] }\n":                                                    "a is the primary",
+		"    performance: { primary: a, secondaries: [d] }\n":                                                    "d runs in dev mode",
+		"    performance: { primary: a, secondaries: [b] }\n    dr: { primary: a, secondaries: [b] }\n":          "b is a performance secondary already",
+		"    performance: { primary: a, secondaries: [b] }\n    dr: { primary: b, secondaries: [c] }\n":          "doesn't chain replication",
+		"    performance: { primary: a, secondaries: [b], paths_filter: { c: { mode: deny, paths: [x/] } } }\n":  `"c" is not one of its secondaries`,
+		"    performance: { primary: a, secondaries: [b], paths_filter: { b: { mode: maybe, paths: [x/] } } }\n": "want allow or deny",
+		"    dr: { primary: a, secondaries: [b], paths_filter: { b: { mode: deny, paths: [x/] } } }\n":           "only performance replication filters paths",
+	} {
+		p := filepath.Join(t.TempDir(), "lab.yaml")
+		if err := os.WriteFile(p, []byte("parker: v1alpha1\n"+base+text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(p, nil)
+		if want == "" {
+			if err != nil {
+				t.Errorf("%q: %v", text, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", text, err, want)
+		}
+	}
+	// Community builds, and secondaries whose data others rely on.
+	for text, want := range map[string]string{
+		"versions: { vault: 1.21.1 }\nvault:\n  clusters:\n    a: {}\n    b: {}\n  replication:\n    dr: { primary: a, secondaries: [b] }\n":                                                                                                      "needs Vault Enterprise",
+		"versions: { vault: 1.21.1+ent }\nvault:\n  clusters:\n    a: {}\n    b: {}\n    c: { seal: { transit: b } }\n  replication:\n    dr: { primary: a, secondaries: [b] }\n":                                                                 "b unseals c with transit",
+		"versions: { vault: 1.21.1+ent }\nvault:\n  clusters:\n    a: {}\n    b: { seal: { transit: a } }\n  replication:\n    dr: { primary: a, secondaries: [b] }\n":                                                                            "auto-unseals with transit",
+		"versions: { vault: 1.21.1+ent }\nvault:\n  clusters:\n    a: {}\n    b: { secrets: { consul: dc1 } }\n  replication:\n    dr: { primary: a, secondaries: [b] }\n":                                                                        "has secrets.consul",
+		"versions: { vault: 1.21.1+ent, consul: 1.22.7 }\nconsul:\n  datacenters:\n    dc1: { servers: 1, connect: { ca: { vault: b } } }\nvault:\n  clusters:\n    a: {}\n    b: {}\n  replication:\n    dr: { primary: a, secondaries: [b] }\n": "is dc1's Connect CA",
+	} {
+		p := filepath.Join(t.TempDir(), "lab.yaml")
+		if err := os.WriteFile(p, []byte("parker: v1alpha1\n"+text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p, nil); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", text, err, want)
+		}
+	}
+}

@@ -451,6 +451,99 @@ ttl                 0s
 - Before Vault 1.11 the role is written with `policies` instead of
   `consul_policies`.
 
+## Replication
+
+Vault Enterprise replicates a primary cluster to secondaries.
+`replication:` sets up performance replication, DR (disaster recovery)
+replication, or both:
+
+```yaml
+parker: v1alpha1
+versions: { vault: 1.21.1+ent }
+vault:
+  clusters:
+    east: { servers: 3 }
+    west: { servers: 2 }
+    east-dr: {}
+  replication:
+    performance:
+      primary: east
+      secondaries: [west]
+      paths_filter:
+        west: { mode: deny, paths: [private/] }
+    dr:
+      primary: east
+      secondaries: [east-dr]
+```
+
+| Key | Meaning |
+|---|---|
+| `performance` | Performance replication. Its secondaries serve reads, keep their own tokens and leases, and forward writes to the primary. |
+| `dr` | DR replication. Its secondaries keep a full copy of the primary, tokens and leases too, and answer nothing until promoted. |
+| `primary` | The cluster the others replicate from. |
+| `secondaries` | The clusters that replicate it. |
+| `paths_filter` | Performance only: what the primary sends each secondary, keyed by the secondary. `mode: allow` sends only `paths`; `mode: deny` sends everything but `paths`. Paths are mounts, such as `secret/`; Parker mounts a kv (version 2) secrets engine at any that doesn't exist yet, since Vault filters only existing mounts. |
+
+Each cluster comes up and is initialised on its own. Then Parker turns
+replication on at the primary, activates each secondary, and `parker up`
+waits until every secondary is streaming from the primary. Activating a
+secondary replaces its data with the primary's. From then on it unseals
+with the primary's key, which Parker keeps for it, so
+[`unseal`](#seal-unseal-and-step-down) steps and `parker up LAB` work as
+before. `VAULT_TOKEN` in [`parker exec`](cli.md#parker-exec) keeps
+working on every cluster, a DR secondary once it is promoted.
+
+Replicated clusters also join a `vault-wan` network (10.63.0.0/24), on
+which they reach each other's API and cluster port. In `parker status`
+each active server's role says its part, such as
+`active (raft 3 voters, perf primary, dr primary)` or
+`active (raft 2 voters, perf secondary)`.
+
+Replication needs a Vault Enterprise build and its
+[license](enterprise.md#the-license). A secondary can't be another
+cluster's [Connect CA](#vault-as-the-connect-ca) or
+[transit](#transit-auto-unseal) cluster, or have
+[`secrets: { consul: ... }`](#consul-secrets-engine), since activating it
+would wipe them; set those on the primary. Secondaries unseal with keys
+(no `seal:`), and a secondary can't be a primary itself.
+
+### Failover
+
+`vault:` steps act on whole clusters' replication:
+
+| Step | Does |
+|---|---|
+| `vault: { promote: SEL }` | Makes the clusters, secondaries, primaries. |
+| `vault: { demote: SEL }` | Makes the clusters, primaries, secondaries that replicate nothing until pointed at a primary. |
+| `vault: { disable: SEL }` | Turns replication off on the clusters. |
+| `vault: { update_primary: SEL, primary: CLUSTER }` | Points the clusters, secondaries, at another primary. |
+
+Each acts on the replication the cluster is in. For a cluster in both,
+add `replication: performance` or `replication: dr`. DR secondaries take
+a DR operation token for these, which Parker makes from the key.
+
+`assert: { vault: { on: SEL, replication: ... } }` checks a cluster's
+replication, asked of its active server: `performance` and `dr` are its
+mode (`primary`, `secondary` or `disabled`), and `state` is Vault's
+state of those modes, `running` on a primary and `stream-wals` on a
+secondary that is in sync.
+
+A DR failover, with west following the new primary:
+
+```yaml
+scenario:
+  steps:
+    - wait: east ready
+    - vault: { demote: east, replication: dr }
+    - vault: { promote: east-dr }
+    - assert: { vault: { on: east-dr, replication: { dr: primary } }, within: 60s }
+    - vault: { update_primary: west, primary: east-dr }
+    - assert: { vault: { on: west, replication: { performance: secondary, state: stream-wals } }, within: 90s }
+```
+
+See [vault-replication.yaml](https://github.com/Ranjandas/parker/blob/main/examples/vault-replication.yaml)
+for the whole lab.
+
 ## Old Vault releases
 
 Integrated storage needs Vault 1.4 or later, and `parker validate` refuses
@@ -468,5 +561,7 @@ vault:
 
 ## Limits
 
-- Replication is planned. Enterprise builds run with their license, see
+- Enterprise builds run with their license, see
   [Vault Enterprise](enterprise.md#vault-enterprise).
+- Replication doesn't chain yet: a secondary can't be a primary too, as
+  in DR copies of a performance secondary.

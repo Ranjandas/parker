@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Ranjandas/parker/internal/expand"
+	"github.com/Ranjandas/parker/internal/vaultrepl"
 )
 
 // vaultInitCmd runs on a Vault cluster's first server: it initialises the
@@ -94,6 +95,8 @@ type vaultAPI interface {
 	// MountConsul mounts and configures the Consul secrets engine, unless
 	// one is mounted at its path, and writes its role.
 	MountConsul(ctx context.Context, addr, token string, e expand.VaultConsulEngine) error
+	// DRSecondary reports whether the cluster at addr is a DR secondary.
+	DRSecondary(ctx context.Context, addr string) bool
 }
 
 // vaultKeys is the keys file.
@@ -180,6 +183,11 @@ func vaultInit(ctx context.Context, v vaultAPI, s expand.VaultInitSpec, timeout 
 			return err
 		}
 		fmt.Fprintf(log, "vault-init: unsealed %s\n", addr)
+	}
+	// A DR secondary takes no requests; its tokens are the primary's.
+	if s.Replica && v.DRSecondary(ctx, first) {
+		fmt.Fprintf(log, "vault-init: %s is a DR secondary; nothing more to set up\n", first)
+		return nil
 	}
 
 	if s.RootToken != "" {
@@ -419,4 +427,12 @@ func (v vaultHTTP) MountConsul(ctx context.Context, addr, token string, e expand
 func (v vaultHTTP) TokenExists(ctx context.Context, addr, token string) bool {
 	_, err := v.do(ctx, http.MethodGet, addr+"/v1/auth/token/lookup-self", token, nil, nil)
 	return err == nil
+}
+
+func (v vaultHTTP) DRSecondary(ctx context.Context, addr string) bool {
+	st, err := vaultrepl.GetStatus(ctx, func(ctx context.Context, method, path, token string, body, out any) error {
+		_, err := v.do(ctx, method, addr+path, token, body, out)
+		return err
+	})
+	return err == nil && st.DR.Mode == "secondary"
 }

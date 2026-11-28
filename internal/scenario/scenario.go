@@ -56,6 +56,9 @@ type Lab interface {
 	Vault(ctx context.Context, action, node string) error
 	// VaultCheck checks node's Vault server against an assertion once.
 	VaultCheck(ctx context.Context, node string, a *spec.VaultAssert) error
+	// VaultReplication runs a replication action (promote, demote,
+	// disable, update_primary) on the clusters of nodes.
+	VaultReplication(ctx context.Context, v *spec.VaultStep, nodes []string, say func(string, ...any)) error
 }
 
 // Upgrades lists a scenario's upgrade steps, so their binaries can be
@@ -192,8 +195,18 @@ func validateStep(st *spec.Step) error {
 			if v.On == "" {
 				return errors.New("assert.vault: needs on:")
 			}
-			if v.Sealed == nil && v.Active == nil && v.RaftPeers == "" {
-				return errors.New("assert.vault: nothing to check (sealed, active, raft_peers)")
+			if v.Sealed == nil && v.Active == nil && v.RaftPeers == "" && v.Replication == nil {
+				return errors.New("assert.vault: nothing to check (sealed, active, raft_peers, replication)")
+			}
+			if r := v.Replication; r != nil {
+				if r.Performance == "" && r.DR == "" {
+					return errors.New("assert.vault.replication: needs performance: or dr:")
+				}
+				for _, m := range []string{r.Performance, r.DR} {
+					if m != "" && m != "primary" && m != "secondary" && m != "disabled" {
+						return fmt.Errorf("assert.vault.replication: want primary, secondary or disabled, got %q", m)
+					}
+				}
 			}
 			if v.RaftPeers != "" {
 				if _, err := spec.ParseMembers(v.RaftPeers); err != nil {
@@ -236,14 +249,18 @@ func validateStep(st *spec.Step) error {
 		}
 	}
 	if v := st.Vault; v != nil {
-		n := 0
-		for _, s := range []string{v.Seal, v.Unseal, v.StepDown} {
-			if s != "" {
-				n++
-			}
+		if v.Actions() != 1 {
+			return errors.New("vault: needs exactly one of seal:, unseal:, step_down:, promote:, demote:, disable: or update_primary:")
 		}
-		if n != 1 {
-			return errors.New("vault: needs exactly one of seal:, unseal: or step_down:")
+		action, _ := v.Action()
+		if (action == "update_primary") != (v.Primary != "") {
+			return errors.New("vault: primary: goes with update_primary:, which needs it")
+		}
+		if v.Replication != "" && !slices.Contains(spec.VaultReplActions, action) {
+			return errors.New("vault: replication: goes with promote:, demote:, disable: or update_primary:")
+		}
+		if r := v.Replication; r != "" && r != spec.VaultReplPerformance && r != spec.VaultReplDR {
+			return fmt.Errorf("vault.replication: want performance or dr, got %q", r)
 		}
 	}
 	for i, g := range st.Partition {
@@ -341,6 +358,9 @@ func Selectors(sc *spec.Scenario) []string {
 		if st.Vault != nil {
 			if _, sel := st.Vault.Action(); sel != "" {
 				out = append(out, sel)
+			}
+			if st.Vault.Primary != "" {
+				out = append(out, st.Vault.Primary)
 			}
 		}
 		if st.Assert != nil && st.Assert.Vault != nil {
@@ -601,6 +621,9 @@ func runStep(ctx context.Context, st *spec.Step, l Lab, clk Clock, say func(stri
 		nodes, err := l.Resolve(sel)
 		if err != nil {
 			return err
+		}
+		if slices.Contains(spec.VaultReplActions, action) {
+			return l.VaultReplication(ctx, v, nodes, say)
 		}
 		say("  %s %s", strings.ReplaceAll(action, "_", "-"), strings.Join(nodes, ", "))
 		var errs []error

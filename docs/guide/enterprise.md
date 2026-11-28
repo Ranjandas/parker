@@ -70,7 +70,8 @@ vault:
 Vault reads its license when it starts, so Enterprise needs Vault 1.8 or
 later. Everything on the [Vault](vault.md) page works the same. With a
 license that includes performance standbys, the standbys serve reads
-and `parker status` shows them as `perf-standby`. Vault Enterprise and Consul Enterprise mix freely with
+and `parker status` shows them as `perf-standby`. [Replication](vault.md#replication) between clusters
+needs Vault Enterprise too. Vault Enterprise and Consul Enterprise mix freely with
 each other's community builds; each needs only its own license.
 
 ## Admin partitions

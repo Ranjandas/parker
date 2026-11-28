@@ -1,0 +1,528 @@
+parker: v1alpha1
+name: vault-replication
+versions:
+  vault: 1.21.1+ent
+networks:
+  east-dr-lan:
+    subnet: 10.65.0.0/24
+    gateway: 10.65.0.1
+    auto: true
+  east-lan:
+    subnet: 10.64.0.0/24
+    gateway: 10.64.0.1
+    auto: true
+  vault-wan:
+    subnet: 10.63.0.0/24
+    gateway: 10.63.0.1
+    auto: true
+  west-lan:
+    subnet: 10.66.0.0/24
+    gateway: 10.66.0.1
+    auto: true
+nodes:
+  east-dr-vault-1:
+    networks:
+      east-dr-lan:
+        ip: 10.65.0.10
+      vault-wan:
+        ip: 10.63.0.13
+    files:
+      data/.keep: ""
+      vault-init.json: |
+        {
+          "addrs": [
+            "http://10.65.0.10:8200"
+          ],
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json",
+          "replica": true
+        }
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.13:8200",
+          "cluster_addr": "https://10.63.0.13:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.13:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data"
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          east-dr-vault-1/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east-dr
+      name: vault-1
+      role: server
+      group: vault
+  east-vault-1:
+    networks:
+      east-lan:
+        ip: 10.64.0.10
+      vault-wan:
+        ip: 10.63.0.10
+    files:
+      data/.keep: ""
+      vault-init.json: |
+        {
+          "addrs": [
+            "http://10.64.0.10:8200",
+            "http://10.64.0.11:8200",
+            "http://10.64.0.12:8200"
+          ],
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json"
+        }
+      vault-replication.json: |
+        {
+          "primary": {
+            "name": "east",
+            "addrs": [
+              "http://10.63.0.10:8200",
+              "http://10.63.0.11:8200",
+              "http://10.63.0.12:8200"
+            ],
+            "root_token": "00000000-0000-4000-8000-000000000000",
+            "keys_file": "${run_dir}/nodes/east-vault-1/vault-keys.json"
+          },
+          "modes": [
+            "performance",
+            "dr"
+          ],
+          "secondaries": [
+            {
+              "name": "west",
+              "addrs": [
+                "http://10.63.0.14:8200",
+                "http://10.63.0.15:8200"
+              ],
+              "root_token": "00000000-0000-4000-8000-000000000000",
+              "keys_file": "${run_dir}/nodes/west-vault-1/vault-keys.json",
+              "mode": "performance",
+              "paths_filter": {
+                "Mode": "deny",
+                "Paths": [
+                  "private/"
+                ]
+              }
+            },
+            {
+              "name": "east-dr",
+              "addrs": [
+                "http://10.63.0.13:8200"
+              ],
+              "root_token": "00000000-0000-4000-8000-000000000000",
+              "keys_file": "${run_dir}/nodes/east-dr-vault-1/vault-keys.json",
+              "mode": "dr"
+            }
+          ]
+        }
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.10:8200",
+          "cluster_addr": "https://10.63.0.10:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.10:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.11:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.12:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          east-vault-1/vault:
+            condition: started
+          east-vault-2/vault:
+            condition: started
+          east-vault-3/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+      vault-replication:
+        run:
+          - ${parker}
+          - vault-replication
+          - ${node_dir}/vault-replication.json
+        depends_on:
+          east-dr-vault-1/vault-init:
+            condition: ready
+          east-vault-1/vault-init:
+            condition: ready
+          west-vault-1/vault-init:
+            condition: ready
+        ready_when:
+          log: "parker: vault replication streaming"
+          timeout: 300s
+    labels:
+      product: vault
+      dc: east
+      name: vault-1
+      role: server
+      group: vault
+  east-vault-2:
+    networks:
+      east-lan:
+        ip: 10.64.0.11
+      vault-wan:
+        ip: 10.63.0.11
+    files:
+      data/.keep: ""
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.11:8200",
+          "cluster_addr": "https://10.63.0.11:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.11:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-2",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.10:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.12:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-2
+      role: server
+      group: vault
+  east-vault-3:
+    networks:
+      east-lan:
+        ip: 10.64.0.12
+      vault-wan:
+        ip: 10.63.0.12
+    files:
+      data/.keep: ""
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.12:8200",
+          "cluster_addr": "https://10.63.0.12:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.12:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-3",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.64.0.10:8200"
+                },
+                {
+                  "leader_api_addr": "http://10.64.0.11:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+    labels:
+      product: vault
+      dc: east
+      name: vault-3
+      role: server
+      group: vault
+  west-vault-1:
+    networks:
+      vault-wan:
+        ip: 10.63.0.14
+      west-lan:
+        ip: 10.66.0.10
+    files:
+      data/.keep: ""
+      vault-init.json: |
+        {
+          "addrs": [
+            "http://10.66.0.10:8200",
+            "http://10.66.0.11:8200"
+          ],
+          "root_token": "00000000-0000-4000-8000-000000000000",
+          "keys_file": "${node_dir}/vault-keys.json",
+          "replica": true
+        }
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.14:8200",
+          "cluster_addr": "https://10.63.0.14:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.14:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-1",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.66.0.11:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+      vault-init:
+        run:
+          - ${parker}
+          - vault-init
+          - ${node_dir}/vault-init.json
+        depends_on:
+          west-vault-1/vault:
+            condition: started
+          west-vault-2/vault:
+            condition: started
+        ready_when:
+          log: "parker: vault initialised and unsealed"
+          timeout: 90s
+    labels:
+      product: vault
+      dc: west
+      name: vault-1
+      role: server
+      group: vault
+  west-vault-2:
+    networks:
+      vault-wan:
+        ip: 10.63.0.15
+      west-lan:
+        ip: 10.66.0.11
+    files:
+      data/.keep: ""
+      vault.json: |
+        {
+          "api_addr": "http://10.63.0.15:8200",
+          "cluster_addr": "https://10.63.0.15:8201",
+          "disable_mlock": true,
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "cluster_address": "10.63.0.15:8201",
+              "tls_disable": true
+            }
+          },
+          "storage": {
+            "raft": {
+              "node_id": "vault-2",
+              "path": "${node_dir}/data",
+              "retry_join": [
+                {
+                  "leader_api_addr": "http://10.66.0.10:8200"
+                }
+              ]
+            }
+          },
+          "ui": true
+        }
+    processes:
+      vault:
+        run:
+          - vault
+          - server
+          - -config=${node_dir}/vault.json
+        ready_when:
+          http:
+            url: http://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200
+          timeout: 90s
+    labels:
+      product: vault
+      dc: west
+      name: vault-2
+      role: server
+      group: vault
+scenario:
+  steps:
+    - wait: east ready
+    - assert:
+        vault:
+          "on": east
+          replication:
+            performance: primary
+            dr: primary
+            state: running
+    - assert:
+        vault:
+          "on": west
+          replication:
+            performance: secondary
+            state: stream-wals
+        within: 60s
+    - assert:
+        vault:
+          "on": east-dr
+          replication:
+            dr: secondary
+            state: stream-wals
+        within: 60s
+    - exec:
+        "on": east/active
+        run: vault secrets enable -path=secret kv-v2
+    - exec:
+        "on": east/active
+        run: vault kv put secret/hello who=parker
+    - exec:
+        "on": east/active
+        run: vault kv put private/note text=east-only
+    - name: west reads what east wrote
+      assert:
+        exec:
+          "on": west/active
+          run: vault kv get -field=who secret/hello
+          output: parker
+        within: 30s
+    - name: but not the filtered mount
+      assert:
+        exec:
+          "on": west/active
+          run: "! vault kv get private/note"
+    - vault:
+        demote: east
+        replication: dr
+    - vault:
+        promote: east-dr
+    - assert:
+        vault:
+          "on": east-dr
+          replication:
+            dr: primary
+        within: 60s
+    - assert:
+        exec:
+          "on": east-dr/active
+          run: vault kv get -field=who secret/hello
+          output: parker
+        within: 60s
+    - vault:
+        update_primary: west
+        primary: east-dr
+    - assert:
+        vault:
+          "on": west
+          replication:
+            performance: secondary
+            state: stream-wals
+        within: 90s
+    - exec:
+        "on": east-dr/active
+        run: vault kv put secret/hello who=east-dr
+    - assert:
+        exec:
+          "on": west/active
+          run: vault kv get -field=who secret/hello
+          output: east-dr
+        within: 30s

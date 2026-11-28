@@ -34,7 +34,52 @@ const (
 	// vaultSubnetBase: cluster LANs default to 10.<base+i>.0.0/24, clear
 	// of the Consul datacenters' 10.<n>.
 	vaultSubnetBase = 64
+	// VaultWANNetwork joins the servers of clusters in replication, so
+	// that secondaries reach their primary (and a promoted one the rest).
+	// It defaults to 10.63.0.0/24.
+	VaultWANNetwork  = "vault-wan"
+	vaultWANSubnet   = "10.63.0.0/24"
+	VaultReplication = "vault-replication"
+	// VaultReplicationManifest is its manifest, on the primary's first
+	// server.
+	VaultReplicationManifest = "vault-replication.json"
+	// VaultReplicationReadyLine is what it logs once every secondary
+	// streams from the primary.
+	VaultReplicationReadyLine = "parker: vault replication streaming"
 )
+
+// VaultReplicationSpec is vault-replication's manifest: one primary and
+// its secondaries, in one or both replication modes.
+type VaultReplicationSpec struct {
+	Primary VaultReplica `json:"primary"`
+	// Modes the primary is a primary of: performance, dr.
+	Modes []string `json:"modes"`
+	// Secondaries to activate, each in one mode.
+	Secondaries []VaultSecondary `json:"secondaries"`
+	// CAFile verifies https:// addresses, the job's own and the
+	// secondaries' requests to the primary.
+	CAFile string `json:"ca_file,omitempty"`
+}
+
+// VaultReplica is a cluster in replication.
+type VaultReplica struct {
+	Name string `json:"name"`
+	// Addrs are its servers' API addresses on the vault-wan network.
+	Addrs []string `json:"addrs"`
+	// RootToken is the lab's root token of the cluster.
+	RootToken string `json:"root_token"`
+	// KeysFile is vault-init's keys file of the cluster.
+	KeysFile string `json:"keys_file"`
+}
+
+// VaultSecondary is a secondary to activate.
+type VaultSecondary struct {
+	VaultReplica
+	// Mode is performance or dr.
+	Mode string `json:"mode"`
+	// PathsFilter, for a performance secondary.
+	PathsFilter *spec.VaultPathsFilter `json:"paths_filter,omitempty"`
+}
 
 // VaultInitSpec is vault-init's manifest.
 type VaultInitSpec struct {
@@ -62,6 +107,11 @@ type VaultInitSpec struct {
 	TransitKeys []string `json:"transit_keys,omitempty"`
 	// ConsulEngine is a Consul secrets engine to mount and configure.
 	ConsulEngine *VaultConsulEngine `json:"consul_engine,omitempty"`
+	// Replica: the cluster is a replication secondary. Once activated it
+	// unseals with its primary's key (vault-replication puts it in
+	// KeysFile), and a DR secondary takes no requests, so vault-init then
+	// only unseals.
+	Replica bool `json:"replica,omitempty"`
 }
 
 // VaultConsulEngine is the Consul secrets engine on a cluster.
@@ -115,6 +165,9 @@ type VaultClusterFacts struct {
 	RootToken string
 	// Nodes are its servers' expanded node names.
 	Nodes []string
+	// WANAddrs are its servers' API addresses on vault-wan, for a cluster
+	// in replication.
+	WANAddrs []string
 }
 
 func init() { Register(vaultProduct{}) }
@@ -309,6 +362,26 @@ func vaultTransit(out *spec.File, cluster string, v VaultClusterFacts, t string,
 func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 	v := in.Vault
 	vf := VaultFacts{}
+	// Servers of clusters in replication also join vault-wan, each
+	// cluster from the next free host address.
+	wanIPs := map[string][]string{}
+	if repl := v.Replicated(); len(repl) > 0 {
+		pfx, err := netip.ParsePrefix(vaultWANSubnet)
+		if err != nil {
+			return err
+		}
+		out.Networks[VaultWANNetwork] = &spec.Network{Subnet: vaultWANSubnet, Auto: true}
+		off := 10
+		for _, name := range repl {
+			for range v.Clusters[name].ServerCount() {
+				wanIPs[name] = append(wanIPs[name], addrAt(pfx.Masked().Addr(), off))
+				off++
+			}
+		}
+		if off > 254 {
+			return fmt.Errorf("vault.replication: %d servers don't fit on %s (%s)", off-10, VaultWANNetwork, vaultWANSubnet)
+		}
+	}
 	for i, name := range slices.Sorted(maps.Keys(v.Clusters)) {
 		c := v.Clusters[name]
 		if c == nil {
@@ -344,10 +417,14 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 		ips := make([]string, n)
 		addrs := make([]string, n)
 		keys := make([]string, n)
+		var wanAddrs []string
 		for k := range n {
 			ips[k] = addrAt(base, 10+k)
 			addrs[k] = scheme + "://" + ips[k] + ":" + strconv.Itoa(VaultPort)
 			keys[k] = spec.VaultNodeKey(name, k+1)
+			if w := wanIPs[name]; len(w) > k {
+				wanAddrs = append(wanAddrs, scheme+"://"+w[k]+":"+strconv.Itoa(VaultPort))
+			}
 		}
 		for k := range n {
 			node := &spec.RawNode{
@@ -374,6 +451,19 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				continue
 			}
 			cfg := vaultConfig(s, name, ips[k], node.Labels.Name, addrs, k)
+			if len(wanAddrs) > 0 {
+				// Replication: the other clusters reach this server's API and
+				// cluster port on vault-wan, at the addresses it advertises.
+				w := wanIPs[name][k]
+				node.Networks[VaultWANNetwork] = &spec.Attachment{IP: w}
+				cfg["api_addr"] = wanAddrs[k]
+				cfg["cluster_addr"] = "https://" + w + ":" + strconv.Itoa(VaultClusterPort)
+				if l, ok := cfg["listener"].(map[string]any); ok {
+					if t, ok := l["tcp"].(map[string]any); ok {
+						t["cluster_address"] = w + ":" + strconv.Itoa(VaultClusterPort)
+					}
+				}
+			}
 			if s.ConsulDC() != "" {
 				if err := vaultOnConsul(out, keys[k], node, cfg); err != nil {
 					return err
@@ -384,7 +474,7 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				cert, key, err := labCA.leafCert(keys[k], []string{
 					"localhost", short, keys[k],
 					short + "." + name + "." + out.Name + ".parker", keys[k] + "." + out.Name + ".parker",
-				}, []string{ips[k]})
+				}, append([]string{ips[k]}, wanIPs[name]...))
 				if err != nil {
 					return fmt.Errorf("%s: %w", keys[k], err)
 				}
@@ -413,7 +503,8 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 				for _, key := range keys {
 					deps[key+"/vault"] = &spec.Dep{Condition: "started"}
 				}
-				is := VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys, Recovery: c.Transit() != ""}
+				p, _ := v.ReplicaOf(name)
+				is := VaultInitSpec{Addrs: addrs, RootToken: token, KeysFile: VarNodeDir + "/" + VaultInitKeys, Recovery: c.Transit() != "", Replica: p != ""}
 				if tlsOn {
 					is.CAFile = VarNodeDir + "/" + CAFile
 				}
@@ -426,9 +517,67 @@ func (vaultProduct) Expand(in, out *spec.File, facts Facts) error {
 			}
 			out.Nodes[keys[k]] = node
 		}
-		vf[name] = VaultClusterFacts{Addrs: addrs, RootToken: token, Nodes: keys}
+		vf[name] = VaultClusterFacts{Addrs: addrs, RootToken: token, Nodes: keys, WANAddrs: wanAddrs}
 	}
 	facts[ProductVault] = vf
+	return vaultReplication(in, out, vf)
+}
+
+// vaultReplication puts a vault-replication job on each primary's first
+// server: it turns on replication on the primary, activates the
+// secondaries and waits until they stream. It starts once every cluster
+// it touches is initialised.
+func vaultReplication(in, out *spec.File, vf VaultFacts) error {
+	r := in.Vault.Replication
+	if r == nil {
+		return nil
+	}
+	replica := func(name string) VaultReplica {
+		c := vf[name]
+		return VaultReplica{Name: name, Addrs: c.WANAddrs, RootToken: c.RootToken,
+			KeysFile: VarRunDir + "/nodes/" + c.Nodes[0] + "/" + VaultInitKeys}
+	}
+	jobs := map[string]*VaultReplicationSpec{}
+	var order []string
+	for _, m := range []string{spec.VaultReplPerformance, spec.VaultReplDR} {
+		set := r.Set(m)
+		if set == nil {
+			continue
+		}
+		j := jobs[set.Primary]
+		if j == nil {
+			j = &VaultReplicationSpec{Primary: replica(set.Primary)}
+			jobs[set.Primary] = j
+			order = append(order, set.Primary)
+		}
+		j.Modes = append(j.Modes, m)
+		for _, sec := range set.Secondaries {
+			j.Secondaries = append(j.Secondaries, VaultSecondary{VaultReplica: replica(sec), Mode: m, PathsFilter: set.PathsFilter[sec]})
+		}
+	}
+	for _, p := range order {
+		j := jobs[p]
+		first := out.Nodes[vf[p].Nodes[0]]
+		deps := map[string]*spec.Dep{vf[p].Nodes[0] + "/" + VaultInit: {Condition: "ready"}}
+		clusters := []string{p}
+		for _, s := range j.Secondaries {
+			deps[vf[s.Name].Nodes[0]+"/"+VaultInit] = &spec.Dep{Condition: "ready"}
+			clusters = append(clusters, s.Name)
+		}
+		// Any https server: the lab CA verifies them all.
+		for _, c := range clusters {
+			if strings.HasPrefix(vf[c].Addrs[0], "https://") {
+				j.CAFile = VarRunDir + "/nodes/" + vf[c].Nodes[0] + "/" + CAFile
+				break
+			}
+		}
+		first.Files[VaultReplicationManifest] = mustJSON(j)
+		first.Processes[VaultReplication] = &spec.Process{
+			Run:       spec.Command{VarParker, VaultReplication, VarNodeDir + "/" + VaultReplicationManifest},
+			DependsOn: deps,
+			ReadyWhen: &spec.Ready{Log: VaultReplicationReadyLine, Timeout: "300s"},
+		}
+	}
 	return nil
 }
 

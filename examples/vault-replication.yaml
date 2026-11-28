@@ -1,0 +1,57 @@
+# Vault Enterprise replication: east is the primary of both performance
+# replication (west serves reads, without the private/ mount, which
+# Parker mounts as kv since a filter needs the mount) and DR
+# replication (east-dr keeps a full copy). Parker turns replication on,
+# activates the secondaries and waits until they stream. The scenario
+# fails over to east-dr and points west at it.
+#
+# Needs a Vault Enterprise license (VAULT_LICENSE_PATH); not in the CI
+# suite: run hack/ent-e2e.sh where you have one.
+parker: v1alpha1
+name: vault-replication
+versions: { vault: 1.21.1+ent }
+vault:
+  clusters:
+    east: { servers: 3 }
+    west: { servers: 2 }
+    east-dr: {}
+  replication:
+    performance:
+      primary: east
+      secondaries: [west]
+      paths_filter:
+        west: { mode: deny, paths: [private/] }
+    dr:
+      primary: east
+      secondaries: [east-dr]
+
+scenario:
+  steps:
+    - wait: east ready
+    - assert: { vault: { on: east, replication: { performance: primary, dr: primary, state: running } } }
+    - assert: { vault: { on: west, replication: { performance: secondary, state: stream-wals } }, within: 60s }
+    - assert: { vault: { on: east-dr, replication: { dr: secondary, state: stream-wals } }, within: 60s }
+    - exec: { on: east/active, run: "vault secrets enable -path=secret kv-v2" }
+    - exec: { on: east/active, run: "vault kv put secret/hello who=parker" }
+    - exec: { on: east/active, run: "vault kv put private/note text=east-only" }
+    - name: west reads what east wrote
+      assert:
+        exec: { on: west/active, run: "vault kv get -field=who secret/hello", output: parker }
+        within: 30s
+    - name: but not the filtered mount
+      assert:
+        exec: { on: west/active, run: "! vault kv get private/note" }
+    # DR failover: east steps back, east-dr takes over with east's data,
+    # and west follows the new primary.
+    - vault: { demote: east, replication: dr }
+    - vault: { promote: east-dr }
+    - assert: { vault: { on: east-dr, replication: { dr: primary } }, within: 60s }
+    - assert:
+        exec: { on: east-dr/active, run: "vault kv get -field=who secret/hello", output: parker }
+        within: 60s
+    - vault: { update_primary: west, primary: east-dr }
+    - assert: { vault: { on: west, replication: { performance: secondary, state: stream-wals } }, within: 90s }
+    - exec: { on: east-dr/active, run: "vault kv put secret/hello who=east-dr" }
+    - assert:
+        exec: { on: west/active, run: "vault kv get -field=who secret/hello", output: east-dr }
+        within: 30s
