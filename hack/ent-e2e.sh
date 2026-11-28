@@ -85,7 +85,10 @@ if has consul; then
   grep -iE 'valid|expires' <<<"$lic_info" | sed -n 1,3p | grep . || { echo "license get: $lic_info" >&2; exit 1; }
 fi
 if has vault; then
-  v1=$(awk 'NR>2 && $3=="vault" && !n++ {print $1}' <<<"$st")
+  # A server that answers: a replication primary's (a DR secondary
+  # refuses requests), else the first.
+  v1=$(awk 'NR>2 && $3=="vault-replication" && !n++ {print $1}' <<<"$st")
+  [ -n "$v1" ] || v1=$(awk 'NR>2 && $3=="vault" && !n++ {print $1}' <<<"$st")
   echo "--- Vault Enterprise is running, licensed"
   $P exec "$F" "$v1" -- vault version </dev/null | grep -F +ent
   lic_info=$($P exec "$F" "$v1" -- vault read -format=json sys/license/status </dev/null)
